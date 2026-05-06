@@ -1,0 +1,14 @@
+# ELF version script for libmpv.so (Linux + Android).
+# Passed to ld via -Wl,--version-script,...
+#
+# Only the public mpv_* C API leaks into the .so's dynamic symbol table. All
+# statically-linked dep internals (ffmpeg, freetype, fribidi, harfbuzz,
+# fontconfig, libass, libplacebo, libsmb2, libxml2, rubberband, speexdsp,
+# mbedtls) stay local — preventing symbol-poisoning when another Flutter
+# plugin loads its own copy of these libraries in the same process.
+{
+  global:
+    mpv_*;
+  local:
+    *;
+};

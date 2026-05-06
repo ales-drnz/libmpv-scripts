@@ -1,0 +1,9 @@
+# Mach-O exported-symbols list for libmpv.dylib (macOS).
+# Passed to ld64 via -Wl,-exported_symbols_list,...
+#
+# Only the public mpv_* C API leaks into the .dylib's dynamic symbol table.
+# All ffmpeg / freetype / fribidi / harfbuzz / fontconfig / libass / libplacebo /
+# libsmb2 / libxml2 / rubberband / speexdsp internals stay private (they were
+# also linked statically; without this list they would be exported and
+# clash-prone with other Flutter plugins linking the same libs).
+_mpv_*

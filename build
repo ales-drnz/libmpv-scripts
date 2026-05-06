@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
+# All rights reserved.
+# Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+
+# Entry point for the libmpv build orchestrator (Go / Bubble Tea TUI).
+#
+#   ./build                 interactive dashboard (pick targets, watch progress)
+#   ./build macos verify    headless: build macOS, then verify
+#   ./build all             everything + checksums
+#   ./build list            list every target
+#   ./build help            usage
+#
+# Needs Go (https://go.dev/dl/ or `brew install go`). Dependencies are fetched
+# automatically on first run.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+command -v go >/dev/null 2>&1 || {
+  echo "Go not found — install it (brew install go) and re-run." >&2
+  exit 1
+}
+cd "$here/tui"
+go mod download >/dev/null 2>&1 || true
+exec go run . "$@"
