@@ -163,8 +163,16 @@ build_for_arch() {
 
   local lto_extra
   lto_extra="$(lto_deps_cflags)"
+  # C++-safe .eh_frame trim for the shared dep CFLAGS/CXXFLAGS (like $lto_extra).
+  # dep_unwind_cflags() keeps C++ exception unwinding intact, so it is safe in
+  # both CFLAGS and CXXFLAGS here. It does NOT leak into the meson objc_args
+  # (those come from write_meson_native, where ObjC coreaudio/avfoundation keep
+  # their unwind tables), nor into ffmpeg/mpv's own C-only knobs (those use the
+  # stronger eh_frame_cflags via --extra-cflags / -Dc_args).
+  local unwind_extra
+  unwind_extra="$(dep_unwind_cflags)"
   local cflags
-  cflags="$(arch_flags) -O2 $lto_extra"
+  cflags="$(arch_flags) -O2 $lto_extra $unwind_extra"
   local ldflags
   ldflags="$(arch_flags) $lto_extra"
 
@@ -177,18 +185,23 @@ build_for_arch() {
   build_zlib       "$PREFIX"
   build_bzip2      "$PREFIX"
   build_xz         "$PREFIX"
-  build_expat      "$PREFIX"
-  build_libpng     "$PREFIX"
 
-  # freetype, fribidi, harfbuzz, fontconfig, libass: required by mpv source
-  # which includes <ass/ass.h> unconditionally in command.c. Linker dead-code
-  # elimination + LTO drop the unused subtitle paths.
-  build_freetype       "$PREFIX"
-  build_fribidi        "$PREFIX"
-  build_harfbuzz       "$PREFIX"
-  build_freetype_round2 "$PREFIX"
-  build_fontconfig     "$PREFIX"
-  build_libass         "$PREFIX"
+  # Font stack — built ONLY when libass is kept (strip_libass disabled in
+  # Settings ▸ Patches). By default patch_strip_libass.py removes libass from
+  # mpv entirely, so the libass/freetype/harfbuzz/fontconfig/fribidi/expat/libpng
+  # chain is unreferenced and skipped (libpng + expat are font-only on macOS —
+  # only freetype consumes libpng via -DPNG_ROOT; nothing else links expat). When
+  # the user restores libass, mpv re-detects it via pkg-config.
+  if ! libass_stripped; then
+    build_expat          "$PREFIX"
+    build_libpng         "$PREFIX"
+    build_freetype       "$PREFIX"
+    build_fribidi        "$PREFIX"
+    build_harfbuzz       "$PREFIX"
+    build_freetype_round2 "$PREFIX"
+    build_fontconfig     "$PREFIX"
+    build_libass         "$PREFIX"
+  fi
 
   # libplacebo: headers required by mpv csputils.h unconditionally.
   # Built minimal — no vulkan/shaderc/d3d11/opengl.
@@ -608,7 +621,9 @@ build_ffmpeg() {
 
   local sdk
   sdk="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo "")"
-  local extra_cflags="-arch $ARCH -mmacosx-version-min=12.0 -I$prefix/include -O2"
+  # eh_frame_cflags() is the stronger C-only unwind-table trim — safe for ffmpeg
+  # (pure C, no exceptions). Goes via --extra-cflags only, never the shared deps.
+  local extra_cflags="-arch $ARCH -mmacosx-version-min=12.0 -I$prefix/include -O2 $(eh_frame_cflags)"
   local extra_ldflags="-arch $ARCH -mmacosx-version-min=12.0 -L$prefix/lib"
   [[ -n "$sdk" ]] && { extra_cflags+=" -isysroot $sdk"; extra_ldflags+=" -isysroot $sdk"; }
 
@@ -673,13 +688,20 @@ build_mpv() {
   local bdir="$BUILD_DIR/build/mpv-$ARCH"
   mkdir -p "$bdir"
 
+  # mpv-only C eh_frame trim, folded INTO the cross-file c_args (see
+  # write_meson_native). Passing it as a command-line `-Dc_args` instead would
+  # REPLACE the cross-file c_args and drop `-arch ${ARCH}` from the compile,
+  # breaking the cross-compiled x86_64 slice into a stub.
+  local ehf_arg="" _f
+  for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
+
   pushd "$bdir" >/dev/null
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
   meson setup "$dir" \
     --prefix="$prefix" \
     --buildtype=release \
     --default-library=shared \
-    $(write_meson_native "$prefix") \
+    $(write_meson_native "$prefix" "$ehf_arg") \
     $(mpv_common_args) \
     -Dswift-build=disabled \
     -Davfoundation=enabled \
@@ -712,6 +734,14 @@ autoconf_host() {
 # x86_64-on-arm64).
 write_meson_native() {
   local prefix="$1"
+  # Optional meson-array fragment of EXTRA C-only compile flags (e.g. the mpv
+  # eh_frame trim), folded straight into the cross-file `c_args` array. It must
+  # go here, NOT via a command-line `-Dc_args=…`, because meson REPLACES the
+  # cross-file `c_args` with a command-line `-Dc_args` (it does not append) —
+  # which silently drops `-arch ${ARCH}` from the COMPILE step while the link
+  # keeps it (c_link_args), so a cross-compiled x86_64 slice gets arm64 objects
+  # the x86_64 link then ignores, producing a ~40 KB stub dylib. Empty for deps.
+  local extra_c_args="${2:-}"
   local file="$BUILD_DIR/meson_machine_${ARCH}.ini"
   local sdk pkgcfg
   sdk="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo "")"
@@ -736,7 +766,7 @@ strip     = 'strip'
 pkg-config = '${pkgcfg}'
 
 [built-in options]
-c_args      = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
+c_args      = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}${extra_c_args}]
 cpp_args    = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
 objc_args   = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
 objcpp_args = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
@@ -783,6 +813,20 @@ finalize_arch() {
   chmod +w "$out"
   install_name_tool -id "@rpath/libmpv.framework/libmpv" "$out" 2>/dev/null
   codesign -s - --force "$out" 2>/dev/null
+  # Stub-slice guard: a cross-compile that lost its `-arch` flag compiles the
+  # wrong architecture's objects, which ld64 then silently ignores, yielding a
+  # tiny dylib with no mpv_* exports. Fail HERE, per-arch, rather than lipo a
+  # stub into the Universal binary and ship a broken slice (a 40 KB x86_64 stub
+  # shipped once because every downstream check inspected the fat binary in
+  # aggregate and never saw a single broken slice).
+  local _sz _mpvn
+  _sz=$(stat -f%z "$out" 2>/dev/null || stat -c%s "$out" 2>/dev/null || echo 0)
+  _mpvn=$(nm -gU "$out" 2>/dev/null | grep -c ' T _mpv_' || true)
+  if (( _sz < 1000000 || _mpvn < 50 )); then
+    fail "Per-arch dylib looks like a STUB: $out ($_sz bytes, $_mpvn mpv_* exports)." \
+         "A real libmpv is ~8 MB with 54 mpv_* exports — this almost always means" \
+         "the $ARCH compile lost its -arch flag and ld ignored the wrong-arch objects."
+  fi
   ok "Per-arch dylib: $out"
 }
 
@@ -843,6 +887,10 @@ assemble_xcframework() {
   else
     lipo -create "${lipo_args[@]}" -output "$universal_dylib"
   fi
+  # Strip local symbols + debug from the shipped dylib (~1.2M). -x removes only
+  # local symbols; the exported mpv_* API and the @rpath install_name survive.
+  # (meson does not strip the dylib; Linux/Android already strip their output.)
+  strip -x "$universal_dylib"
 
   # 2. Build libmpv.framework wrapper — macOS versioned-bundle layout.
   # macOS frameworks are NOT shallow bundles (iOS is): the payload lives under
@@ -856,6 +904,14 @@ assemble_xcframework() {
   cp "$universal_dylib" "$ver/libmpv"
   chmod +w "$ver/libmpv"
   install_name_tool -id "@rpath/libmpv.framework/libmpv" "$ver/libmpv"
+  # Re-sign the Mach-O AFTER the last edit (strip -x + install_name_tool both
+  # rewrite the binary and invalidate the linker's adhoc signature). On Apple
+  # Silicon the kernel SIGKILLs any process that dlopen()s a broken-signature
+  # dylib, which breaks the host `flutter test` resolver (DynamicLibrary.open)
+  # and the libmpv-scripts verify dlopen — a consumer app re-signs on embed, but
+  # direct host loads do not. The later `codesign --deep` on the xcframework does
+  # NOT reliably re-sign this inner Mach-O, so sign it explicitly here.
+  codesign -s - --force "$ver/libmpv" 2>/dev/null || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
   # Headers: pick from any arch's prefix — identical across arches.
   local first_arch="${ARCHS%% *}"
   cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/" 2>/dev/null || true

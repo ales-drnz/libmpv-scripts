@@ -1,3 +1,13 @@
+## [0.1.1] - 9-06-2026
+
+### Changed
+- Audio-filter whitelist corrected (86 → 87): removed `headphone`, added `aintegral` and `asetrate`.
+- The four size-reduction patches are now toggleable from Settings ▸ Patches, all default-on.
+
+### Build
+- Audio-only `libmpv` binaries are **~50–65% smaller** at full feature parity; the `mpv_*` API is unchanged.
+- `verify_binaries.sh` gained a macOS `dlopen` test, an adaptive feature-presence layer, and per-slice validation.
+
 ## [0.1.0] - 05-06-2026
 
 ### Added

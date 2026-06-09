@@ -24,8 +24,25 @@ type PatchItem struct {
 }
 
 // patchesCatalog lists the toggleable source patches, in display order.
+//
+// Two flavours share the DefaultOn:true + DISABLED_PATCHES mechanism:
+//   - feature patches (mpv runtime / FFmpeg): DefaultOn means the FEATURE is
+//     added; unchecking removes it.
+//   - "Size reduction" strip patches: DefaultOn means the STRIP is applied (the
+//     subsystem is removed for a smaller audio-only binary); unchecking RESTORES
+//     the feature (and, for libass, rebuilds the whole font stack). The build
+//     scripts gate every coupled step on the same patch_on <id>, so a toggle is
+//     self-consistent across ffmpeg configure, the font-stack build and the
+//     config audit.
 func patchesCatalog() []PatchItem {
 	return []PatchItem{
+		// ── Size reduction (audio-only strips — DefaultOn = removed) ────────
+		// Default-applied; uncheck to restore the corresponding feature.
+		{ID: "strip_swscale", Title: "Strip libswscale", Desc: "Drop the pixel scaler (~1.5M) — audio-only never scales. Restoring it also needs ‘Strip GPU/render’ off (terminal VOs include libswscale).", Category: "Size reduction", DefaultOn: true},
+		{ID: "strip_libass", Title: "Strip libass + font stack", Desc: "Remove subtitle/OSD text render + the freetype/harfbuzz/fontconfig/fribidi/libass chain (~2.5M). To restore subtitles you must ALSO uncheck ‘Strip GPU/render’ — libass needs the subtitle decode/draw infra that patch removes.", Category: "Size reduction", DefaultOn: true},
+		{ID: "strip_mpv_dead", Title: "Strip GPU/render/screenshot", Desc: "Remove the GPU/shader render stack, screenshot, encode mode, bitmap-sub decode and terminal VOs (~0.7M). Uncheck to restore mpv's video paths.", Category: "Size reduction", DefaultOn: true},
+		{ID: "strip_win_resources", Title: "Strip Windows icon/resources", Desc: "Drop the mpv icon/manifest/version from the Windows DLL (~267K). No-op on non-Windows targets.", Category: "Size reduction", DefaultOn: true},
+
 		// ── mpv runtime (applied via apply_mpv_patches_common) ──────────────
 		// (patch_optional_deps is build infrastructure — always applied, not a
 		// user-facing toggle, so it isn't listed here.)

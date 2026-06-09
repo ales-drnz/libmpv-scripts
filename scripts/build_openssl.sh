@@ -84,7 +84,23 @@ build_openssl() {
         no-engine \
         no-legacy \
         no-quic \
+        no-dtls \
+        no-srp \
+        no-psk \
+        no-cms \
+        no-ts \
+        no-ct \
+        no-comp \
+        no-asm \
+        no-ec2m no-dsa no-aria no-camellia no-bf no-cast no-idea no-rc2 no-rc4 \
+        no-seed no-md4 no-mdc2 no-rmd160 no-whirlpool no-blake2 \
+        no-sm2 no-sm3 no-sm4 no-ocsp no-cmp no-siphash no-scrypt no-argon2 no-rfc3779 \
+        no-dso no-dynamic-engine no-module no-static-engine \
+        no-afalgeng no-capieng no-padlockeng \
+        no-async no-http no-nextprotoneg no-ocb no-ssl-trace \
+        no-thread-pool no-uplink no-filenames no-cmac no-siv \
         threads \
+        -Os -DOPENSSL_SMALL_FOOTPRINT \
         ${extra_config}
     make -j"${JOBS:-$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)}"
     make install_sw       # install_sw = libs + headers, skip docs/man

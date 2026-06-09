@@ -113,8 +113,9 @@ export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
 LTO_EXTRA="$(lto_deps_cflags)"
 VIS_EXTRA="$(vis_deps_cflags)"
 SEC_EXTRA="$(section_gc_cflags)"
-export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA"
-export CXXFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA"
+UNWIND_EXTRA="$(dep_unwind_cflags)"   # C++-safe .eh_frame trim, shared by all deps
+export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
+export CXXFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
 export CPPFLAGS="-I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib -L$PREFIX/lib/${CROSS_TRIPLE} -L$PREFIX/lib64 -L/usr/lib/${CROSS_TRIPLE} $LTO_EXTRA"
 
@@ -446,6 +447,7 @@ build_ffmpeg() {
     --disable-libxcb-shm \
     --disable-libxcb-xfixes \
     --disable-libxcb-shape \
+    --extra-cflags="$(eh_frame_cflags)" \
     --extra-libs="-lm -lpthread -ldl"
   verify_ffmpeg_config "$bdir" "linux"
   make -j"$JOBS"; make install
@@ -478,7 +480,14 @@ build_mpv() {
   #     fail at runtime on systems without those .so installed (e.g. WSL).
   local link_extra=()
   if [[ "${VIS_HIDDEN:-1}" != "0" || "${SECTION_GC:-1}" != "0" ]]; then
-    local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined"
+    # Shared ELF size flags (-Bsymbolic + RELR relative-reloc packing) come from
+    # mpv_elf_size_ldflags() in _audio_only.sh so linux + android stay in sync.
+    # NOTE: x86_64 BFD ld packs RELR; the aarch64 BFD/gold in binutils 2.42 do
+    # NOT (they accept -z pack-relative-relocs but emit no .relr.dyn), so
+    # linux-aarch64 keeps ~0.95M of unpacked .rela.dyn. Fixable with mold once
+    # the Docker image's foreign-arch multiarch apt step is repaired (mold links
+    # gcc-LTO + packs aarch64 RELR); deferred to avoid an image-rebuild regression.
+    local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
     local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"
@@ -495,6 +504,7 @@ build_mpv() {
     -Dalsa=enabled \
     -Dpulse=enabled \
     -Dpipewire=enabled \
+    -Dc_args="$(eh_frame_cflags)" \
     "${link_extra[@]}"
   verify_mpv_config "$bdir" "linux"
   ninja -j"$JOBS"; ninja install
@@ -577,16 +587,23 @@ main() {
   build_zlib
   build_bzip2
   build_xz
-  build_expat
-  build_libpng
 
-  build_freetype
-  build_fribidi
-  build_harfbuzz
-  build_freetype_round2
-  build_fontconfig
-  build_libunibreak
-  build_libass
+  # Font stack — built ONLY when libass is kept (strip_libass disabled in
+  # Settings ▸ Patches). By default libass is stripped from mpv, so the whole
+  # chain (expat, libpng, freetype ×2, fribidi, harfbuzz, fontconfig, unibreak,
+  # libass) is dead weight and skipped. mpv re-detects libass via pkg-config
+  # when these are present; see swscale_stripped()/patch_on in _audio_only.sh.
+  if ! libass_stripped; then
+    build_expat
+    build_libpng
+    build_freetype
+    build_fribidi
+    build_harfbuzz
+    build_freetype_round2
+    build_fontconfig
+    build_libunibreak
+    build_libass
+  fi
 
   build_speexdsp
   build_rubberband

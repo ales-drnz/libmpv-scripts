@@ -315,12 +315,13 @@ build_abi() {
   export AR="$(ndk_ar)"
   export RANLIB="$(ndk_ranlib)"
   export STRIP="$(ndk_strip)"
-  local lto_extra vis_extra sec_extra
+  local lto_extra vis_extra sec_extra unwind_extra
   lto_extra="$(lto_deps_cflags)"
   vis_extra="$(vis_deps_cflags)"
   sec_extra="$(section_gc_cflags)"
-  export CFLAGS="-O2 -fPIC $lto_extra $vis_extra $sec_extra"
-  export CXXFLAGS="-O2 -fPIC $lto_extra $vis_extra $sec_extra"
+  unwind_extra="$(dep_unwind_cflags)"   # C++-safe .eh_frame trim, shared by all deps
+  export CFLAGS="-O2 -fPIC $lto_extra $vis_extra $sec_extra $unwind_extra"
+  export CXXFLAGS="-O2 -fPIC $lto_extra $vis_extra $sec_extra $unwind_extra"
   export LDFLAGS="$lto_extra"
 
   log "═══ ABI: $abi ═══"
@@ -329,14 +330,22 @@ build_abi() {
   android_iconv      "$abi" "$prefix"
   android_bzip2      "$abi" "$prefix"
   android_xz         "$abi" "$prefix"
-  android_expat      "$abi" "$prefix"
-  android_libpng     "$abi" "$prefix"
-  android_freetype   "$abi" "$prefix"
-  android_fribidi    "$abi" "$prefix"
-  android_harfbuzz   "$abi" "$prefix"
-  android_freetype2  "$abi" "$prefix"
-  android_fontconfig "$abi" "$prefix"
-  android_libass     "$abi" "$prefix"
+  # Font chain — built ONLY when libass is kept (strip_libass disabled in
+  # Settings ▸ Patches). By default patch_strip_libass.py drops mpv's libass
+  # dependency, so the expat/libpng/freetype/fribidi/harfbuzz/freetype-r2/
+  # fontconfig/libass chain is unreferenced and skipped (libpng + expat are
+  # font-only here — ffmpeg uses zlib/lzma, libxml2 is built
+  # --without-{png,iconv,lzma,zlib}).
+  if ! libass_stripped; then
+    android_expat      "$abi" "$prefix"
+    android_libpng     "$abi" "$prefix"
+    android_freetype   "$abi" "$prefix"
+    android_fribidi    "$abi" "$prefix"
+    android_harfbuzz   "$abi" "$prefix"
+    android_freetype2  "$abi" "$prefix"
+    android_fontconfig "$abi" "$prefix"
+    android_libass     "$abi" "$prefix"
+  fi
   android_speexdsp   "$abi" "$prefix"
   android_rubberband "$abi" "$prefix"
   # OpenSSL's android-* targets own their toolchain resolution: they
@@ -727,7 +736,9 @@ android_ffmpeg() {
   local cc; cc="$(ndk_cc "$abi")"
 
   # Flags for armeabi-v7a: NEON
-  local extra_cflags="-O2 -fPIC"
+  # eh_frame_cflags(): C-only .eh_frame trim — ffmpeg is pure C, so it's safe here
+  # (NOT in the shared CFLAGS/CXXFLAGS, which also compile the C++ deps).
+  local extra_cflags="-O2 -fPIC $(eh_frame_cflags)"
   local extra_config=""
   [[ "$abi" == "armeabi-v7a" ]] && extra_cflags+=" -mfpu=neon -mfloat-abi=softfp"
   [[ "$abi" == "x86" ]] && extra_config="--disable-asm"
@@ -839,7 +850,9 @@ android_mpv() {
     # member) — `--exclude-libs` only suppresses exports from archives,
     # so JNI_OnLoad survives into .dynsym and the version script keeps
     # it global.
-    local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined"
+    # Shared ELF size flags (-Bsymbolic + RELR relative-reloc packing) come from
+    # mpv_elf_size_ldflags() in _audio_only.sh so linux + android stay in sync.
+    local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv_android.ver"
     # Pin C++ runtime statically. -l:<filename>.a forces ld to use that
@@ -868,6 +881,7 @@ android_mpv() {
     -Daudiotrack=enabled \
     -Daaudio=enabled \
     -Dopensles=enabled \
+    -Dc_args="$(eh_frame_cflags)" \
     "${link_extra[@]}"
   verify_mpv_config "$bdir" "android"
   ninja -j"$JOBS"; ninja install

@@ -129,8 +129,9 @@ WIN_FLAGS="-D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00"
 LTO_EXTRA="$(lto_deps_cflags)"
 VIS_EXTRA="$(vis_deps_cflags)"
 SEC_EXTRA="$(section_gc_cflags)"
-CFLAGS_COMMON="-O2 -pipe $WIN_FLAGS -I$DIST/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA"
-CXXFLAGS_COMMON="-O2 -pipe $WIN_FLAGS -I$DIST/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA"
+UNWIND_EXTRA="$(dep_unwind_cflags)"   # C++-safe .eh_frame trim, shared by all deps
+CFLAGS_COMMON="-O2 -pipe $WIN_FLAGS -I$DIST/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
+CXXFLAGS_COMMON="-O2 -pipe $WIN_FLAGS -I$DIST/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
 CPPFLAGS_COMMON="-I$DIST/include"
 # Static-runtime flags differ between GCC and clang. GCC: -static-libgcc /
 # -static-libstdc++ embed libgcc & libstdc++. clang/llvm-mingw: rely on
@@ -250,6 +251,15 @@ if [[ ! -f "$DIST/lib/libiconv.a" ]]; then
   ok "libiconv ✓"
 fi
 
+# ── font stack — built ONLY when libass is kept ──────────────────────────────
+# By default libass is stripped from mpv (patch_strip_libass.py), so the entire
+# font chain it pulls in — expat, libpng, freetype (both passes), fribidi,
+# harfbuzz, fontconfig, libass — is unreferenced and skipped, and the font -l
+# flags are dropped from WIN_USR_LIBS below (a leftover -lass with no libass.a
+# would break the final link). Disabling strip_libass in Settings ▸ Patches
+# rebuilds this chain and re-adds the link flags. Gated as one block so the
+# inner `if [[ ! -f ]]` rebuild-skip guards are preserved.
+if ! libass_stripped; then
 # ── expat ─────────────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/libexpat.a" ]]; then
   log "Building expat $EXPAT_VERSION..."
@@ -358,6 +368,7 @@ if [[ ! -f "$DIST/lib/libfontconfig.a" ]]; then
   popd
   ok "fontconfig ✓"
 fi
+fi  # ! libass_stripped
 
 # ── speexdsp ──────────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/libspeexdsp.a" ]]; then
@@ -438,7 +449,8 @@ if [[ ! -f "$DIST/lib/libplacebo.a" ]]; then
   ok "libplacebo ✓"
 fi
 
-# ── libass ────────────────────────────────────────────────────────────────
+# ── libass — built ONLY when libass is kept (see font-stack block above) ──────
+if ! libass_stripped; then
 if [[ ! -f "$DIST/lib/libass.a" ]]; then
   log "Building libass $LIBASS_VERSION..."
   LA=$(fetch libass "https://github.com/libass/libass/releases/download/${LIBASS_VERSION}/libass-${LIBASS_VERSION}.tar.gz")
@@ -450,6 +462,7 @@ if [[ ! -f "$DIST/lib/libass.a" ]]; then
   popd
   ok "libass ✓"
 fi
+fi  # ! libass_stripped
 
 # ── openssl ───────────────────────────────────────────────────────────────────
 # Both arches use OpenSSL's "mingw64" Configure target — for aarch64 the
@@ -594,7 +607,7 @@ if [[ ! -f "$DIST/lib/libavcodec.a" ]]; then
       $(ffmpeg_common_args) \
       $FFMPEG_CROSS_ARGS \
       --disable-d3d11va --disable-dxva2 --disable-cuda-llvm \
-      --extra-cflags="-I$DIST/include $WIN_FLAGS" \
+      --extra-cflags="-I$DIST/include $WIN_FLAGS $(eh_frame_cflags)" \
       --extra-cxxflags="-I$DIST/include $WIN_FLAGS" \
       --extra-ldflags="-L$DIST/lib $STATIC_RUNTIME_LDFLAGS"
     verify_ffmpeg_config "." "windows"
@@ -642,16 +655,25 @@ pushd "$SRC/mpv-$MPV_VERSION"
   # depends on. `--start-group` lets ld revisit archives for circular refs.
   #
   # Layered order (left → right means consumer → provider):
-  #   font stack: libass → fontconfig → harfbuzz → freetype → fribidi
+  #   font stack: libass → fontconfig → harfbuzz → freetype → fribidi (kept only
+  #               when strip_libass is disabled; private deps libpng + expat)
   #   media:      libplacebo, librubberband, libsmb2, libxml2, libspeexdsp
-  #   compression: libpng, zlib, bz2, lzma, iconv, expat
+  #   compression: zlib, bz2, lzma, iconv
   #   tls:        openssl (ssl + crypto)
   #   threading + winsock: winpthread, ws2_32 (libsmb2)
   #   Windows system libs: avrt, dwmapi, gdi32, …
+  # The font -l flags are added ONLY when libass is kept (strip_libass disabled);
+  # a leftover -lass with no libass.a would break the link. libswscale needs no
+  # entry here — when kept it comes in via mpv's own dependency('libswscale')
+  # pkg-config, like the other libav* archives. -Wl,--start-group lets ld revisit
+  # archives for circular refs, so the exact intra-group order is not critical.
+  _font_libs=""
+  if ! libass_stripped; then
+    _font_libs="-lass -lfontconfig -lharfbuzz -lfribidi -lfreetype -lpng16 -lexpat "
+  fi
   WIN_USR_LIBS="-Wl,--start-group \
-    -lass -lfontconfig -lharfbuzz -lfribidi -lfreetype \
-    -lplacebo -lrubberband -lsmb2 -lxml2 -lspeexdsp \
-    -lpng16 -lz -lbz2 -llzma -liconv -lexpat \
+    ${_font_libs}-lplacebo -lrubberband -lsmb2 -lxml2 -lspeexdsp \
+    -lz -lbz2 -llzma -liconv \
     -lssl -lcrypto \
     -Wl,--end-group"
   # -luxtheme: w32_common.c calls SetWindowTheme. GNU ld GCs the dead win32-VO
@@ -668,6 +690,15 @@ pushd "$SRC/mpv-$MPV_VERSION"
   C_LINK_ARGS="-static -L$DIST/lib -L${WIN_SYSROOT_LIB} $STATIC_RUNTIME_LDFLAGS $EXPORT_HYGIENE_LDFLAGS $WIN_USR_LIBS -lstdc++ $WIN_SYS_LIBS"
   CPP_LINK_ARGS="-static -L$DIST/lib -L${WIN_SYSROOT_LIB} $STATIC_RUNTIME_LDFLAGS_CXX $EXPORT_HYGIENE_LDFLAGS $WIN_USR_LIBS $WIN_SYS_LIBS"
 
+  # GCC's partial inlining clones an exported function into `<fn>.part.N`, and
+  # GNU mingw ld force-exports that clone (it inherits MPV_EXPORT's dllexport)
+  # ON TOP of the DEF — leaking a 55th `mpv_*` export (seen as
+  # `mpv_render_context_free.part.0` on win-x86_64). Disable it so the export
+  # table is exactly the DEF's 54. GCC-only: clang (llvm-mingw, win-arm64)
+  # neither knows the flag nor emits `.part` clones.
+  NO_PARTIAL_INLINING=""
+  [[ "$CROSS_TOOLCHAIN_KIND" == "gnu" ]] && NO_PARTIAL_INLINING="-fno-partial-inlining"
+
   meson setup build \
     --cross-file "$CROSS_MESON_FILE" \
     --prefix="$DIST" --libdir=lib \
@@ -676,8 +707,8 @@ pushd "$SRC/mpv-$MPV_VERSION"
     $(mpv_common_args) \
     -Dwasapi=enabled \
     -Dwin32-threads=enabled \
-    -Dc_args="-I$DIST/include $WIN_FLAGS" \
-    -Dcpp_args="-I$DIST/include $WIN_FLAGS" \
+    -Dc_args="-I$DIST/include $WIN_FLAGS $(eh_frame_cflags) $NO_PARTIAL_INLINING" \
+    -Dcpp_args="-I$DIST/include $WIN_FLAGS $NO_PARTIAL_INLINING" \
     -Dc_link_args="$C_LINK_ARGS" \
     -Dcpp_link_args="$CPP_LINK_ARGS"
   verify_mpv_config "build" "windows"
@@ -697,6 +728,11 @@ mkdir -p "$release_dir"
 OUT_ARCH="$(cross_folder_arch windows "$ARCH")"
 OUT_FILE="$release_dir/libmpv_windows-${OUT_ARCH}.dll"
 cp "$DIST/bin/libmpv-2.dll" "$OUT_FILE"
+# Strip the shipped DLL — meson leaves the COFF symbol table + DWARF debug
+# sections in the .dll (~2.5-3.4M of dead weight). The mpv_* exports live in the
+# PE export table (.edata), NOT the COFF symbol table, so --strip-all keeps the
+# full public API. (Linux/Android already strip; Windows/macOS/iOS did not.)
+"$STRIP" --strip-all "$OUT_FILE"
 
 log "=== Build libmpv for Windows COMPLETED! ==="
 log "Artifact: $OUT_FILE"

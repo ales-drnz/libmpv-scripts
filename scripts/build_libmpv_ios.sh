@@ -172,6 +172,11 @@ write_ios_cross() {
   [[ "${ENABLE_LTO_DEPS:-1}" != "0" ]] && lto_arg=", '-flto=thin'"
   local vis_arg=""
   [[ "${VIS_HIDDEN:-1}" != "0" ]] && vis_arg=", '-fvisibility=hidden', '-fvisibility-inlines-hidden'"
+  # mpv C-only eh_frame trim, injected INTO the cross-file c_args (NOT via a
+  # command-line -Dc_args, which would OVERRIDE the array and drop -arch/-isysroot
+  # — that breaks meson's iOS-SDK symbol checks like kAudioUnitSubType_RemoteIO).
+  local ehf_arg="" _f
+  for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
   cat > "$file" << EOF
 [binaries]
 c = '${CC_BIN}'
@@ -183,7 +188,7 @@ strip = 'strip'
 pkg-config = 'pkg-config'
 
 [built-in options]
-c_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
+c_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}${ehf_arg}]
 cpp_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
 objc_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
 objcpp_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
@@ -260,8 +265,12 @@ Cflags: -I\${includedir}
 EOF
 
   local cf; cf="$(cflags_for "$sdk" "$arch")"
-  export CFLAGS="$cf -O2"
-  export CXXFLAGS="$cf -O2"
+  # $(dep_unwind_cflags): C++-safe .eh_frame trim, shared across all deps
+  # (matches $LTO_EXTRA/$VIS_EXTRA wiring in the linux reference). The
+  # stronger C-only eh_frame_cflags() goes into ffmpeg --extra-cflags +
+  # mpv -Dc_args instead, never here (these compile the C++/ObjC deps).
+  export CFLAGS="$cf -O2 $(dep_unwind_cflags)"
+  export CXXFLAGS="$cf -O2 $(dep_unwind_cflags)"
   export LDFLAGS="$cf"
   export CC="$CC_BIN"
   export CXX="$CXX_BIN"
@@ -273,18 +282,24 @@ EOF
 
   log "═══ Slice: $sdk / $arch ═══"
 
-  # Ordine: base → font → audio → core
+  # Ordine: base → [font] → audio → core
+  # Font chain — built ONLY when libass is kept (strip_libass disabled in
+  # Settings ▸ Patches). By default libass is stripped from mpv
+  # (patch_strip_libass.py), so freetype/harfbuzz/fontconfig/fribidi/libass —
+  # plus their font-only deps expat + libpng — are unreferenced and skipped.
   slice_zlib       "$sdk" "$arch" "$prefix" "$cf"
   slice_bzip2      "$sdk" "$arch" "$prefix" "$cf"
   slice_xz         "$sdk" "$arch" "$prefix" "$cf"
-  slice_expat      "$sdk" "$arch" "$prefix" "$cf"
-  slice_libpng     "$sdk" "$arch" "$prefix" "$cf"
-  slice_freetype   "$sdk" "$arch" "$prefix" "$cf"
-  slice_fribidi    "$sdk" "$arch" "$prefix" "$cf"
-  slice_harfbuzz   "$sdk" "$arch" "$prefix" "$cf"
-  slice_freetype2  "$sdk" "$arch" "$prefix" "$cf"
-  slice_fontconfig "$sdk" "$arch" "$prefix" "$cf"
-  slice_libass     "$sdk" "$arch" "$prefix" "$cf"
+  if ! libass_stripped; then
+    slice_expat      "$sdk" "$arch" "$prefix" "$cf"
+    slice_libpng     "$sdk" "$arch" "$prefix" "$cf"
+    slice_freetype   "$sdk" "$arch" "$prefix" "$cf"
+    slice_fribidi    "$sdk" "$arch" "$prefix" "$cf"
+    slice_harfbuzz   "$sdk" "$arch" "$prefix" "$cf"
+    slice_freetype2  "$sdk" "$arch" "$prefix" "$cf"
+    slice_fontconfig "$sdk" "$arch" "$prefix" "$cf"
+    slice_libass     "$sdk" "$arch" "$prefix" "$cf"
+  fi
   slice_speexdsp   "$sdk" "$arch" "$prefix" "$cf"
   slice_rubberband "$sdk" "$arch" "$prefix" "$cf"
   slice_openssl    "$sdk" "$arch" "$prefix" "$cf"
@@ -728,7 +743,7 @@ slice_ffmpeg() {
     --arch="$arch" \
     --target-os=darwin \
     --cc="$CC_BIN" --cxx="$CXX_BIN" \
-    --extra-cflags="-arch $arch $min_flag -isysroot $sysroot -I$prefix/include -O2" \
+    --extra-cflags="-arch $arch $min_flag -isysroot $sysroot -I$prefix/include -O2 $(eh_frame_cflags)" \
     --extra-ldflags="-arch $arch $min_flag -isysroot $sysroot -L$prefix/lib" \
     --disable-videotoolbox \
     --enable-audiotoolbox
@@ -826,6 +841,16 @@ assemble_xcframework() {
     install_name_tool -id "@rpath/libmpv.framework/libmpv" "$fw/libmpv"
     # Defensive — Xcode 14+ no longer accepts bitcode segments on upload.
     xcrun bitcode_strip -r "$fw/libmpv" -o "$fw/libmpv" 2>/dev/null || true
+    # Strip local symbols + debug (~1.3M; meson does not strip). -x keeps the
+    # exported mpv_* API + @rpath install_name. Done before the hygiene count.
+    strip -x "$fw/libmpv" 2>/dev/null || true
+    # Re-sign the Mach-O AFTER the last edit (bitcode_strip / install_name_tool /
+    # strip -x all rewrite the binary and invalidate the linker's adhoc signature).
+    # A broken-signature dylib SIGKILLs on dlopen on Apple Silicon (iOS Simulator
+    # host loads, direct loads); a consumer app re-signs on embed, but the later
+    # `codesign --deep` on the xcframework does NOT reliably re-sign this inner
+    # Mach-O, so sign it explicitly here. Matches the macOS build.
+    codesign -s - --force "$fw/libmpv" 2>/dev/null || true
 
     # Export-filter hygiene (mirrors the macOS sanity check): the exports list
     # is `_mpv_*`, so with it applied we expect ~60 exported (T) symbols —

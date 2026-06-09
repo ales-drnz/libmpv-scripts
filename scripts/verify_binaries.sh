@@ -17,6 +17,11 @@
 #   5.  Required audio decoder whitelist sample present
 #   6.  Required audio filter whitelist sample present
 #   7.  No forbidden video decoders (audio-only invariant)
+#  7b.  Adaptive feature presence — cross-checks the binary against the
+#       current Settings ▸ Patches strip selection (swscale / libass+fonts /
+#       GPU-render / Windows icon present iff NOT stripped), and asserts the
+#       always-on audio-path features (HTTPS/TLS, rubberband, DASH, OpenSSL,
+#       SMB2-when-enabled). Catches a strip that silently didn't take effect.
 #   8.  External runtime dependency list (informative)
 #   9.  Embedded dep VERSIONS match scripts/_versions.sh — catches the
 #       classic "I bumped harfbuzz in _versions.sh but the build cache held
@@ -73,19 +78,27 @@
 #  5  Audio decoders              ✓    ✓     ✓     ✓     ✓
 #  6  Audio filters               ✓    ✓     ✓     ✓     ✓
 #  7  Audio-only invariant        ✓    ✓     ✓     ✓     ✓
+# 7b  Feature presence (strips)    ✓    ✓     ✓     ✓     ✓    adaptive to Settings ▸ Patches (swscale/libass/GPU/win-icon + core protocols)
 #  8  Runtime dependencies        ·    ·     ·     ·     ·    info; the allowlist assertion is #11
 #  9  Dependency versions         ✓    ✓     ✓     ✓     ✓
 # 10  API surface hash            ·    ·     ·     ·     ·    info; asserted globally by the cross-platform audit
 # 11  NEEDED allowlist            ✓    ✓     ✓     ✓     ✓
 # 12  UND resolvability          N/A  N/A    ✓    N/A    ✓    nm/ELF-based; Mach-O & PE binds are resolved by their own loader (#13)
-# 13  Runtime load test          N/A  N/A    ✓     ✓    N/A   needs the platform's real loader (Apple dyld; no emulator-less Android path)
+# 13  Runtime load test          ✓†   N/A    ✓     ✓    N/A   needs the platform's real loader (Apple dyld; no emulator-less Android path)
 # 14  Stub detection             N/A  N/A   N/A   N/A    ✓    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
 #
-# Static categories (1-11) run on EVERY artifact — including the macOS/iOS
-# xcframeworks, whose inner Mach-O dylib is extracted and inspected. Only the
-# runtime categories (12-14) vary by platform, and every non-applicable cell
-# emits its reason, so the report never shows an unexplained gap and the per-OS
-# "passed" tally is always paired with an "N/A (reason)" breakdown.
+#  † macOS L13 runs the REAL dyld dlopen(RTLD_NOW) when verify is invoked
+#    natively on a macOS host (./scripts/verify_binaries.sh macos) — clang
+#    compiles the dlopen_test helper and loads the universal dylib's host-arch
+#    slice. Inside the Linux build container it self-reports N/A with that
+#    pointer (a Mach-O can't load under a Linux loader). iOS stays N/A (device
+#    arm64 slice; the simulator slice needs the iOS Simulator runtime).
+#
+# Static categories (1-11, plus 7b) run on EVERY artifact — including the
+# macOS/iOS xcframeworks, whose inner Mach-O dylib is extracted and inspected.
+# Only the runtime categories (12-14) vary by platform, and every non-applicable
+# cell emits its reason, so the report never shows an unexplained gap and the
+# per-OS "passed" tally is always paired with an "N/A (reason)" breakdown.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -579,9 +592,10 @@ layer12_und_resolvable() {
 #   iOS    → skipped: static archive, no runtime loader. Validated at
 #            consumer link-time when building the iOS test_app.
 #
-# Args: $1 = platform, $2 = arch, $3 = artifact path
+# Args: $1 = platform, $2 = arch, $3 = artifact path, $4 = inspect path
+#       (the extracted inner Mach-O for xcframeworks; == artifact otherwise)
 layer13_load_test() {
-  local platform="$1" arch="$2" artifact="$3"
+  local platform="$1" arch="$2" artifact="$3" inspect="${4:-$3}"
   phase l13
 
   case "$platform" in
@@ -594,13 +608,82 @@ layer13_load_test() {
     android)
       na "no emulator-less Android load path; UND resolvability (L12) + JNI stub detection (L14) carry the runtime guarantee here."
       ;;
-    macos|ios)
-      na "needs Apple's dyld/Xcode runtime; the maintainer's local 'flutter test' exercises the real dyld load, and the static layers (1-11) validate the dylib."
+    macos)
+      # Runs the REAL dyld load when verify is invoked natively on a macOS host
+      # (./scripts/verify_binaries.sh macos). Inside the Linux build container it
+      # self-reports N/A with that pointer — a macOS dylib cannot be dlopen'd by a
+      # Linux loader.
+      _l13_macos_dlopen "$inspect"
+      ;;
+    ios)
+      na "iOS device slice targets arm64-ios; no host loader (the simulator slice needs the iOS Simulator runtime, not plain dyld). Static layers (1-11) + the consumer link-time check cover it."
       ;;
     *)
       warn "L13: no load test for platform=$platform"
       ;;
   esac
+}
+
+# macOS dlopen(RTLD_NOW) on a Darwin host. Closes the L13 gap for macOS: when
+# verify runs natively on the Mac (clang present), it compiles the shared
+# dlopen_test helper with the host clang and loads the universal dylib's
+# host-arch slice — the exact dyld bind a Flutter app does at startup — then
+# creates + initializes an mpv handle and reads back patched properties.
+_l13_macos_dlopen() {
+  local dylib="$1"
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    na "macOS dlopen needs a macOS host; this run is on $(uname -s) (e.g. the Linux build container — a Mach-O dylib cannot be loaded there). Run ./scripts/verify_binaries.sh macos natively on macOS to exercise the real dyld load; static layers (1-11) validate the dylib here."
+    return 0
+  fi
+  if ! command -v clang >/dev/null 2>&1; then
+    na "macOS dlopen needs clang (Xcode Command Line Tools) on the host; not found. Static layers (1-11) validate the dylib."
+    return 0
+  fi
+  if [[ -z "$dylib" || ! -f "$dylib" ]]; then
+    warn "L13 macOS: inner libmpv dylib not found to dlopen"
+    return 0
+  fi
+  local helper_src="$LIBMPV_SCRIPTS_ROOT/verify/dlopen_test.c"
+  if [[ ! -f "$helper_src" ]]; then
+    warn "L13: dlopen helper missing: $helper_src"
+    return 0
+  fi
+  local helper_bin; helper_bin="$(mktemp)"
+  # macOS: dlopen/dlsym live in libSystem (no -ldl needed). Build for the host
+  # arch so dlopen resolves the matching universal slice.
+  if ! clang -O0 -o "$helper_bin" "$helper_src" 2>/dev/null; then
+    fail "L13: dlopen helper failed to compile with host clang"
+    rm -f "$helper_bin"
+    return 0
+  fi
+  # The shipped dylib is adhoc-signed but the build's `strip -x` rewrote the
+  # Mach-O AFTER signing, so its CodeDirectory hashes no longer match. On Apple
+  # Silicon the kernel SIGKILLs any process that dlopen()s a broken-signature
+  # image, so re-sign an adhoc COPY (the original is untouched; a consumer app
+  # re-signs the dylib as part of its own bundle anyway). codesign is part of
+  # the Xcode CLT that already provides clang above.
+  local load_dylib="$dylib" signed_copy=""
+  if command -v codesign >/dev/null 2>&1; then
+    signed_copy="$(mktemp)"
+    if cp "$dylib" "$signed_copy" && codesign --force --sign - "$signed_copy" 2>/dev/null; then
+      load_dylib="$signed_copy"
+    else
+      rm -f "$signed_copy"; signed_copy=""
+    fi
+  fi
+  local TO=()
+  if command -v timeout  >/dev/null 2>&1; then TO=(timeout 60)
+  elif command -v gtimeout >/dev/null 2>&1; then TO=(gtimeout 60); fi
+  local out rc
+  out="$("${TO[@]}" "$helper_bin" "$load_dylib" 2>&1)"; rc=$?
+  rm -f "$helper_bin"; [[ -n "$signed_copy" ]] && rm -f "$signed_copy"
+  case "$rc" in
+    0)   pass "L13 dlopen(RTLD_NOW, host dyld): loads + initializes + patched props respond at runtime ($(uname -m) slice)" ;;
+    124) fail "L13 dlopen timed out after 60s: $out" ;;
+    137) fail "L13 dlopen killed (SIGKILL=137) — likely a code-signature rejection the adhoc re-sign didn't fix: $out" ;;
+    *)   fail "L13 dlopen failed (exit=$rc): $out" ;;
+  esac
+  return 0
 }
 
 _l13_linux_dlopen() {
@@ -900,6 +983,117 @@ _l14_jni_onload_real() {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Layer 7b — adaptive feature presence (tracks Settings ▸ Patches strips)
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-checks the binary against the CURRENT reduction-patch selection (read
+# from DISABLED_PATCHES via _audio_only.sh, which the build TUI writes into
+# _user_overrides.sh). For each toggleable strip we look for a marker string
+# that is reliably present ONLY when the subsystem is actually linked — chosen
+# empirically against the shipped binaries so it survives strip + LTO:
+#
+#   strip_swscale       → "libswscale"          (av_log version banner row + lib)
+#   strip_libass        → "FreeType"/"HarfBuzz" (font stack; the bare "libass"
+#                                                 token is NOT used — the
+#                                                 "libass-version" property name
+#                                                 persists even when stripped)
+#   strip_mpv_dead      → "gpu-next"/"vo_gpu"   (the GPU VO names; "screenshot"
+#                                                 / "libplacebo" persist when
+#                                                 stripped so are NOT used)
+#   strip_win_resources → a PE ".rsrc" section  (Windows only; the icon resource)
+#
+# A marker being PRESENT is strong evidence the subsystem is linked (a removed
+# library leaves no string literals behind). A marker being ABSENT is weaker —
+# aggressive LTO could remove it even when the code is in — so the assertion is
+# asymmetric: a feature that must be STRIPPED but whose marker is present is a
+# hard fail (the strip silently didn't take); a feature that must be KEPT but
+# whose marker is missing is a warn (surfaced; the L13 load test + build-time
+# config audit carry the runtime guarantee). The common case — verifying a
+# default all-stripped build — asserts every marker absent and passes cleanly.
+#
+# It also asserts the always-on audio-path features are present (HTTPS/TLS,
+# rubberband, DASH, OpenSSL, and SMB2 when the libsmb2 patch is enabled).
+
+# _feat_assert <label> <present|absent> <marker-hit-count>
+_feat_assert() {
+  local label="$1" expected="$2" found="$3"
+  if [[ "$expected" == absent ]]; then
+    if (( found > 0 )); then
+      fail "feature $label: present but selection says STRIPPED (marker hits=$found) — strip patch did not take effect"
+    else
+      pass "feature $label: correctly absent (stripped)"
+    fi
+  else
+    if (( found > 0 )); then
+      pass "feature $label: present as selected (marker hits=$found)"
+    else
+      warn "feature $label: selected as KEPT but no static marker found (LTO may have removed it; L13 load + build-time config audit cover the runtime guarantee)"
+    fi
+  fi
+}
+
+# Args: $1 platform  $2 str_text  $3 inspect-path  $4 LLVM bin dir
+layer_feature_presence() {
+  local platform="$1" str="$2" inspect="$3" LD="$4"
+  phase features
+  local n
+
+  # swscale — "libswscale" appears 0× on a stripped binary (verified on the
+  # shipped linux/android artifacts).
+  n=$(grep -cF "libswscale" <<<"$str" || true)
+  if swscale_stripped; then _feat_assert "libswscale (pixel scaler)" absent "$n"
+  else                      _feat_assert "libswscale (pixel scaler)" present "$n"; fi
+
+  # libass + font stack — FreeType/HarfBuzz are 0× when stripped; they only
+  # enter the binary via the font chain that strip_libass removes.
+  n=$(grep -ciE 'freetype|harfbuzz' <<<"$str" || true)
+  if libass_stripped; then _feat_assert "libass + font stack" absent "$n"
+  else                     _feat_assert "libass + font stack" present "$n"; fi
+
+  # GPU/render/screenshot stack — the GPU VO names gpu-next/vo_gpu are 0× when
+  # strip_mpv_dead removed video/out/*.
+  n=$(grep -ciE 'gpu-next|vo_gpu' <<<"$str" || true)
+  if patch_on strip_mpv_dead; then _feat_assert "GPU/render stack" absent "$n"
+  else                             _feat_assert "GPU/render stack" present "$n"; fi
+
+  # Windows icon/manifest/version resources — a PE .rsrc section. No-op patch
+  # off Windows, so there is nothing to assert there.
+  if [[ "$platform" == windows ]]; then
+    local rsrc=0
+    if [[ -x "$LD/llvm-objdump" ]]; then
+      rsrc=$("$LD/llvm-objdump" -h "$inspect" 2>/dev/null | grep -c '\.rsrc' || true)
+    elif command -v objdump >/dev/null 2>&1; then
+      rsrc=$(objdump -h "$inspect" 2>/dev/null | grep -c '\.rsrc' || true)
+    fi
+    if patch_on strip_win_resources; then
+      if (( rsrc > 0 )); then fail "feature Windows icon/.rsrc: present but selection says STRIPPED"
+      else                    pass "feature Windows icon/.rsrc: correctly absent (stripped)"; fi
+    else
+      if (( rsrc > 0 )); then pass "feature Windows icon/.rsrc: present as selected"
+      else                    warn "feature Windows icon/.rsrc: selected as KEPT but no .rsrc section found"; fi
+    fi
+  else
+    na "Windows icon/resources strip is a no-op off Windows (the resource block is win32-gated)."
+  fi
+
+  # ── Always-on audio-path features — must be present on every platform ──
+  local e mk lbl
+  for e in "https:HTTPS/TLS protocol" "rubberband:rubberband (pitch/tempo)" "dash:DASH demuxer" "OpenSSL:OpenSSL TLS backend"; do
+    mk="${e%%:*}"; lbl="${e#*:}"
+    if grep -qiF "$mk" <<<"$str"; then pass "feature present: $lbl"
+    else fail "feature MISSING: $lbl (marker '$mk')"; fi
+  done
+  # SMB2/NAS — adaptive on the libsmb2 patch (same selection that gates the
+  # protocol in ffmpeg_common_args).
+  n=$(grep -ciE 'smb2' <<<"$str" || true)
+  if patch_on libsmb2; then
+    if (( n > 0 )); then pass "feature present: SMB2/NAS protocol"
+    else fail "feature MISSING: SMB2/NAS protocol (libsmb2 patch enabled)"; fi
+  else
+    info "SMB2/NAS protocol: libsmb2 patch disabled — not asserted"
+  fi
+}
+
 # Map a libmpv_<plat>-<arch>.<ext> filename → arch token.
 arch_from_artifact() {
   case "$1" in
@@ -991,18 +1185,31 @@ check_binary() {
       deps=$("$READELF" -d "$inspect" 2>/dev/null | awk '/NEEDED/ {gsub(/[\[\]]/, "", $NF); print $NF}')
       ;;
     dylib)
-      # Mach-O (llvm-mingw ships no `otool`). --exports-trie gives the actual
-      # exported symbols; sort -u dedups across a universal binary's fat slices
-      # so a 54-symbol dylib still counts 54, not 108. --dylibs-used = deps.
-      # `|| true`: don't let a non-zero exit (pipefail) from llvm-objdump abort
-      # the whole script — an empty result just surfaces as a failed exports
-      # check, which is visible rather than fatal.
-      exports=$({ "$LD/llvm-objdump" --macho --exports-trie "$inspect" 2>/dev/null \
-                | awk '$1 ~ /^0x/ {n=$NF; sub(/^_/, "", n); print n}' | sort -u; } || true)
-      # Dep lines are the load-command paths; the `<file>:` and per-arch
-      # `<file> (architecture …):` header lines end in ':' — exclude them so a
-      # universal binary's arch headers aren't mistaken for forbidden deps.
-      deps=$({ "$LD/llvm-objdump" --macho --dylibs-used "$inspect" 2>/dev/null | awk '/^[[:space:]]*\// && !/:$/ {print $1}' | sort -u; } || true)
+      # Mach-O. In the Linux build container we use llvm-mingw's llvm-objdump
+      # (it reads Mach-O cross-platform); when verify runs natively on a macOS
+      # host that toolchain is absent, so fall back to llvm-objdump on PATH or,
+      # last, the host's own nm/otool — this makes `verify_binaries.sh macos`
+      # work end-to-end on the Mac (and reach the L13 host dlopen test).
+      # --exports-trie gives the actual exported symbols; sort -u dedups across a
+      # universal binary's fat slices so a 54-symbol dylib still counts 54, not
+      # 108. --dylibs-used = deps. `|| true`: don't let a non-zero exit (pipefail)
+      # abort the whole script — an empty result just surfaces as a failed
+      # exports check, which is visible rather than fatal.
+      local OBJDUMP=""
+      if [[ -x "$LD/llvm-objdump" ]]; then OBJDUMP="$LD/llvm-objdump"
+      elif command -v llvm-objdump >/dev/null 2>&1; then OBJDUMP="$(command -v llvm-objdump)"; fi
+      if [[ -n "$OBJDUMP" ]]; then
+        exports=$({ "$OBJDUMP" --macho --exports-trie "$inspect" 2>/dev/null \
+                  | awk '$1 ~ /^0x/ {n=$NF; sub(/^_/, "", n); print n}' | sort -u; } || true)
+        # Dep lines are the load-command paths; the `<file>:` and per-arch
+        # `<file> (architecture …):` header lines end in ':' — exclude them so a
+        # universal binary's arch headers aren't mistaken for forbidden deps.
+        deps=$({ "$OBJDUMP" --macho --dylibs-used "$inspect" 2>/dev/null | awk '/^[[:space:]]*\// && !/:$/ {print $1}' | sort -u; } || true)
+      else
+        # Host (macOS) fallback: nm -gU = exported defined symbols; otool -L = deps.
+        exports=$({ nm -gU "$inspect" 2>/dev/null | awk '{n=$NF; sub(/^_/, "", n); print n}' | sort -u; } || true)
+        deps=$({ otool -L "$inspect" 2>/dev/null | awk 'NR>1 && /\// {print $1}' | sort -u; } || true)
+      fi
       ;;
   esac
   str_text=$(strings -a "$inspect" 2>/dev/null)
@@ -1043,6 +1250,56 @@ check_binary() {
   else
     fail "$leaks symbols leaked from static deps"
     grep -vE "(^_?mpv_)|($allowed_extra_re)" <<<"$exports" | head -3 | sed 's/^/     · /'
+  fi
+
+  # ── 2b. Per-slice integrity (Mach-O universal binaries) ──
+  # The export/leak checks above read the fat binary in AGGREGATE: `sort -u`
+  # merges symbols across slices, so a broken/stub slice (e.g. an x86_64 slice
+  # that lost `-arch` at compile time and shipped as a ~40 KB stub with 0 mpv_*
+  # exports) hides behind a healthy arm64 slice and the count still reads 54.
+  # Validate EACH architecture slice independently: a real libmpv is multi-MB
+  # with exactly $EXPECTED_MPV_EXPORTS mpv_* exports; a stub has neither.
+  if [[ "$kind" == "dylib" ]] && file "$inspect" 2>/dev/null | grep -q 'universal binary'; then
+    phase slices
+    local _have_lipo=0; command -v lipo >/dev/null 2>&1 && _have_lipo=1
+    local _archs=""
+    if (( _have_lipo )); then
+      _archs=$(lipo -archs "$inspect" 2>/dev/null)
+    elif [[ -n "$OBJDUMP" ]]; then
+      _archs=$("$OBJDUMP" --macho --universal-headers "$inspect" 2>/dev/null | awk '/architecture /{print $2}')
+    fi
+    if [[ -z "${_archs// }" ]]; then
+      warn "universal binary: could not enumerate slices — per-slice check skipped"
+    else
+      local _a
+      for _a in $_archs; do
+        local _sz=0 _sexp="" _smpv
+        if (( _have_lipo )); then
+          local _thin; _thin="$(mktemp)"
+          if lipo "$inspect" -thin "$_a" -output "$_thin" 2>/dev/null; then
+            _sz=$(stat -f%z "$_thin" 2>/dev/null || stat -c%s "$_thin" 2>/dev/null || echo 0)
+            if [[ -n "$OBJDUMP" ]]; then
+              _sexp=$({ "$OBJDUMP" --macho --exports-trie "$_thin" 2>/dev/null | awk '$1 ~ /^0x/ {n=$NF; sub(/^_/,"",n); print n}'; } || true)
+            else
+              _sexp=$({ nm -gU "$_thin" 2>/dev/null | awk '{n=$NF; sub(/^_/,"",n); print n}'; } || true)
+            fi
+          fi
+          rm -f "$_thin"
+        elif [[ -n "$OBJDUMP" ]]; then
+          _sexp=$({ "$OBJDUMP" --macho --arch="$_a" --exports-trie "$inspect" 2>/dev/null | awk '$1 ~ /^0x/ {n=$NF; sub(/^_/,"",n); print n}'; } || true)
+        fi
+        _smpv=$(grep -cE '^_?mpv_' <<<"$_sexp" || true)
+        if (( _smpv != EXPECTED_MPV_EXPORTS )); then
+          fail "slice $_a: $_smpv mpv_* exports (expected $EXPECTED_MPV_EXPORTS) — stub/broken slice"
+        elif (( _sz > 0 && _sz < 1000000 )); then
+          fail "slice $_a: undersized ($_sz bytes) — likely a stub, not a real libmpv"
+        elif (( _sz > 0 )); then
+          pass "slice $_a: real ($_smpv mpv_* exports, $_sz bytes)"
+        else
+          pass "slice $_a: real ($_smpv mpv_* exports)"
+        fi
+      done
+    fi
   fi
 
   # ── 3. patched mpv properties ──
@@ -1117,6 +1374,9 @@ check_binary() {
     fail "audio-only invariant: VIDEO decoder(s) compiled in: ${vid_found[*]}"
   fi
 
+  # ── 7b. adaptive feature presence (tracks Settings ▸ Patches strips) ──
+  layer_feature_presence "$platform" "$str_text" "$inspect" "$LD" || true
+
   # ── 8. external runtime deps (informative) ──
   phase deps
   local dep_count
@@ -1179,8 +1439,10 @@ check_binary() {
   # binary reports this category — no silent gap.
   layer12_und_resolvable "$platform" "$arch" "$artifact" "$deps" || true
 
-  # Layer 13: actual dlopen / LoadLibrary load test.
-  layer13_load_test "$platform" "$arch" "$artifact" || true
+  # Layer 13: actual dlopen / LoadLibrary load test. Pass the extracted inner
+  # dylib ($inspect) so the macOS host load test loads the real Mach-O, not the
+  # outer .xcframework.zip.
+  layer13_load_test "$platform" "$arch" "$artifact" "$inspect" || true
 
   # Layer 14: stub-function detection — Android only (defense-in-depth
   # for the ffmpeg --enable-jni / CONFIG_JNI=0 silent-stub bug class).

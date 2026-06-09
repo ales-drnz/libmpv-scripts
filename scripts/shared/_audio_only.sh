@@ -75,6 +75,13 @@ export AUDIO_DECODERS
 # Same sectioned shape as AUDIO_DECODERS for consistency. Parsers
 # operate on raw bitstreams before any decoder is involved, so there
 # are no Apple-only variants — the cross-platform set is the whole list.
+# NOTE: this is only the EXPLICITLY-requested set. ffmpeg's configure also
+# `select`s a parser automatically when a kept decoder/demuxer needs it — e.g.
+# `mlp_decoder_select="mlp_parser"` + `truehd_decoder_select="mlp_parser"` mean
+# CONFIG_MLP_PARSER=1 in every build (verified), so bare raw .mlp/.thd
+# elementary streams parse even though `mlp` is not listed here. So a decoder
+# can never end up without its required parser. verify_ffmpeg_config asserts
+# every entry here actually compiled (a defence-in-depth coverage check).
 AUDIO_PARSERS=""
 # ── all OSes ─────────────────────────────────────────────────────────────────
 AUDIO_PARSERS+="aac,aac_latm,ac3,cook,dca,flac,mpegaudio,opus,vorbis"
@@ -125,13 +132,13 @@ AUDIO_FILTERS+="acompressor,alimiter,agate,adrc,compand,mcompand,dynaudnorm,spee
 # ── EQ & Filtering ──────────────────────────────────────────────────────────
 AUDIO_FILTERS+=",equalizer,anequalizer,superequalizer,firequalizer,bass,treble,highpass,lowpass,highshelf,lowshelf,tiltshelf,bandpass,bandreject,allpass,biquad,aiir,atilt,asubboost,asubcut,asupercut,asuperpass,asuperstop,aemphasis"
 # ── Spatial / Stereo ────────────────────────────────────────────────────────
-AUDIO_FILTERS+=",stereotools,stereowiden,extrastereo,crossfeed,haas,headphone,surround,earwax,pan,channelmap,virtualbass,dialoguenhance,adecorrelate"
+AUDIO_FILTERS+=",stereotools,stereowiden,extrastereo,crossfeed,haas,surround,earwax,pan,channelmap,virtualbass,dialoguenhance,adecorrelate"
 # ── Time / Pitch ────────────────────────────────────────────────────────────
-AUDIO_FILTERS+=",atempo,rubberband,aresample,aformat,adelay,apad,compensationdelay,afade,aphaseshift,afreqshift"
+AUDIO_FILTERS+=",atempo,asetrate,rubberband,aresample,aformat,adelay,apad,compensationdelay,afade,aphaseshift,afreqshift"
 # ── Modulation / FX ─────────────────────────────────────────────────────────
 AUDIO_FILTERS+=",aecho,chorus,flanger,aphaser,apulsator,tremolo,vibrato"
 # ── Restoration / Noise ─────────────────────────────────────────────────────
-AUDIO_FILTERS+=",afftdn,afwtdn,anlmdn,arnndn,adeclick,adeclip,adenorm,aderivative,dcshift,hdcd,silenceremove"
+AUDIO_FILTERS+=",afftdn,afwtdn,anlmdn,arnndn,adeclick,adeclip,adenorm,aderivative,aintegral,dcshift,hdcd,silenceremove"
 # ── Loudness / Metering ─────────────────────────────────────────────────────
 AUDIO_FILTERS+=",loudnorm,ebur128,drmeter"
 # ── Misc / Analysis ─────────────────────────────────────────────────────────
@@ -176,6 +183,35 @@ patch_on() {
   esac
 }
 
+# swscale_stripped — true only when libswscale can actually be dropped. That
+# needs BOTH reduction patches on:
+#   - strip_swscale   severs mpv's own libswscale link (stubs mp_sws_*) and
+#                     pairs with ffmpeg --disable-swscale, AND
+#   - strip_mpv_dead  removes video/out/vo_tct.c + vo_kitty.c, the only TUs that
+#                     `#include <libswscale/swscale.h>` directly — they fail to
+#                     compile once the libswscale headers are gone.
+# If the user keeps the GPU/terminal-VO stack (strip_mpv_dead disabled) we must
+# therefore keep libswscale too, regardless of the strip_swscale checkbox. Both
+# ffmpeg_common_args (--disable-swscale vs --enable-swscale) and the mpv patch
+# application below pivot on this single predicate so the two sides never
+# disagree.
+swscale_stripped() {
+  patch_on strip_swscale && patch_on strip_mpv_dead
+}
+
+# libass_stripped — true when the libass subtitle/OSD stack must be removed.
+# libass can only be KEPT when BOTH strip_libass AND strip_mpv_dead are disabled:
+# the real sub/sd_ass.c + sub/ass_mp.c reference the subtitle decode/draw infra
+# (lavc_conv_*, sd_filter_sdh, mp_get_sub_bb_list / sub-bitmap draw_bmp) that
+# strip_mpv_dead removes — so stripping the dead mpv subsystems also forces
+# libass out (otherwise the final mpv link fails with those undefined refs).
+# Mirrors swscale_stripped()'s coupling to strip_mpv_dead. Every libass site
+# (patch application, font-stack build, link flags, HAVE_LIBASS audit, verify)
+# pivots on THIS predicate so the two sides never disagree.
+libass_stripped() {
+  patch_on strip_libass || patch_on strip_mpv_dead
+}
+
 # decoder_on <name> — true if <name> is in the (possibly user-overridden)
 # AUDIO_DECODERS list. Lets the config audit assert presence only for decoders
 # actually selected, so a trimmed selection never trips verify_ffmpeg_config.
@@ -211,18 +247,32 @@ ffmpeg_common_args() {
     _smb2_proto=",libsmb2"
     _smb2_flag="--enable-libsmb2"
   fi
+  # Optimize ffmpeg for size (default ON; FFMPEG_SMALL=0 to disable). Trades a
+  # little decode CPU for smaller libav* code; measured per-codec impact is
+  # modest for the audio path. Gated so the size/CPU delta is easy to isolate.
+  local _small_flag=""
+  [[ "${FFMPEG_SMALL:-1}" == "1" ]] && _small_flag="--enable-small"
+  # libswscale is the pixel-scaler. The audio-only consumer (vid=no, vo=null,
+  # sid=no, cover-art-as-bytes) never scales a pixel, so the swscale reduction
+  # patch drops it (~1.5M). When that strip is disabled — i.e. the user wants the
+  # video/render path back — ffmpeg must BUILD swscale so mpv's required
+  # `dependency('libswscale')` resolves via pkg-config. swscale_stripped()
+  # couples this to strip_mpv_dead (see its definition above).
+  local _swscale_flag="--enable-swscale"
+  swscale_stripped && _swscale_flag="--disable-swscale"
   cat <<EOF
 --enable-static
 --disable-shared
 --disable-programs
 --disable-doc
 --disable-debug
+${_small_flag}
 --enable-avcodec
 --enable-avfilter
 --enable-avformat
 --enable-avutil
 --enable-swresample
---enable-swscale
+${_swscale_flag}
 --disable-avdevice
 --disable-protocols
 --enable-protocol=file,http,https,tcp,udp,tls,data,pipe,async,cache,crypto,subfile${_smb2_proto}
@@ -370,6 +420,17 @@ verify_ffmpeg_config() {
   for _tok in $(printf '%s' "$AUDIO_FILTERS" | tr ',' ' '); do
     assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_FILTER" "1"
   done
+  # Parser coverage: every whitelisted parser must have compiled. A decoder
+  # advertised WITHOUT its companion raw-stream parser would silently fail on
+  # bare elementary streams (e.g. truehd/mlp without the `mlp` parser) while
+  # still passing the decoder audit above — this closes that blind spot.
+  for _tok in $(printf '%s' "$AUDIO_PARSERS" | tr ',' ' '); do
+    assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_PARSER" "1"
+  done
+  # BSF coverage: same idea for the auto-inserted bitstream filters.
+  for _tok in $(printf '%s' "$AUDIO_BSFS" | tr ',' ' '); do
+    assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_BSF" "1"
+  done
 
   # Audio-only invariant: the 4 most common video decoders MUST be off.
   # If one is present, the binary is at least 30% larger than necessary
@@ -444,7 +505,15 @@ verify_mpv_config() {
 
   # ── Cross-platform must-haves ─────────────────────────────────────────
   assert_define "$cfg" "HAVE_LIBPLACEBO" "1"
-  assert_define "$cfg" "HAVE_LIBASS"     "1"
+  # libass: adaptive. Stripped by default (audio-only: sid=no, vo=null) → HAVE
+  # is 0; when the user disables BOTH strip_libass AND strip_mpv_dead (see
+  # libass_stripped) the whole font stack is rebuilt and mpv re-detects libass
+  # via pkg-config → HAVE is 1.
+  if libass_stripped; then
+    assert_define "$cfg" "HAVE_LIBASS" "0"
+  else
+    assert_define "$cfg" "HAVE_LIBASS" "1"
+  fi
   assert_define "$cfg" "HAVE_RUBBERBAND" "1"
   assert_define "$cfg" "HAVE_ZLIB"       "1"
 
@@ -482,6 +551,14 @@ verify_mpv_config() {
 # Requires SCRIPT_DIR to be set to the directory containing this file.
 apply_ffmpeg_patches() {
   local ffmpeg_dir="$1"
+
+  # Keep codec long-names alive under --enable-small (CONFIG_SMALL NULLs every
+  # AVCodecDescriptor.long_name, which mpv surfaces as the `audio-codec`
+  # property). Un-wraps ONLY the .long_name rows in libavcodec/codec_desc.c
+  # (~8 KB of strings) so the descriptive codec name survives, while every other
+  # --enable-small saving (≈2.8 MB of code/tables) stays intact. Idempotent;
+  # no-op when --enable-small is off. Structural fidelity fix — not user-gated.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_codec_longnames.py" "$ffmpeg_dir"
 
   # libsmb2 patch (toggleable): gated by presence of the dropped-in file so we
   # don't retry the copy on every rebuild. Not fully idempotent (drops a new
@@ -532,9 +609,58 @@ _mpv_patch() {
 
 apply_mpv_patches_common() {
   local mpv_dir="$1"
-  # Required (build configures only with these) — never gated.
+  # Build infrastructure (libplacebo + libass made required:false) — never gated.
+  # MUST run before strip_libass/strip_mpv_dead, which both assume this form.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_optional_deps.py" "$mpv_dir/meson.build"
-  # Optional feature patches — toggleable from Settings ▸ Patches.
+
+  # ── Size-reduction patches (toggleable from Settings ▸ Patches) ──────────────
+  # Each strips a subsystem the audio-only consumer (vid=no, vo=null, sid=no,
+  # cover-art-as-bytes) never reaches. They default ON (smaller binary); the
+  # user restores a feature by disabling the corresponding strip in the TUI,
+  # which lists the patch in DISABLED_PATCHES so patch_on returns false here.
+
+  # strip_swscale: make libswscale optional + stub mp_sws_* so mpv links without
+  # it (paired with ffmpeg --disable-swscale). Coupled to strip_mpv_dead via
+  # swscale_stripped() because vo_tct.c/vo_kitty.c #include <libswscale/...>
+  # directly and are only removed by strip_mpv_dead — so we keep libswscale
+  # whenever either strip is off. Idempotent (meson.build, common/av_log.c,
+  # video/sws_utils.c).
+  if swscale_stripped; then
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_swscale_optional.py" "$mpv_dir"
+  else
+    warn "Keeping libswscale (strip_swscale or strip_mpv_dead disabled)"
+  fi
+
+  # strip_libass: fully remove libass (subtitle/OSD text render). Stubs the
+  # osd_libass/ass_mp/sd_ass symbols so the core still links, and lets the
+  # per-platform script drop the whole font chain (freetype/harfbuzz/fontconfig/
+  # fribidi/unibreak/expat/png) — gated there on the SAME libass_stripped().
+  # Coupled to strip_mpv_dead (see libass_stripped()): if the user disabled
+  # strip_libass alone we still apply it (libass needs the subtitle infra
+  # strip_mpv_dead removed) and warn. Idempotent; operates on the whole mpv tree.
+  if libass_stripped; then
+    if ! patch_on strip_libass; then
+      warn "libass still stripped: it needs the subtitle infra (lavc_conv/sd_filter/draw_bmp) that strip_mpv_dead removes — disable strip_mpv_dead too to restore subtitles."
+    fi
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_strip_libass.py" "$mpv_dir"
+  else
+    warn "Skipping disabled patch: strip_libass (libass kept — strip_mpv_dead also disabled)"
+  fi
+
+  # strip_mpv_dead: strip dead mpv subsystems unused by an audio-only consumer —
+  # the GPU/shader render stack (vo_gpu/vo_gpu_next + video/out/gpu/* — unlocks
+  # libplacebo renderer dead-strip), screenshot, encode mode, bitmap-subtitle
+  # decode, vo_tct/vo_kitty and the default keybindings table. Idempotent; stubs
+  # all cross-TU symbols. (Disabling this also forces libswscale to be kept —
+  # see swscale_stripped().)
+  _mpv_patch strip_mpv_dead     patch_strip_mpv_dead.py     "$mpv_dir"
+
+  # strip_win_resources: drop the Windows icon/manifest/version resources (~267K
+  # of PE .rsrc) — only meaningful for the mpv.exe player, dead weight in a
+  # libmpv DLL. No-op off Windows (the resource block is win32-gated). Idempotent.
+  _mpv_patch strip_win_resources patch_strip_win_resources.py "$mpv_dir"
+
+  # ── Optional feature patches — toggleable from Settings ▸ Patches. ───────────
   _mpv_patch afmt_reset         patch_afmt_reset.py         "$mpv_dir/options/m_option.c"
   _mpv_patch prefetch_hook      patch_prefetch_hook.py      "$mpv_dir/player/loadfile.c"
   _mpv_patch prefetch_state     patch_prefetch_state.py     "$mpv_dir"
@@ -719,4 +845,56 @@ section_gc_cflags() {
   if [[ "${SECTION_GC:-1}" != "0" ]]; then
     echo "-ffunction-sections -fdata-sections"
   fi
+}
+
+# ── Unwind-table trim for C-only ffmpeg + mpv (default ON; EH_FRAME_TRIM=0) ──
+# ffmpeg and mpv are pure C and use no exceptions, so their .eh_frame /
+# .eh_frame_hdr only serve crash-backtrace quality — not any audio feature.
+# Dropping them shrinks the shipped artifact (.eh_frame survives --strip-unneeded).
+# This MUST NOT go into the shared CFLAGS/CXXFLAGS or any meson cross-file, which
+# also compile the C++ deps (rubberband / harfbuzz / libplacebo / libass) that
+# need unwind tables for C++ exception correctness. Wire it ONLY via ffmpeg
+# --extra-cflags and mpv -Dc_args (both C-only knobs).
+eh_frame_cflags() {
+  [[ "${EH_FRAME_TRIM:-1}" == "0" ]] && return
+  echo "-fno-asynchronous-unwind-tables -fno-unwind-tables"
+}
+
+# ── Unwind-table trim for the C/C++ DEPENDENCY builds (default ON) ───────────
+# The weaker, C++-safe variant of eh_frame_cflags(): -fno-asynchronous-unwind-
+# tables drops the async .eh_frame (backtrace/profiler precision) but KEEPS C++
+# exception unwinding intact, so it is safe for the C++ deps (rubberband,
+# libplacebo). Add this to every platform's shared dep CFLAGS/CXXFLAGS export
+# (ffmpeg + mpv themselves get the stronger C-only eh_frame_cflags via their own
+# --extra-cflags / -Dc_args). Shared so the policy lives in one place.
+dep_unwind_cflags() {
+  [[ "${EH_FRAME_TRIM:-1}" == "0" ]] && return
+  echo "-fno-asynchronous-unwind-tables"
+}
+
+# ── Extra ELF size flags for the final libmpv link (linux + android) ─────────
+# Returned as a COMMA SUFFIX to append inside an existing `-Wl,...` group, e.g.
+#   ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
+#   -Bsymbolic            bind libmpv's internal global refs at link time (no
+#                         interposition; only mpv_* is exported) — cuts PLT/GOT.
+#   -z pack-relative-relocs  pack the relative dynrelocs into a bit-packed
+#                         .relr.dyn (~3% of .rela.dyn → ~1MB smaller). Needs a
+#                         DT_RELR-aware loader (glibc>=2.36 / Android NDK / musl
+#                         >=2022) — true for every target this is used on.
+# ELF-only: Mach-O (macOS/iOS) uses automatic chained fixups and PE (Windows)
+# has no RELR, so those platforms must NOT call this. Env opt-out: MPV_SIZE_LD=0.
+mpv_elf_size_ldflags() {
+  [[ "${MPV_SIZE_LD:-1}" == "0" ]] && return
+  echo ",-Bsymbolic,-z,pack-relative-relocs"
+}
+
+# ── libxml2 ./configure trim — keep only the DASH/IMF DOM subset ─────────────
+# ffmpeg's dashdec/imfdec use only xmlReadMemory + DOM tree navigation
+# (xmlGetProp/xmlNodeGetContent) + xmlNewNode (so --with-output stays). XPath,
+# DTD validation, regexps, schemas, c14n, the reader/pattern/xpointer/xinclude
+# APIs are unused — dropping them saves ~57K. Shared so every platform's
+# build_libxml2/slice_libxml2 appends the same set. Env opt-out: LIBXML2_TRIM=0.
+libxml2_trim_args() {
+  [[ "${LIBXML2_TRIM:-1}" == "0" ]] && return
+  echo "--without-xpath --without-valid --without-regexps --without-c14n --without-xptr --without-xinclude --without-schemas --without-schematron --without-reader --without-pattern --without-sax1"
 }

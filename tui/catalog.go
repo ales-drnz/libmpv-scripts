@@ -192,7 +192,6 @@ func ffmpegCatalog() []FFItem {
 		{Name: "extrastereo", Title: "Extra Stereo", Desc: "Linearly increase stereo separation", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
 		{Name: "crossfeed", Title: "Crossfeed", Desc: "Headphone crossfeed (blends L/R)", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
 		{Name: "haas", Title: "Haas", Desc: "Haas-effect stereo widening", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
-		{Name: "headphone", Title: "Headphone HRTF", Desc: "Binaural HRIR/HRTF virtual surround for headphones", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
 		{Name: "surround", Title: "Surround", Desc: "Matrix upmix/downmix between channel layouts", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
 		{Name: "earwax", Title: "Earwax", Desc: "Headphone-friendly stereo widening", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
 		{Name: "pan", Title: "Pan", Desc: "Remap/mix input channels to output channels", Category: "Spatial / Stereo", Kind: ffFilter, DefaultOn: true},
@@ -205,6 +204,7 @@ func ffmpegCatalog() []FFItem {
 		// FILTERS — Time / Pitch
 		// ---------------------------------------------------------------
 		{Name: "atempo", Title: "Tempo", Desc: "Change tempo (speed) without altering pitch", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
+		{Name: "asetrate", Title: "Sample Rate (Varispeed)", Desc: "Retag sample rate → pitch + speed (vinyl/tape varispeed)", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "rubberband", Title: "Rubber Band", Desc: "High-quality time-stretch / pitch-shift (librubberband)", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "aresample", Title: "Resample", Desc: "Resample sample rate / repack audio (libswresample)", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "aformat", Title: "Format", Desc: "Force sample format, rate, or channel layout", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
@@ -237,6 +237,7 @@ func ffmpegCatalog() []FFItem {
 		{Name: "adeclip", Title: "Declip", Desc: "Repair clipped (over-driven) audio", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
 		{Name: "adenorm", Title: "Denormal Fix", Desc: "Remedy denormals by adding tiny noise", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
 		{Name: "aderivative", Title: "Derivative", Desc: "Compute derivative of the audio signal", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
+		{Name: "aintegral", Title: "Integral", Desc: "Compute integral of the audio signal", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
 		{Name: "dcshift", Title: "DC Shift", Desc: "Apply/correct a DC offset on the audio", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
 		{Name: "hdcd", Title: "HDCD", Desc: "Decode High Definition Compatible Digital", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
 		{Name: "silenceremove", Title: "Silence Remove", Desc: "Remove silence from start/middle/end", Category: "Restoration / Noise", Kind: ffFilter, DefaultOn: true},
