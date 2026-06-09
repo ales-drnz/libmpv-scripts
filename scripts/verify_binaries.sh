@@ -45,6 +45,12 @@
 #       the case where ffmpeg was built without --enable-jni and
 #       av_jni_set_java_vm is a 2-instruction stub returning ENOSYS.
 #       Defense-in-depth for the build-time config audit.
+#  15.  Code-signing identity (Apple xcframeworks) — each slice's embedded
+#       code-signing identifier must equal its CFBundleIdentifier, or iOS
+#       installd rejects the device install (MismatchedBundleIDSigningIdentifier).
+#       Parses the Mach-O CodeDirectory directly (no macOS codesign needed), so
+#       it runs in-container. Catches the libmpv-r9 bare-Mach-O re-sign bug that
+#       every other layer missed (only a physical-device install enforces it).
 #
 # All inspection runs inside the mpv-build-env Docker container so we have
 # a single toolchain (binutils, llvm-readobj, llvm-objdump, qemu-user,
@@ -63,7 +69,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-OS check applicability matrix
 # ─────────────────────────────────────────────────────────────────────────────
-# Every binary is reported against the SAME 14 categories, so the per-OS output
+# Every binary is reported against the SAME 15 categories, so the per-OS output
 # is consistent and directly comparable. Each category resolves to one of:
 #   ✓ / ⚠ / ✗  it ran and asserted a result
 #   N/A        it intentionally does NOT apply to this platform — a one-line
@@ -86,6 +92,7 @@
 # 12  UND resolvability          N/A  N/A    ✓    N/A    ✓    nm/ELF-based; Mach-O & PE binds are resolved by their own loader (#13)
 # 13  Runtime load test          ✓†   N/A    ✓     ✓    N/A   needs the platform's real loader (Apple dyld; no emulator-less Android path)
 # 14  Stub detection             N/A  N/A   N/A   N/A    ✓    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
+# 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A   Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
 #
 #  † macOS L13 runs the REAL dyld dlopen(RTLD_NOW) when verify is invoked
 #    natively on a macOS host (./scripts/verify_binaries.sh macos) — clang
@@ -1106,6 +1113,43 @@ arch_from_artifact() {
   esac
 }
 
+# Layer 15: Apple code-signing identity. For every slice in a libmpv.xcframework
+# the embedded code-signing identifier (parsed from the Mach-O CodeDirectory)
+# must equal that framework's CFBundleIdentifier. iOS `installd` rejects a
+# device install on any mismatch (MismatchedBundleIDSigningIdentifier) — the
+# exact libmpv-r9 / 0.3.5 regression, which passed every other layer because
+# only a physical-device install enforces this rule (Simulator, macOS, dlopen
+# and flutter test all ignore it). The signature is parsed directly
+# (verify/codesign_ident.py), so this runs in the build container — meson
+# already requires python3 — without needing macOS-only `codesign`.
+# Args: $1 = platform, $2 = extracted xcframework dir ($xcf_tmp, may be empty)
+layer15_codesign_identity() {
+  local platform="$1" xcf_dir="$2"
+  phase l15
+  case "$platform" in
+    macos|ios) ;;
+    *) na "Apple code-signing only; $platform binaries are not embedded-signed .framework bundles (the identifier==bundle-id rule is an Apple loader concern)."; return 0 ;;
+  esac
+  if [[ -z "$xcf_dir" || ! -d "$xcf_dir" ]]; then
+    warn "L15: xcframework not extracted — cannot inspect signing identity"
+    return 0
+  fi
+  local helper="$LIBMPV_SCRIPTS_ROOT/verify/codesign_ident.py"
+  if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "$helper" ]]; then
+    na "needs python3 + verify/codesign_ident.py to parse the Mach-O CodeDirectory; neither present here."
+    return 0
+  fi
+  local out rc
+  out="$(python3 "$helper" "$xcf_dir" 2>&1)"; rc=$?
+  if [[ $rc -eq 0 ]]; then
+    while IFS= read -r line; do [[ -n "$line" ]] && info "$line"; done <<<"$out"
+    pass "L15 code-signing identity == CFBundleIdentifier on every slice (installs on a physical iPhone)"
+  else
+    while IFS= read -r line; do [[ -n "$line" ]] && printf "     %s\n" "$line"; done <<<"$out"
+    fail "L15 code-signing identity != CFBundleIdentifier — iOS installd would reject this on a physical device (MismatchedBundleIDSigningIdentifier)"
+  fi
+}
+
 # ── Per-binary check runner ───────────────────────────────────────────────────
 check_binary() {
   local artifact="$1"
@@ -1447,6 +1491,10 @@ check_binary() {
   # Layer 14: stub-function detection — Android only (defense-in-depth
   # for the ffmpeg --enable-jni / CONFIG_JNI=0 silent-stub bug class).
   layer14_stub_detection "$platform" "$arch" "$artifact" || true
+
+  # Layer 15: Apple code-signing identity (xcframework slices) — runs off the
+  # already-extracted tree ($xcf_tmp) before it is removed below.
+  layer15_codesign_identity "$platform" "$xcf_tmp" || true
 
   [[ -n "$xcf_tmp" ]] && rm -rf "$xcf_tmp"
   emit bindone "$name"

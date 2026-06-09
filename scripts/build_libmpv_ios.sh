@@ -850,7 +850,13 @@ assemble_xcframework() {
     # host loads, direct loads); a consumer app re-signs on embed, but the later
     # `codesign --deep` on the xcframework does NOT reliably re-sign this inner
     # Mach-O, so sign it explicitly here. Matches the macOS build.
-    codesign -s - --force "$fw/libmpv" 2>/dev/null || true
+    # --identifier is MANDATORY: the Info.plist below sets CFBundleIdentifier to
+    # com.ales-drnz.libmpv, and iOS installd rejects a device install when a
+    # framework's code-signing identifier != its CFBundleIdentifier
+    # (MismatchedBundleIDSigningIdentifier). Signing a bare Mach-O with no
+    # --identifier defaults to `libmpv-<hash>` → broken installs. Xcode preserves
+    # this identifier when it re-signs on embed, so it MUST be correct here.
+    codesign -s - --force --identifier com.ales-drnz.libmpv "$fw/libmpv" 2>/dev/null || true
 
     # Export-filter hygiene (mirrors the macOS sanity check): the exports list
     # is `_mpv_*`, so with it applied we expect ~60 exported (T) symbols —

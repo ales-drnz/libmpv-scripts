@@ -1,3 +1,11 @@
+## [0.1.2] - 9-06-2026
+
+### Fixed
+- iOS/macOS `libmpv.framework` was signed with the wrong identifier which blocked physical-iPhone installs; the build scripts now sign with `--identifier`.
+
+### Added
+- `verify_binaries.sh` Layer 15: asserts each xcframework slice's code-signing identifier matches its `CFBundleIdentifier`.
+
 ## [0.1.1] - 9-06-2026
 
 ### Changed

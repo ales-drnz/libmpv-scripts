@@ -8,4 +8,4 @@ package main
 // independently of the libmpv binaries it produces (FFMPEG_VERSION et al. in
 // scripts/shared/_versions.sh) and of the mpv_audio_kit package it installs
 // into. Shown in the header; bumped together with CHANGELOG.md.
-const version = "0.1.0"
+const version = "0.1.2"

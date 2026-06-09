@@ -812,7 +812,7 @@ finalize_arch() {
   cp -L "$src" "$out"
   chmod +w "$out"
   install_name_tool -id "@rpath/libmpv.framework/libmpv" "$out" 2>/dev/null
-  codesign -s - --force "$out" 2>/dev/null
+  codesign -s - --force --identifier com.ales-drnz.libmpv "$out" 2>/dev/null
   # Stub-slice guard: a cross-compile that lost its `-arch` flag compiles the
   # wrong architecture's objects, which ld64 then silently ignores, yielding a
   # tiny dylib with no mpv_* exports. Fail HERE, per-arch, rather than lipo a
@@ -911,7 +911,11 @@ assemble_xcframework() {
   # and the libmpv-scripts verify dlopen — a consumer app re-signs on embed, but
   # direct host loads do not. The later `codesign --deep` on the xcframework does
   # NOT reliably re-sign this inner Mach-O, so sign it explicitly here.
-  codesign -s - --force "$ver/libmpv" 2>/dev/null || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
+  # --identifier is MANDATORY: it must equal the Info.plist CFBundleIdentifier
+  # (com.ales-drnz.libmpv). A bare Mach-O signed without it defaults to
+  # `libmpv-<hash>`; on iOS that mismatch breaks device installs, and keeping
+  # mac/iOS identical avoids the same class of bug on notarized macOS bundles.
+  codesign -s - --force --identifier com.ales-drnz.libmpv "$ver/libmpv" 2>/dev/null || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
   # Headers: pick from any arch's prefix — identical across arches.
   local first_arch="${ARCHS%% *}"
   cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/" 2>/dev/null || true
