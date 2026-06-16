@@ -1,7 +1,23 @@
+## [0.1.3] - 16-06-2026
+
+### Added
+- Offline loudness analysis: a new toggleable `loudness_scan` patch measures whole-file EBU R128 (integrated LUFS, range, sample and true peak) on load (rides `bulk_analysis`, disabled with it).
+- Embedded CA root store: a new toggleable `embed_cacert` patch compiles the Mozilla CA bundle into OpenSSL, so HTTPS verification needs no on-device cert file (sandboxed macOS, iOS, Android); `tls-ca-file` still overrides it.
+- A Tools action in the build menu to refresh the bundled Mozilla CA list (`update_cacert.sh`).
+
+### Fixed
+- Windows UI micro-stutter: a new toggleable `timer_resolution` patch stops mpv pinning the system-wide 1 ms timer at init (it disrupted the compositor's frame pacing). No-op off Windows.
+
+### Changed
+- The `bulk_analysis`, `pcm_tap` and `filter_label_tap` patches now ship their C as real `.c` and `.h` files (Python appliers are anchor-only); binaries are byte-identical.
+
+### Build
+- Further binary size reduction on every platform: mpv orchestration code and the compression and infrastructure deps (`zlib`, `bzip2`, `xz`, `libxml2`) build at `-Os` and `-Oz` while codec and DSP code stays at `-O2`.
+
 ## [0.1.2] - 9-06-2026
 
 ### Fixed
-- iOS/macOS `libmpv.framework` was signed with the wrong identifier which blocked physical-iPhone installs; the build scripts now sign with `--identifier`.
+- iOS and macOS `libmpv.framework` was signed with the wrong identifier which blocked physical-iPhone installs; the build scripts now sign with `--identifier`.
 
 ### Added
 - `verify_binaries.sh` Layer 15: asserts each xcframework slice's code-signing identifier matches its `CFBundleIdentifier`.
@@ -23,6 +39,6 @@
 - A terminal menu (`./build`) to pick what to build and watch live progress.
 - Verify, to audit every produced binary.
 - Checksums, to install the binaries into the `mpv_audio_kit` package.
-- A `local` / `remote` switch to choose whether `mpv_audio_kit` uses the local libs or downloads them from GitHub Releases.
+- A `local` and `remote` switch to choose whether `mpv_audio_kit` uses the local libs or downloads them from GitHub Releases.
 - Settings to pick which audio decoders and filters are included, and a Dependencies list of the bundled libraries.
-- A multi-stage Docker setup with one image per platform, and a Docker tab to build, size and delete them — so you only keep the toolchains you actually use.
+- A multi-stage Docker setup with one image per platform, and a Docker tab to build, size and delete them, so you only keep the toolchains you actually use.

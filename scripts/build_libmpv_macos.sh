@@ -238,7 +238,7 @@ build_zlib() {
   download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -O2" \
+  CFLAGS="$(arch_flags) -Oz" \
     ./configure --prefix="$prefix" --static
   make -j"$JOBS"
   make install
@@ -256,7 +256,7 @@ build_bzip2() {
   pushd "$dir" >/dev/null
   make -j"$JOBS" \
     CC="$CC_BIN" \
-    CFLAGS="$(arch_flags) -O2 -D_FILE_OFFSET_BITS=64" \
+    CFLAGS="$(arch_flags) -Oz -D_FILE_OFFSET_BITS=64" \
     AR="ar" RANLIB="ranlib" \
     libbz2.a
   install -m 644 libbz2.a "$prefix/lib/"
@@ -273,7 +273,7 @@ build_xz() {
   download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -O2" \
+  CFLAGS="$(arch_flags) -Oz" \
   ./configure --prefix="$prefix" --host="$(autoconf_host)" \
     --enable-static --disable-shared \
     --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
@@ -590,7 +590,7 @@ build_libxml2() {
   download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -O2" \
+  CFLAGS="$(arch_flags) -Oz" \
   LDFLAGS="$(arch_flags)" \
   ./configure --prefix="$prefix" --host="$(autoconf_host)" \
     --enable-static --disable-shared \
@@ -694,6 +694,9 @@ build_mpv() {
   # breaking the cross-compiled x86_64 slice into a stub.
   local ehf_arg="" _f
   for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
+  # mpv orchestration code favours size: -Oz (placed after meson's own
+  # -Os so it wins). DSP stays in ffmpeg/rubberband, untouched by this.
+  ehf_arg="$ehf_arg, '-Oz'"
 
   pushd "$bdir" >/dev/null
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \

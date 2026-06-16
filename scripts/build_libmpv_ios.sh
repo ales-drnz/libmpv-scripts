@@ -177,6 +177,9 @@ write_ios_cross() {
   # — that breaks meson's iOS-SDK symbol checks like kAudioUnitSubType_RemoteIO).
   local ehf_arg="" _f
   for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
+  # mpv orchestration code favours size: -Oz (placed after meson's own
+  # -Os so it wins). DSP stays in ffmpeg/rubberband, untouched by this.
+  ehf_arg="$ehf_arg, '-Oz'"
   cat > "$file" << EOF
 [binaries]
 c = '${CC_BIN}'
@@ -342,7 +345,7 @@ slice_zlib() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make distclean 2>/dev/null || make clean 2>/dev/null || true
-  CFLAGS="$cf -O2" ./configure --prefix="$prefix" --static
+  CFLAGS="$cf -Oz" ./configure --prefix="$prefix" --static
   make -j"$JOBS"; make install
   popd >/dev/null
   ok "zlib ($sdk/$arch) ✓"
@@ -357,7 +360,7 @@ slice_bzip2() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make clean 2>/dev/null || true
-  make -j"$JOBS" CC="clang" CFLAGS="$cf -O2 -D_FILE_OFFSET_BITS=64" AR="ar" RANLIB="ranlib" libbz2.a
+  make -j"$JOBS" CC="clang" CFLAGS="$cf -Oz -D_FILE_OFFSET_BITS=64" AR="ar" RANLIB="ranlib" libbz2.a
   install -m 644 libbz2.a "$prefix/lib/"
   install -m 644 bzlib.h  "$prefix/include/"
   popd >/dev/null
@@ -376,7 +379,7 @@ slice_xz() {
   local host="aarch64-apple-darwin"
   [[ "$arch" == "x86_64" ]] && host="x86_64-apple-darwin"
 
-  CFLAGS="$cf -O2" ./configure --prefix="$prefix" --host="$host" --enable-static --disable-shared \
+  CFLAGS="$cf -Oz" ./configure --prefix="$prefix" --host="$host" --enable-static --disable-shared \
     --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo --disable-scripts --disable-doc
   make -j"$JOBS"; make install
   popd >/dev/null
@@ -412,7 +415,7 @@ slice_libxml2() {
   make distclean 2>/dev/null || make clean 2>/dev/null || true
   local host="aarch64-apple-darwin"
   [[ "$arch" == "x86_64" ]] && host="x86_64-apple-darwin"
-  CFLAGS="$cf -O2" LDFLAGS="$cf" ./configure --prefix="$prefix" --host="$host" \
+  CFLAGS="$cf -Oz" LDFLAGS="$cf" ./configure --prefix="$prefix" --host="$host" \
     --enable-static --disable-shared \
     --without-python --without-readline --without-history \
     --without-http --without-ftp --without-html \

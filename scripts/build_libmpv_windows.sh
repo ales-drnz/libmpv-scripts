@@ -623,6 +623,16 @@ tar -xf "$MPV_ARCHIVE" -C "$SRC"
 
 pushd "$SRC/mpv-$MPV_VERSION"
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/windows/patch_windows_deps.py" "$SRC/mpv-$MPV_VERSION/meson.build"
+  # timer_resolution (toggleable): stop mpv pinning the system-wide timer
+  # resolution to 1 ms at init (it fights DWM frame-pacing → host-app UI
+  # micro-stutter). Windows-only (edits the win32-only timer-win32.c), so it
+  # is applied here rather than from apply_mpv_patches_common — but still
+  # gated on the same `patch_on` mechanism as the shared toggleable patches.
+  if patch_on timer_resolution; then
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/windows/patch_timer_resolution.py" "$SRC/mpv-$MPV_VERSION"
+  else
+    warn "Skipping disabled patch: timer_resolution"
+  fi
   apply_mpv_patches_common "$SRC/mpv-$MPV_VERSION"
 
   rm -rf build

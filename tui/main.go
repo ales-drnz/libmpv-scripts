@@ -64,6 +64,7 @@ const (
 	scDeps
 	scVerify
 	scChecksums
+	scUpdateCacert
 )
 
 type tickMsg struct{}
@@ -145,6 +146,15 @@ type model struct {
 	csScroll  int
 	csTitle   string
 	csVerb    string
+
+	// update-cacert screen — runs scripts/update_cacert.sh, streams its output
+	// live, then shows the refreshed bundle's provenance (date / cert count /
+	// size / path). See update_cacert_view.go.
+	ucRunning bool
+	ucLog     []string
+	ucErr     error
+	ucResult  cacertResult
+	ucScroll  int
 
 	// libModeState is mpv_audio_kit's current libs source ("local" / "remote" /
 	// "mixed" / "unknown"), detected on entering the Tools tab and after a Libs
@@ -276,6 +286,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.csErr = msg.err
 		return m, listen(m.sub)
 
+	case ucLineMsg:
+		m.ucLog = append(m.ucLog, msg.line)
+		// Follow the tail while the script is still running.
+		m.ucScroll = maxInt(0, len(m.ucLog)-m.ucViewHeight())
+		return m, listen(m.sub)
+
+	case ucDoneMsg:
+		m.ucRunning = false
+		m.ucErr = msg.err
+		m.ucResult = parseCacertResult(m.ucLog)
+		return m, listen(m.sub)
+
 	case dockerActionDoneMsg:
 		m.dockerBusy = ""
 		m.startDockerRefresh()
@@ -349,6 +371,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keyVerify(k)
 	case scChecksums:
 		return m.keyChecksums(k)
+	case scUpdateCacert:
+		return m.keyUpdateCacert(k)
 	}
 	return m, nil
 }
@@ -751,6 +775,8 @@ func (m *model) activateFocused(bands [][]selColumn) {
 			m.startVerify()
 		case "checksums":
 			m.startChecksums()
+		case "update-cacert":
+			m.startUpdateCacert()
 		case "lib-mode":
 			m.applyLibPending()
 		case "lib-clean":
@@ -1247,6 +1273,13 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "_updatecacert" {
+		if err := runUpdateCacert(ctx, func(l string) { fmt.Println(l) }); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(args) > 0 && args[0] == "_dockerstart" {
 		if err := ensureDockerRunning(func(l string) { fmt.Println(l) }); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -1577,6 +1610,8 @@ func (m model) View() string {
 		return m.viewVerify()
 	case scChecksums:
 		return m.viewChecksums()
+	case scUpdateCacert:
+		return m.viewUpdateCacert()
 	}
 	return ""
 }

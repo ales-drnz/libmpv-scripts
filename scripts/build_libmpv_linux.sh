@@ -145,7 +145,12 @@ build_zlib() {
   download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
-  CHOST="$CROSS_TRIPLE" ./configure --prefix="$PREFIX" --static
+  # Append -Os so it wins over the global -O2 export (last -O flag wins),
+  # while keeping the LTO/visibility/security flags it carries — matches the
+  # bzip2 -Os below and the other platforms' size pass for the compression
+  # deps. DSP/crypto deps (openssl, rubberband) keep -O2 via the unchanged
+  # global export.
+  CHOST="$CROSS_TRIPLE" CFLAGS="$CFLAGS -Os" ./configure --prefix="$PREFIX" --static
   make -j"$JOBS"; make install
   popd >/dev/null
   ok "zlib ✓"
@@ -158,7 +163,7 @@ build_bzip2() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-       -j"$JOBS" CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
+       -j"$JOBS" CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
   install -m 644 libbz2.a "$PREFIX/lib/"
   install -m 644 bzlib.h  "$PREFIX/include/"
   popd >/dev/null
@@ -175,6 +180,8 @@ build_xz() {
   # the build's non-default CFLAGS (LTO etc.). SKIP_WERROR_CHECK=yes is
   # the upstream-sanctioned escape hatch — it only affects xz's own
   # configure-time feature detection, not the built liblzma.
+  # -Os appended so it wins over the global -O2 export (see build_zlib).
+  CFLAGS="$CFLAGS -Os" \
   ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
     --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
     --disable-scripts --disable-doc \
@@ -203,6 +210,8 @@ build_libxml2() {
   download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
+  # -Os appended so it wins over the global -O2 export (see build_zlib).
+  CFLAGS="$CFLAGS -Os" \
   ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
     --without-python --without-readline --without-history \
     --without-http --without-ftp --without-html \

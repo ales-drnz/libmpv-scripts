@@ -152,6 +152,8 @@ func allTargets() []Target {
 		// ── Publish / validate ──
 		{Key: "checksums", Label: "Checksums", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_checksums",
 			Desc: "install built libs into mpv_audio_kit + refresh its SHA-256s"},
+		{Key: "update-cacert", Label: "Update CA", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_updatecacert",
+			Desc: "refresh the Mozilla CA bundle the embed_cacert patch compiles in"},
 		{Key: "verify", Label: "Verify", Group: "Tools", InMenu: true, kind: kDocker, script: "scripts/verify_binaries.sh", image: "verify", ndk: true,
 			Desc: "deep static + runtime audit of every release binary"},
 		{Key: "lib-clean", Label: "Clean", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_libclean",

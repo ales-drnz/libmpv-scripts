@@ -398,7 +398,7 @@ android_zlib() {
   pushd "$dir" >/dev/null
   make clean 2>/dev/null || true
   CC="$(ndk_cc "$abi")" \
-  CFLAGS="-O2 -fPIC" \
+  CFLAGS="-Oz -fPIC" \
   ./configure --prefix="$prefix" --static
   make -j"$JOBS" AR="$(ndk_ar)" ARFLAGS="rc" RANLIB="$(ndk_ranlib)"; make install
   popd >/dev/null
@@ -434,7 +434,7 @@ android_bzip2() {
   make clean 2>/dev/null || true
   make -j"$JOBS" \
     CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" \
-    CFLAGS="-O2 -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
+    CFLAGS="-Oz -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
   install -m 644 libbz2.a "$prefix/lib/"
   install -m 644 bzlib.h  "$prefix/include/"
   popd >/dev/null
@@ -449,7 +449,7 @@ android_xz() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" \
-  CFLAGS="-O2 -fPIC" \
+  CFLAGS="-Oz -fPIC" \
   ./configure --prefix="$prefix" --host="$(abi_to_triple "$abi")" \
     --enable-static --disable-shared \
     --disable-xz --disable-xzdec --disable-lzmadec \
@@ -483,7 +483,7 @@ android_libxml2() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make clean 2>/dev/null || true
-  CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" CFLAGS="-O2 -fPIC" \
+  CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" CFLAGS="-Oz -fPIC" \
   ./configure --prefix="$prefix" --host="$(abi_to_triple "$abi")" \
     --enable-static --disable-shared \
     --without-python --without-readline --without-history \
@@ -881,7 +881,7 @@ android_mpv() {
     -Daudiotrack=enabled \
     -Daaudio=enabled \
     -Dopensles=enabled \
-    -Dc_args="$(eh_frame_cflags)" \
+    -Dc_args="$(eh_frame_cflags) -Oz" \
     "${link_extra[@]}"
   verify_mpv_config "$bdir" "android"
   ninja -j"$JOBS"; ninja install

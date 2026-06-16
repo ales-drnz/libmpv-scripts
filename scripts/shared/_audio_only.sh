@@ -322,6 +322,7 @@ EOF
 mpv_common_args() {
   cat <<'EOF'
 -Db_lto=true
+-Doptimization=s
 -Dauto_features=disabled
 -Dgpl=true
 -Dlibmpv=true
@@ -546,7 +547,7 @@ verify_mpv_config() {
   ok "mpv config audit passed ($platform)"
 }
 
-# ── ffmpeg patch application (3 patches, identical on every platform) ───────
+# ── ffmpeg patch application (5 patches, identical on every platform) ───────
 # Usage: apply_ffmpeg_patches <ffmpeg_source_dir>
 # Requires SCRIPT_DIR to be set to the directory containing this file.
 apply_ffmpeg_patches() {
@@ -589,9 +590,20 @@ apply_ffmpeg_patches() {
   else
     warn "Skipping disabled patch: dash_keepalive"
   fi
+
+  # Embedded CA bundle: compile the Mozilla root store into the OpenSSL TLS
+  # backend so HTTPS verification works with no on-device cert file (sandboxed
+  # macOS, iOS, Android). Text edits MARKER-guarded; the .c/.h are rewritten
+  # each run so a refreshed cacert.pem propagates.
+  if patch_on embed_cacert; then
+    log "Patching FFmpeg to embed the CA root bundle into OpenSSL..."
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$ffmpeg_dir"
+  else
+    warn "Skipping disabled patch: embed_cacert"
+  fi
 }
 
-# ── mpv patch application (7 patches common to every platform) ──────────────
+# ── mpv patch application (the shared mpv patch set, every platform) ────────
 # Usage: apply_mpv_patches_common <mpv_source_dir>
 # Platform-specific mpv patches (patch_utils_mac, patch_ios_*,
 # patch_windows_deps) stay inline in the per-platform script.
@@ -668,7 +680,19 @@ apply_mpv_patches_common() {
   _mpv_patch embedded_cover_art patch_embedded_cover_art.py "$mpv_dir"
   _mpv_patch pcm_tap            patch_pcm_tap.py            "$mpv_dir"
   _mpv_patch bulk_analysis      patch_bulk_analysis.py      "$mpv_dir"
+  # loudness_scan layers on bulk_analysis (its anchors live in that
+  # patch's output and the scan rides the same decode pass), so it is
+  # skipped — with a warning — when bulk_analysis is disabled.
+  if patch_on bulk_analysis; then
+    _mpv_patch loudness_scan    patch_loudness_scan.py      "$mpv_dir"
+  elif patch_on loudness_scan; then
+    warn "Skipping loudness_scan: it requires bulk_analysis (disabled)"
+  fi
   _mpv_patch filter_label_tap   patch_filter_label_tap.py   "$mpv_dir"
+  # NOTE: the `timer_resolution` patch is Windows-only (it edits the
+  # win32-only osdep/timer-win32.c), so it lives in patches/mpv/windows/ and
+  # is applied — still toggleable via `patch_on timer_resolution` — inline in
+  # build_libmpv_windows.sh, not from this shared function.
 }
 
 # ── libsmb2 source patch (Apple platforms — shared by macOS + iOS) ──────────
@@ -809,6 +833,10 @@ lto_deps_cflags() {
   # is the actual compiler binary.
   cc="${cc##* }"
   if "$cc" --version 2>/dev/null | grep -qiE 'clang|llvm'; then
+    # THIN on purpose — full LTO (-flto) was measured 2026-06-12 on
+    # macos-arm64: −420 KiB, but the produced libmpv HANGS at runtime
+    # (event loop never delivers; every Player bring-up times out).
+    # Do not retry without a runtime suite pass.
     echo "-flto=thin"
   else
     echo "-flto -ffat-lto-objects"

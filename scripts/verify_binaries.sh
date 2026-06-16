@@ -10,7 +10,7 @@
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* exports, zero leaks
-#   3.  Patched mpv properties present (all 10: prefetch-state +
+#   3.  Patched mpv properties present (all 12: prefetch-state +
 #       -cache-duration, audio-output-state, embedded-cover-art-data/mime,
 #       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data/-enabled)
 #   4.  FFmpeg patches present (libsmb2 protocol, mov advanced_editlist)
@@ -21,7 +21,8 @@
 #       current Settings ▸ Patches strip selection (swscale / libass+fonts /
 #       GPU-render / Windows icon present iff NOT stripped), and asserts the
 #       always-on audio-path features (HTTPS/TLS, rubberband, DASH, OpenSSL,
-#       SMB2-when-enabled). Catches a strip that silently didn't take effect.
+#       SMB2-when-enabled, embedded-CA-bundle-when-enabled). Catches a strip
+#       that silently didn't take effect.
 #   8.  External runtime dependency list (informative)
 #   9.  Embedded dep VERSIONS match scripts/_versions.sh — catches the
 #       classic "I bumped harfbuzz in _versions.sh but the build cache held
@@ -151,6 +152,7 @@ EXPECTED_FORMATS=(
 #   pcm_tap           : pcm-tap-frame
 #   filter_label_tap  : audio-tap-frames, analyzer-taps
 #   bulk_analysis     : waveform-data, waveform-enabled
+#   loudness_scan     : loudness-scan-data, loudness-scan-enabled
 MPV_PATCHED_PROPS=(
   prefetch-state prefetch-cache-duration
   audio-output-state
@@ -158,6 +160,7 @@ MPV_PATCHED_PROPS=(
   pcm-tap-frame
   audio-tap-frames analyzer-taps
   waveform-data waveform-enabled
+  loudness-scan-data loudness-scan-enabled
 )
 
 FFMPEG_PATCH_MARKERS=(
@@ -1098,6 +1101,17 @@ layer_feature_presence() {
     else fail "feature MISSING: SMB2/NAS protocol (libsmb2 patch enabled)"; fi
   else
     info "SMB2/NAS protocol: libsmb2 patch disabled — not asserted"
+  fi
+
+  # Embedded CA bundle — adaptive on the embed_cacert patch. The Mozilla root
+  # store is compiled into the OpenSSL TLS backend verbatim, so the bundle's
+  # provenance header survives as a string in the binary's read-only data.
+  n=$(grep -cF "Certificate data from Mozilla" <<<"$str" || true)
+  if patch_on embed_cacert; then
+    if (( n > 0 )); then pass "feature present: embedded CA bundle"
+    else fail "feature MISSING: embedded CA bundle (embed_cacert patch enabled)"; fi
+  else
+    info "embedded CA bundle: embed_cacert patch disabled — not asserted"
   fi
 }
 

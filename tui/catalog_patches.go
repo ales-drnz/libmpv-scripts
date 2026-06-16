@@ -53,11 +53,14 @@ func patchesCatalog() []PatchItem {
 		{ID: "embedded_cover_art", Title: "Embedded cover art", Desc: "Expose embedded album-art bytes + MIME as properties", Category: "mpv runtime", DefaultOn: true},
 		{ID: "pcm_tap", Title: "PCM tap (visualizer)", Desc: "'pcm-tap-frame' post-DSP samples for spectrum visualizers", Category: "mpv runtime", DefaultOn: true},
 		{ID: "bulk_analysis", Title: "Bulk waveform analysis", Desc: "Whole-file min/max waveform envelope on load", Category: "mpv runtime", DefaultOn: true},
+		{ID: "loudness_scan", Title: "Offline loudness scan", Desc: "EBU R128 integrated/LRA/true-peak on load (ReplayGain for untagged files). Rides Bulk waveform analysis — disabled with it.", Category: "mpv runtime", DefaultOn: true},
 		{ID: "filter_label_tap", Title: "Per-filter audio tap", Desc: "Pre/post tap per filter for plug-in–style meters", Category: "mpv runtime", DefaultOn: true},
+		{ID: "timer_resolution", Title: "Windows timer-resolution fix", Desc: "Stop mpv pinning the system-wide 1 ms timer at init (it fights DWM frame-pacing → host UI micro-stutter). No-op on non-Windows targets.", Category: "mpv runtime", DefaultOn: true},
 
 		// ── FFmpeg (applied via apply_ffmpeg_patches) ───────────────────────
 		{ID: "libsmb2", Title: "SMB2 / NAS playback", Desc: "Adds the libsmb2 protocol (Samba/NAS)", Category: "FFmpeg", DefaultOn: true},
 		{ID: "advanced_editlist", Title: "Fragmented-MP4 edit lists", Desc: "Honor edit lists on fragmented MP4 (correct trim/gapless)", Category: "FFmpeg", DefaultOn: true},
 		{ID: "dash_keepalive", Title: "DASH HTTP keep-alive", Desc: "Reuse connections in the DASH demuxer (Plex/Jellyfin)", Category: "FFmpeg", DefaultOn: true},
+		{ID: "embed_cacert", Title: "Embedded CA certificates", Desc: "Compile the Mozilla CA root store into libmpv so HTTPS verification works with no on-device cert file (sandboxed macOS, iOS, Android)", Category: "FFmpeg", DefaultOn: true},
 	}
 }
