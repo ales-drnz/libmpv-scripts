@@ -1,3 +1,8 @@
+## [0.1.4] - 18-06-2026
+
+### Changed
+- The `timer_resolution` patch now forces mpv's high-resolution-timer policy to `never` (was `perwait`): the Windows libmpv no longer changes the system-wide 1 ms timer resolution at all.
+
 ## [0.1.3] - 16-06-2026
 
 ### Added

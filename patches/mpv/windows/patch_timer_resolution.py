@@ -12,12 +12,15 @@ policy at startup (it runs from `mp_create`, i.e. during `mpv_create` /
         v = IsWindows10OrGreater() ? "perwait" : "always";
 
 - "perwait": raise the 1 ms timer resolution only for the duration of each
-  short `mp_sleep_ns` (and restore it after). In this audio-only build the
-  only `mp_sleep_ns` callers are rare audio-output *retry* paths, so the
-  global timer resolution effectively never changes.
+  short timed wait (`mp_sleep_ns` and the playloop's `mp_cond_timedwait`)
+  and restore it after. No global pin at init — but during PLAYBACK the
+  playloop still toggles the global resolution per wait (measured ~2-3x/s
+  in this audio-only build; ~0 while idle).
 - "always": call `NtSetTimerResolution(1ms, TRUE)` ONCE at init and never
   restore it — the whole process (and system) timer resolution is pinned at
   1 ms for the player's lifetime.
+- "never": mpv never calls `NtSetTimerResolution` — the global timer
+  resolution is left untouched.
 
 `IsWindows10OrGreater()` (versionhelpers.h) is MANIFEST-shimmed: a host
 executable whose manifest does not declare Windows 10 support
@@ -33,11 +36,16 @@ for a *video* player (it wants the precise timer for A/V sync and owns the
 window), but this is a HEADLESS audio library inside a GUI that does its own
 rendering: pinning the global timer is never what we want.
 
-Fix: force the auto policy to "perwait" unconditionally. `perwait` is mpv's
-own Windows-10 default and works on every Windows version
-(`NtSetTimerResolution` has existed since XP; the per-wait raise is restored
-immediately and the sleep callers are rare retry paths). An explicit
-`MPV_HRT=always|never|perwait` still overrides it.
+Fix: force the auto policy to "never" unconditionally — mpv never calls
+`NtSetTimerResolution` at all. "perwait" (the previous fix) removed the init
+pin but left the playloop's per-wait raises during playback, and even those
+bursty global-resolution transitions still disrupt the host compositor on a
+clean high-refresh machine (verified: 67 -> 200 FPS with `MPV_HRT=never`).
+"never" is safe for audio: on Windows 10 1803+ mpv's sleeps use
+`CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)`, which is
+sub-millisecond accurate INDEPENDENT of the global timer resolution, so
+dropping the global raise costs no real precision. An explicit
+`MPV_HRT=always|perwait|never` still overrides it.
 
 Windows-only: `osdep/timer-win32.c` is compiled only on Windows, so this
 patch lives here and is applied (gated on the toggleable `timer_resolution`
@@ -62,18 +70,19 @@ if not os.path.exists(fn):
 with open(fn, encoding="utf-8") as f:
     content = f.read()
 
-PATCHED_MARKER = 'v = "perwait"; // mpv_audio_kit'
+PATCHED_MARKER = 'v = "never"; // mpv_audio_kit'
 if PATCHED_MARKER in content:
     print(f"Nothing to patch in {fn} (already patched)")
     sys.exit(0)
 
 ANCHOR = '        v = IsWindows10OrGreater() ? "perwait" : "always";'
 REPLACEMENT = (
-    '        // mpv_audio_kit: never pin the global Windows timer resolution\n'
-    '        // (DWM frame-sync interference in the host GUI). Force "perwait"\n'
-    '        // so the 1 ms resolution is only raised around the rare audio-\n'
-    '        // output retry sleeps, never globally at init.\n'
-    '        v = "perwait"; // mpv_audio_kit'
+    '        // mpv_audio_kit: never touch the global Windows timer resolution.\n'
+    '        // Even "perwait" leaves per-wait NtSetTimerResolution toggles during\n'
+    '        // playback that disrupt the host GUI compositor (DWM) on clean high-\n'
+    '        // refresh machines. Force "never"; audio sleep accuracy is preserved\n'
+    '        // by the high-resolution waitable timer (Win10 1803+).\n'
+    '        v = "never"; // mpv_audio_kit'
 )
 
 if ANCHOR not in content:
@@ -88,4 +97,4 @@ if ANCHOR not in content:
 content = content.replace(ANCHOR, REPLACEMENT, 1)
 with open(fn, "w", encoding="utf-8") as f:
     f.write(content)
-print(f"Patched {fn}: forced high-res-timer policy to perwait")
+print(f"Patched {fn}: forced high-res-timer policy to never")
