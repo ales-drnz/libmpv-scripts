@@ -53,7 +53,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Shared across all build_libmpv_<platform>.sh scripts
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
-source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_flavor.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
 # Target architectures. Apple's clang on macOS cross-compiles to either
@@ -83,7 +83,7 @@ LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 # extract + build dirs + prefix) is what keeps a cross-compiled x86_64
 # slice from reusing arm64 object files — the dep build dirs and the
 # in-source autoconf builds are not arch-tagged individually.
-BUILD_ROOT="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/macOS}"
+BUILD_ROOT="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work$(flavor_build_seg)/macOS}"
 # BUILD_DIR + PREFIX are set per-arch inside main()'s loop.
 BUILD_DIR=""
 PREFIX=""
@@ -491,6 +491,14 @@ build_libplacebo() {
   local bdir="$BUILD_DIR/build/libplacebo"
   mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
+  # Graphics API: audio-only renders nothing, so libplacebo is built without any
+  # backend (smallest; the whole GPU stack is dead-stripped). The video flavor
+  # enables the OpenGL backend so vo_gpu_next can drive the libmpv render API —
+  # pl_opengl wraps the host (Flutter) GL context for tone-mapped HDR output.
+  # Vulkan/d3d11/shaderc stay off on macOS: no MoltenVK is bundled, the GL path
+  # is used (VideoToolbox frames interop via gl).
+  local _lp_opengl="disabled"
+  is_video && _lp_opengl="enabled"
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
   meson setup "$gitdir" \
     --prefix="$prefix" \
@@ -499,7 +507,7 @@ build_libplacebo() {
     -Dvulkan=disabled \
     -Dshaderc=disabled \
     -Dglslang=disabled \
-    -Dopengl=disabled \
+    -Dopengl=$_lp_opengl \
     -Dd3d11=disabled \
     -Ddemos=false \
     -Dtests=false \
@@ -628,7 +636,7 @@ build_ffmpeg() {
   [[ -n "$sdk" ]] && { extra_cflags+=" -isysroot $sdk"; extra_ldflags+=" -isysroot $sdk"; }
 
   # ── ffmpeg: smart audio-only build ─────────────────────────────────────────
-  # See scripts/shared/_audio_only.sh for AUDIO_DECODERS / AUDIO_PARSERS /
+  # See scripts/shared/_flavor.sh for AUDIO_DECODERS / AUDIO_PARSERS /
   # AUDIO_FILTERS / AUDIO_BSFS.
   # Strategy: keep all demuxers + protocols; strip video decoders /
   # encoders / muxers / avdevice. A curated audio-filter whitelist stays enabled
@@ -873,7 +881,7 @@ verify_dylib() {
 # pdfium_flutter.
 assemble_xcframework() {
   log "Assembling macOS xcframework..."
-  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"
+  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release$(flavor_build_seg)"
   mkdir -p "$release_dir"
   local xcfw="$OUTPUT_DIR/libmpv.xcframework"
   rm -rf "$xcfw"

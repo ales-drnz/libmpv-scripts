@@ -38,7 +38,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
-source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_flavor.sh"
 source "$SCRIPT_DIR/shared/_cross.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
@@ -66,7 +66,7 @@ LIBSMB2_TAG="${LIBSMB2_TAG:-v${LIBSMB2_VERSION}}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 KEEP_BUILD="${KEEP_BUILD:-0}"
 
-BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Windows/$ARCH}"
+BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work$(flavor_build_seg)/Windows/$ARCH}"
 DIST="$BUILD_DIR/dist"
 SRC="$BUILD_DIR/src"
 
@@ -728,7 +728,7 @@ popd
 ok "mpv ✓"
 
 # ── Finalize ──────────────────────────────────────────────────────────────────
-release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"
+release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release$(flavor_build_seg)"
 mkdir -p "$release_dir"
 
 # Output filename uses the platform-canonical folder arch ('arm64' for

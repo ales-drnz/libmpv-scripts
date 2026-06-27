@@ -2,26 +2,35 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-# Audio-only ffmpeg flags + shared patch application across the 5
-# build_libmpv_<platform>.sh scripts. Sourced by every script.
+# Flavor-aware ffmpeg/mpv build configuration + shared patch application across
+# the 5 build_libmpv_<platform>.sh scripts. Sourced by every script.
 #
-# Strategy: keep all demuxers + protocols (so the consumer can open
-# any container, including mixed audio+video files like .mkv/.mp4 —
-# mpv ignores video tracks and decodes only audio); strip out video
-# decoders/encoders/muxers and swscale; drop avdevice (no
-# capture/output devices needed for a playback-only library).
+# MPV_FLAVOR (see below) selects what kind of libmpv this pipeline produces:
+#
+#   audio (default) — the historical audio-only library. All demuxers +
+#     protocols are kept (so the consumer can open any container, including
+#     mixed audio+video files like .mkv/.mp4 — mpv ignores video tracks and
+#     decodes only audio), but video decoders/encoders/muxers + swscale + the
+#     GPU/render stack are stripped for the smallest possible binary. The
+#     audio path stays byte-identical to before the flavor split.
+#
+#   video — a video-capable library. The VIDEO_* whitelists below are appended
+#     to the enable-lists, swscale + vo_gpu_next (libplacebo) + libass are kept,
+#     and the strip patches are skipped — the SAME pipeline, video output on.
+#
+# avdevice is dropped in both flavors (no capture/output devices in a
+# playback-only library).
 #
 # A curated audio-filter whitelist is enabled (AUDIO_FILTERS, ~86 entries) via
-# --disable-filters + --enable-filter. Video filters are stripped — and a blanket
-# `--enable-filters` would link the full ~400-filter
-# libavfilter (~5 MB), which is wasted for audio. The typed-DSP API +
-# `setCustomAudioFilters` get full coverage; the few entries that need
-# external deps (flite, ladspa, lv2) are omitted because we don't link
-# those libraries.
+# --disable-filters + --enable-filter (the video flavor adds VIDEO_FILTERS). A
+# blanket `--enable-filters` would link the full ~400-filter libavfilter (~5 MB),
+# wasted when only a known set is used. The typed-DSP API + `setCustomAudioFilters`
+# get full coverage; the few entries that need external deps (flite, ladspa, lv2)
+# are omitted because we don't link those libraries.
 #
-# Add a new codec/parser/bsf here and the next rebuild on every
-# platform picks it up — the per-platform scripts reference these
-# variables directly.
+# Add a new codec/parser/bsf to the AUDIO_*/VIDEO_* lists here and the next
+# rebuild on every platform picks it up — the per-platform scripts reference
+# these variables directly.
 
 # ── Audio decoders mpv recognises on the audio path ──────────────────────────
 # One variable, built up category-by-category — the SAME grouping (and order)
@@ -153,6 +162,56 @@ export AUDIO_FILTERS
 # helpers used internally by ffmpeg.
 export AUDIO_BSFS="aac_adtstoasc,extract_extradata,null,setts"
 
+# ── Video codecs (VIDEO flavor only — see MPV_FLAVOR below) ───────────────────
+# These lists are EMPTY-by-effect in the default audio flavor: ffmpeg_common_args
+# only appends them to the enable-list when MPV_FLAVOR=video, so the audio build
+# never sees them and stays byte-identical. Same sectioned, TUI-symmetric shape
+# as the AUDIO_* lists above; the build TUI's Settings ▸ Video Decoders section
+# mirrors VIDEO_DECODERS so the shell and UI stay in sync.
+#
+# Scope: software decoders for the formats a local "home video"/streaming client
+# meets in the wild (the issue #6 use case). Hardware decode (VideoToolbox /
+# MediaCodec / D3D11VA / VAAPI) is NOT a decoder entry — it is enabled per
+# platform via ffmpeg hwaccel flags + mpv hwdec in the per-platform scripts.
+# Encoders/muxers stay disabled: this is a player, not a transcoder (a future
+# video-editing flavor would add VIDEO_ENCODERS/VIDEO_MUXERS here).
+VIDEO_DECODERS=""
+# ── Modern / streaming ───────────────────────────────────────────────────────
+VIDEO_DECODERS+="h264,hevc,vp8,vp9,av1"
+# ── MPEG family / broadcast ──────────────────────────────────────────────────
+VIDEO_DECODERS+=",mpeg1video,mpeg2video,mpeg4,msmpeg4v1,msmpeg4v2,msmpeg4v3,h263,h263p,h263i,vc1,wmv1,wmv2,wmv3,flv,theora"
+# ── Pro / intermediate / lossless ────────────────────────────────────────────
+VIDEO_DECODERS+=",prores,dnxhd,cfhd,ffv1,ffvhuff,huffyuv,utvideo,rawvideo,v210,qtrle"
+# ── Image / cover-art (real decode, not raw bytes) ───────────────────────────
+VIDEO_DECODERS+=",mjpeg,png,bmp,gif,webp,tiff,targa,apng"
+export VIDEO_DECODERS
+
+# ── Video parsers (explicit; ffmpeg also auto-selects most via decoders) ──────
+VIDEO_PARSERS=""
+VIDEO_PARSERS+="h264,hevc,vp8,vp9,av1,mpegvideo,mpeg4video,vc1,h263,dnxhd"
+export VIDEO_PARSERS
+
+# ── Video filters (kept minimal — vo_gpu_next/libplacebo does scaling on GPU) ──
+# Only lavfi video filters that link against what we already build: swscale
+# (scale/format) + core libavfilter. Deliberately EXCLUDED because they pull in
+# libraries this build doesn't link (the config audit asserts every listed
+# filter compiled, so an unsatisfiable one fails the build):
+#   - zscale     → libzimg (not built); swscale + vo_gpu_next cover scaling
+#   - subtitles  → ffmpeg-level --enable-libass (not set); mpv renders subs via
+#                  its own libass + sd_ass, not the lavfi subtitles filter
+# Most playback-time scaling / tone-mapping happens in vo_gpu_next anyway.
+VIDEO_FILTERS=""
+VIDEO_FILTERS+="scale,format,vflip,hflip,transpose,crop,pad,yadif,bwdif,setpts,fps,overlay,rotate,framestep"
+export VIDEO_FILTERS
+
+# ── Video bitstream filters (mp4/mkv demuxers auto-insert the *_mp4toannexb) ──
+# The mp4toannexb pair is required for H.264/HEVC in MP4 to reach the decoder;
+# the rest are auto-inserted by the VP9/AV1 paths. (dump_extra is intentionally
+# omitted — it is a muxing helper, irrelevant to a player, and not built here.)
+VIDEO_BSFS=""
+VIDEO_BSFS+="h264_mp4toannexb,hevc_mp4toannexb,vp9_superframe,av1_metadata,vp9_raw_reorder"
+export VIDEO_BSFS
+
 # ── User overrides (generated by the build TUI's Settings page) ──────────────
 # The Go build TUI (`./build` ▸ Settings) writes _user_overrides.sh next to
 # this file when the user trims the decoder / filter selection. It re-exports
@@ -173,6 +232,25 @@ if [[ -f "$_ao_overrides" ]]; then
 fi
 unset _ao_overrides
 
+# ── Build flavor (audio | video) ─────────────────────────────────────────────
+# Selects what kind of libmpv this build produces:
+#   audio  (default) — the historical audio-only library. Video decoders,
+#                      swscale, the GPU/render stack and every hwaccel are
+#                      compiled out for the smallest possible binary. Every
+#                      existing invocation gets exactly this, byte-for-byte.
+#   video            — a video-capable library: VIDEO_DECODERS + swscale +
+#                      vo_gpu_next (libplacebo) + libass are kept, the audio-only
+#                      strip patches are skipped, and the config audit flips to
+#                      assert the video stack is present. Per-platform hardware
+#                      decode is wired in the per-platform scripts.
+# Set by the TUI's Settings ▸ Flavor selector (written into _user_overrides.sh
+# above) or directly: `MPV_FLAVOR=video ./scripts/build_libmpv_macos.sh`.
+export MPV_FLAVOR="${MPV_FLAVOR:-audio}"
+if [[ "$MPV_FLAVOR" != "audio" && "$MPV_FLAVOR" != "video" ]]; then
+  printf 'FATAL: MPV_FLAVOR must be "audio" or "video" (got: %s)\n' "$MPV_FLAVOR" >&2
+  exit 1
+fi
+
 # patch_on <id> — true unless <id> is listed (space-separated) in the
 # DISABLED_PATCHES override the Settings ▸ Patches tab writes. Used by the
 # apply_*_patches functions below to skip user-disabled feature patches.
@@ -182,6 +260,19 @@ patch_on() {
     *) return 0 ;;
   esac
 }
+
+# is_video — true in the video flavor. The single predicate every flavor-varying
+# decision below pivots on, mirroring patch_on(). Defined here so swscale_stripped
+# / libass_stripped (next) can short-circuit on it.
+is_video() { [[ "$MPV_FLAVOR" == "video" ]]; }
+
+# flavor_build_seg — output-path segment that namespaces builds/ by flavor so an
+# audio and a video build never overwrite each other's binaries. Audio returns
+# "" so its work/release paths stay byte-identical and consumer-visible
+# (builds/work/macOS, builds/release/libmpv_macos.xcframework.zip); video
+# returns "/video" → builds/work/video/macOS, builds/release/video/libmpv_…
+# Every per-platform script threads this into its BUILD_DIR and release_dir.
+flavor_build_seg() { if is_video; then printf '/video'; fi; }
 
 # swscale_stripped — true only when libswscale can actually be dropped. That
 # needs BOTH reduction patches on:
@@ -196,6 +287,7 @@ patch_on() {
 # application below pivot on this single predicate so the two sides never
 # disagree.
 swscale_stripped() {
+  is_video && return 1   # video needs the pixel scaler — never strip it
   patch_on strip_swscale && patch_on strip_mpv_dead
 }
 
@@ -209,6 +301,7 @@ swscale_stripped() {
 # (patch application, font-stack build, link flags, HAVE_LIBASS audit, verify)
 # pivots on THIS predicate so the two sides never disagree.
 libass_stripped() {
+  is_video && return 1   # video needs libass for subtitle/OSD rendering
   patch_on strip_libass || patch_on strip_mpv_dead
 }
 
@@ -260,6 +353,31 @@ ffmpeg_common_args() {
   # couples this to strip_mpv_dead (see its definition above).
   local _swscale_flag="--enable-swscale"
   swscale_stripped && _swscale_flag="--disable-swscale"
+  # Flavor-driven enable-lists: the audio flavor passes only the AUDIO_* sets
+  # (byte-identical to before); the video flavor appends the VIDEO_* sets so a
+  # single ffmpeg build covers both audio and video elementary streams.
+  local _decoders="$AUDIO_DECODERS" _filters="$AUDIO_FILTERS"
+  local _parsers="$AUDIO_PARSERS"  _bsfs="$AUDIO_BSFS"
+  if is_video; then
+    _decoders="$AUDIO_DECODERS,$VIDEO_DECODERS"
+    _filters="$AUDIO_FILTERS,$VIDEO_FILTERS"
+    _parsers="$AUDIO_PARSERS,$VIDEO_PARSERS"
+    _bsfs="$AUDIO_BSFS,$VIDEO_BSFS"
+  fi
+  # Video acceleration surface: the audio flavor hard-disables the whole hwaccel
+  # + DRM + pixelutils stack (smallest binary, no video path at all). The video
+  # flavor omits these blanket disables so the per-platform script can turn on
+  # the right hardware decoder (VideoToolbox / MediaCodec / D3D11VA / VAAPI);
+  # libavfilter video filters such as scale also pull in pixelutils.
+  local _accel_disable=""
+  if ! is_video; then
+    _accel_disable="--disable-libdrm
+--disable-vaapi
+--disable-vdpau
+--disable-hwaccels
+--disable-vulkan
+--disable-pixelutils"
+  fi
   cat <<EOF
 --enable-static
 --disable-shared
@@ -278,15 +396,15 @@ ${_swscale_flag}
 --enable-protocol=file,http,https,tcp,udp,tls,data,pipe,async,cache,crypto,subfile${_smb2_proto}
 --enable-demuxers
 --disable-decoders
---enable-decoder=$AUDIO_DECODERS
+--enable-decoder=$_decoders
 --disable-encoders
 --disable-muxers
 --disable-filters
---enable-filter=$AUDIO_FILTERS
+--enable-filter=$_filters
 --disable-parsers
---enable-parser=$AUDIO_PARSERS
+--enable-parser=$_parsers
 --disable-bsfs
---enable-bsf=$AUDIO_BSFS
+--enable-bsf=$_bsfs
 --disable-outdevs
 --disable-indevs
 --enable-zlib
@@ -303,12 +421,7 @@ ${_smb2_flag}
 --disable-mbedtls
 --disable-sdl2
 --disable-xlib
---disable-libdrm
---disable-vaapi
---disable-vdpau
---disable-hwaccels
---disable-vulkan
---disable-pixelutils
+${_accel_disable}
 ${_ffmpeg_lto_flag}
 EOF
 }
@@ -320,7 +433,17 @@ EOF
 # off; the optional-deps patch makes libplacebo / libass not-required so
 # unbuilt deps don't fail configure.
 mpv_common_args() {
-  cat <<'EOF'
+  # GL contexts: audio-only renders nothing (vo=null), so both are off for the
+  # smallest binary. Video needs them for vo_gpu_next — `plain-gl` is the
+  # windowing-less GL context the libmpv render API uses to draw into an external
+  # (Flutter) texture; `gl` enables the platform GL backends. The per-platform
+  # script adds its hwdec/VO options (videotoolbox-gl, egl-android, …) on top.
+  local _gl="disabled" _plain_gl="disabled"
+  if is_video; then
+    _gl="enabled"
+    _plain_gl="enabled"
+  fi
+  cat <<EOF
 -Db_lto=true
 -Doptimization=s
 -Dauto_features=disabled
@@ -329,8 +452,8 @@ mpv_common_args() {
 -Dcplayer=false
 -Dbuild-date=false
 -Dtests=false
--Dgl=disabled
--Dplain-gl=disabled
+-Dgl=$_gl
+-Dplain-gl=$_plain_gl
 -Drubberband=enabled
 -Dzlib=enabled
 EOF
@@ -412,34 +535,53 @@ verify_ffmpeg_config() {
   # "filter not found". The selection drives it, so a trimmed build asserts
   # exactly what it asked for. Apple-only AudioToolbox decoders are excluded
   # here and asserted per-platform below (they only compile on Apple).
+  # The audited sets mirror ffmpeg_common_args' enable-lists: audio flavor checks
+  # only the AUDIO_* sets (unchanged); video flavor also checks the VIDEO_* sets,
+  # so a video decoder that passed ./configure but silently produced CONFIG_X=0
+  # is caught here too.
+  local _dec_list="$AUDIO_DECODERS" _flt_list="$AUDIO_FILTERS"
+  local _par_list="$AUDIO_PARSERS"  _bsf_list="$AUDIO_BSFS"
+  if is_video; then
+    _dec_list="$AUDIO_DECODERS,$VIDEO_DECODERS"
+    _flt_list="$AUDIO_FILTERS,$VIDEO_FILTERS"
+    _par_list="$AUDIO_PARSERS,$VIDEO_PARSERS"
+    _bsf_list="$AUDIO_BSFS,$VIDEO_BSFS"
+  fi
   local _appleonly=" aac_at alac_at mp3_at "
   local _tok
-  for _tok in $(printf '%s' "$AUDIO_DECODERS" | tr ',' ' '); do
+  for _tok in $(printf '%s' "$_dec_list" | tr ',' ' '); do
     case "$_appleonly" in *" $_tok "*) continue ;; esac
     assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_DECODER" "1"
   done
-  for _tok in $(printf '%s' "$AUDIO_FILTERS" | tr ',' ' '); do
+  for _tok in $(printf '%s' "$_flt_list" | tr ',' ' '); do
     assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_FILTER" "1"
   done
   # Parser coverage: every whitelisted parser must have compiled. A decoder
   # advertised WITHOUT its companion raw-stream parser would silently fail on
   # bare elementary streams (e.g. truehd/mlp without the `mlp` parser) while
   # still passing the decoder audit above — this closes that blind spot.
-  for _tok in $(printf '%s' "$AUDIO_PARSERS" | tr ',' ' '); do
+  for _tok in $(printf '%s' "$_par_list" | tr ',' ' '); do
     assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_PARSER" "1"
   done
   # BSF coverage: same idea for the auto-inserted bitstream filters.
-  for _tok in $(printf '%s' "$AUDIO_BSFS" | tr ',' ' '); do
+  for _tok in $(printf '%s' "$_bsf_list" | tr ',' ' '); do
     assert_define "$cmp" "CONFIG_$(_ao_upper "$_tok")_BSF" "1"
   done
 
-  # Audio-only invariant: the 4 most common video decoders MUST be off.
-  # If one is present, the binary is at least 30% larger than necessary
-  # (and the audio-only branding is a lie).
-  assert_define "$cmp" "CONFIG_H264_DECODER" "0"
-  assert_define "$cmp" "CONFIG_HEVC_DECODER" "0"
-  assert_define "$cmp" "CONFIG_VP9_DECODER"  "0"
-  assert_define "$cmp" "CONFIG_AV1_DECODER"  "0"
+  # Flavor invariant on the 4 most common video decoders. Audio: they MUST be
+  # off (a present one means the binary is ~30% larger than necessary and the
+  # audio-only branding is a lie). Video: they MUST be on (the whole point).
+  if is_video; then
+    assert_define "$cmp" "CONFIG_H264_DECODER" "1"
+    assert_define "$cmp" "CONFIG_HEVC_DECODER" "1"
+    assert_define "$cmp" "CONFIG_VP9_DECODER"  "1"
+    assert_define "$cmp" "CONFIG_AV1_DECODER"  "1"
+  else
+    assert_define "$cmp" "CONFIG_H264_DECODER" "0"
+    assert_define "$cmp" "CONFIG_HEVC_DECODER" "0"
+    assert_define "$cmp" "CONFIG_VP9_DECODER"  "0"
+    assert_define "$cmp" "CONFIG_AV1_DECODER"  "0"
+  fi
 
   # ── AudioToolbox decoders: Apple-only ────────────────────────────────
   # Even though the AUDIO_DECODERS whitelist lists them on every
@@ -474,18 +616,29 @@ verify_ffmpeg_config() {
       # JNI bootstrap — without it, av_jni_set_java_vm becomes a stub
       # returning AVERROR(ENOSYS), audiotrack reports "no JVM registered"
       # at runtime and falls back to opensles (slower, no audio focus).
+      # Required in BOTH flavors (audiotrack on audio, mediacodec on video).
       assert_define "$cfg" "CONFIG_JNI"        "1"
-      # Audio-only: mediacodec is the Android hardware video decoder.
-      assert_define "$cfg" "CONFIG_MEDIACODEC" "0"
+      # mediacodec is the Android hardware video decoder: must be OFF in audio.
+      # The video flavor enables it per-platform (Phase 3) — assert added there.
+      if ! is_video; then assert_define "$cfg" "CONFIG_MEDIACODEC" "0"; fi
       ;;
     windows)
-      # No DirectX video acceleration in audio-only build.
-      assert_define "$cfg" "CONFIG_D3D11VA" "0"
-      assert_define "$cfg" "CONFIG_DXVA2"   "0"
+      # DirectX video acceleration: off in audio-only. Video enables it
+      # per-platform (Phase 3).
+      if ! is_video; then
+        assert_define "$cfg" "CONFIG_D3D11VA" "0"
+        assert_define "$cfg" "CONFIG_DXVA2"   "0"
+      fi
       ;;
     macos|ios)
-      # No HW video acceleration in audio-only build.
-      assert_define "$cfg" "CONFIG_VIDEOTOOLBOX" "0"
+      # VideoToolbox HW video acceleration: off in audio-only. Enabling it for
+      # video on macOS requires mpv's `cocoa` backend, which pulls in the Swift
+      # bridging header (clipboard-mac.m → osdep/mac/swift.h) — so macOS HW decode
+      # needs swift-build (GL path) or MoltenVK (libplacebo path). Deferred:
+      # SW decode + GPU render already work; HW decode is tackled per-platform
+      # starting with Android (MediaCodec). So in video we currently assert
+      # nothing here (SW path), and audio still asserts it's off.
+      if ! is_video; then assert_define "$cfg" "CONFIG_VIDEOTOOLBOX" "0"; fi
       ;;
   esac
 
@@ -665,7 +818,14 @@ apply_mpv_patches_common() {
   # decode, vo_tct/vo_kitty and the default keybindings table. Idempotent; stubs
   # all cross-TU symbols. (Disabling this also forces libswscale to be kept —
   # see swscale_stripped().)
-  _mpv_patch strip_mpv_dead     patch_strip_mpv_dead.py     "$mpv_dir"
+  # In the video flavor the GPU/render stack is exactly what we keep, so the
+  # patch is skipped entirely (swscale_stripped/libass_stripped already returned
+  # false above, so libswscale + libass are kept to match).
+  if is_video; then
+    warn "Keeping mpv render stack: vo_gpu_next + libplacebo (video flavor)"
+  else
+    _mpv_patch strip_mpv_dead   patch_strip_mpv_dead.py     "$mpv_dir"
+  fi
 
   # strip_win_resources: drop the Windows icon/manifest/version resources (~267K
   # of PE .rsrc) — only meaningful for the mpv.exe player, dead weight in a

@@ -6,7 +6,7 @@ package main
 
 // PatchItem is one source patch applied to mpv/ffmpeg during the build that the
 // user can turn on or off from Settings ▸ Patches. The ID matches the token the
-// build scripts check in DISABLED_PATCHES (see scripts/shared/_audio_only.sh).
+// build scripts check in DISABLED_PATCHES (see scripts/shared/_flavor.sh).
 //
 // Only the cross-platform "feature" patches are listed — the per-platform
 // build-correctness patches (Apple/iOS/Windows/Android fixups, rubberband,

@@ -233,3 +233,62 @@ func countRune(s string, r rune) int {
 	}
 	return n
 }
+
+// TestFlavorToggleReachableAndSwitches guards the Select-page flavor toggle:
+// it sits to the right of Build with the SAME behaviour as the libs toggle —
+// entered with → (single cursor; pending seeded to the active flavor), ←/→ move
+// the pending side WITHOUT switching, ⏎ applies, ↑ leaves into the grid.
+func TestFlavorToggleReachableAndSwitches(t *testing.T) {
+	// Entering from Build (coming from the left) always lands on the leftmost
+	// segment (audio), regardless of the active flavor.
+	mv := newTestModel()
+	mv.settings.Flavor = flavorVideo
+	mv.onBuild = true
+	if e := press(mv, "l"); e.flavorPending != flavorAudio {
+		t.Errorf("entering the toggle from Build should land on audio (leftmost), got %q", e.flavorPending)
+	}
+
+	m := newTestModel() // Select, Compile tab
+	m.settings.Flavor = flavorAudio
+
+	// Build → right → enter the flavor toggle (single cursor; pending = audio).
+	m.onBuild = true
+	m = press(m, "l")
+	if !m.onFlavor || m.onBuild {
+		t.Fatalf("→ from Build should enter the flavor toggle; onFlavor=%v onBuild=%v", m.onFlavor, m.onBuild)
+	}
+	if m.flavorPending != flavorAudio {
+		t.Errorf("entering the toggle should land on the leftmost (audio); got %q", m.flavorPending)
+	}
+	// → moves pending to video but does NOT switch (only ⏎ applies).
+	m = press(m, "l")
+	if m.flavorPending != flavorVideo {
+		t.Fatalf("→ should move pending to video, got %q", m.flavorPending)
+	}
+	if flavorOrDefault(m.settings.Flavor) != flavorAudio {
+		t.Error("flavor must NOT switch on an arrow press — only ⏎ applies")
+	}
+	// ⏎ applies the pending side.
+	m = pressKey(m, tea.KeyEnter)
+	if m.settings.Flavor != flavorVideo {
+		t.Errorf("⏎ should switch the flavor to the pending side; got %q", m.settings.Flavor)
+	}
+	// ← (video→audio) then ⏎ switches back to audio.
+	m = press(m, "h")
+	m = pressKey(m, tea.KeyEnter)
+	if flavorOrDefault(m.settings.Flavor) != flavorAudio {
+		t.Errorf("← + ⏎ should switch back to audio; got %q", m.settings.Flavor)
+	}
+	// ← again, now at the leftmost segment (audio), exits to Build — never stuck
+	// inside the toggle waiting for ⏎.
+	if m.flavorPending != flavorAudio {
+		t.Fatalf("pending should be audio here, got %q", m.flavorPending)
+	}
+	if out := press(m, "h"); !out.onBuild || out.onFlavor {
+		t.Errorf("← at the audio segment should exit to Build; onBuild=%v onFlavor=%v", out.onBuild, out.onFlavor)
+	}
+	// ↑ is also a valid exit (into the grid).
+	if up := pressKey(m, tea.KeyUp); up.onFlavor {
+		t.Error("up from the flavor toggle should leave it (into the grid)")
+	}
+}

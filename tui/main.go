@@ -84,6 +84,7 @@ type model struct {
 	selCol      int
 	selRow      int
 	onBuild     bool
+	onFlavor    bool // cursor is on the audio/video flavor toggle (next to Build)
 	onTabs      bool // cursor is up in the Build/Settings/Dependencies strip
 	onAllBin    bool // cursor is on the top "All binaries" control (Compile tab)
 	onSkip      bool // cursor is on the "skip on failure" option (Tools tab)
@@ -112,7 +113,7 @@ type model struct {
 	// persisted settings on an explicit "Save" in the leave dialog.
 	settings   userSettings
 	setEnabled map[string]bool // catalog item name → on (staged edit state)
-	setTab     int             // 0 = decoders, 1 = filters, 2 = patches
+	setTab     int             // index into visibleSections() for the active flavor
 	onSetTabs  bool            // cursor is up in the Decoders/Filters/Patches strip
 	setRows    []setRow        // flattened (headers + items) for the active tab
 	setCur     int             // cursor into setRows
@@ -163,6 +164,11 @@ type model struct {
 	// switch never fires on a stray arrow press.
 	libModeState string
 	libPending   string
+
+	// flavorPending is the segment the cursor is on while the flavor toggle (next
+	// to Build) is focused ("audio"/"video"): ←/→ move it, ⏎ applies — exactly
+	// like libPending, so the flavor never flips on a stray arrow press.
+	flavorPending string
 
 	// Docker tab — multi-stage image management. dockerCursor walks the image
 	// rows + the "delete all" row; dockerState is the per-stage on-disk status
@@ -385,6 +391,9 @@ func (m model) gotoSettings() model {
 	m.confirmPending = false
 	m.onSetTabs = false
 	m.screen = scSettings
+	if n := m.totalSettingsTabs(); m.setTab >= n {
+		m.setTab = 0
+	}
 	m.rebuildSetRows()
 	m.setCur = m.firstSelectableRow()
 	m.setScroll = 0
@@ -470,7 +479,7 @@ func clampInt(v, lo, hi int) int {
 
 // focusedIdx returns the target index under the cursor (false if on Build).
 func (m model) focusedIdx(bands [][]selColumn) (int, bool) {
-	if m.onBuild || m.selBand >= len(bands) {
+	if m.onBuild || m.onFlavor || m.selBand >= len(bands) {
 		return 0, false
 	}
 	band := bands[m.selBand]
@@ -519,7 +528,7 @@ func (m model) cellChecked(idx int) bool { return m.selected[idx] || m.cellCover
 // focusedUnavailReason returns a "Label — why" hint when the grid cursor is on
 // an unavailable target, else "".
 func (m model) focusedUnavailReason() string {
-	if m.onTabs || m.onAllBin || m.onBuild || m.onSkip || m.onCleanWork || m.buildTab == 2 {
+	if m.onTabs || m.onAllBin || m.onBuild || m.onFlavor || m.onSkip || m.onCleanWork || m.buildTab == 2 {
 		return ""
 	}
 	idx, ok := m.focusedIdx(m.selBands())
@@ -614,6 +623,62 @@ func (m model) renderLibToggle(focused bool) string {
 	return lipgloss.JoinHorizontal(lipgloss.Center, box, "  "+hint)
 }
 
+// renderFlavorToggle draws the audio⇄video build-flavor selector as a segmented
+// control shown next to the Build button, styled like renderLibToggle. The
+// flavor decides whether the build produces an audio-only or a video-capable
+// libmpv (into builds/release/ vs builds/release/video/); it persists
+// immediately on space/enter, and the Settings ▸ Video Decoders tab tracks it.
+// renderFlavorToggle draws the audio⇄video build-flavor selector next to the
+// Build button — same shape and behaviour as renderLibToggle: the green segment
+// is the active flavor; when focused, ←/→ move a cyan PENDING cursor and the
+// hint reads "⏎ switch to X" — nothing changes until ⏎.
+func (m model) renderFlavorToggle(focused bool) string {
+	cur := flavorOrDefault(m.settings.Flavor)
+	seg := func(name string) string {
+		switch {
+		case focused && m.flavorPending == name:
+			return lipgloss.NewStyle().Background(cAccent).Foreground(cBg).Bold(true).Padding(0, 1).Render(name)
+		case cur == name:
+			return lipgloss.NewStyle().Background(cOK).Foreground(cBg).Bold(true).Padding(0, 1).Render(name)
+		default:
+			return lipgloss.NewStyle().Foreground(cFaint).Padding(0, 1).Render(name)
+		}
+	}
+	inner := seg(flavorAudio) + dimStyle.Render("│") + seg(flavorVideo)
+	border := cOK
+	if focused {
+		border = cAccent
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(border).MarginLeft(2).Render(inner)
+	if !focused {
+		return box
+	}
+	var hint string
+	if m.flavorPending != "" && m.flavorPending != cur {
+		hint = lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render("⏎ switch to "+m.flavorPending) +
+			dimStyle.Render("   (currently "+cur+")")
+	} else if cur == flavorVideo {
+		hint = dimStyle.Render("video-capable libmpv   ←→ change")
+	} else {
+		hint = dimStyle.Render("audio-only libmpv   ←→ change")
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Center, box, "  "+hint)
+}
+
+// applyFlavorPending confirms the flavor toggle (⏎): switches to the pending
+// side and saves, but only when it differs from the active flavor — so ⏎ on the
+// already-active side is a harmless no-op. Mirrors applyLibPending.
+func (m *model) applyFlavorPending() {
+	if m.flavorPending == "" || m.flavorPending == flavorOrDefault(m.settings.Flavor) {
+		return
+	}
+	m.settings.Flavor = m.flavorPending
+	if m.ctx != nil {
+		_ = m.settings.save(m.ctx.scriptsRoot)
+	}
+}
+
 // selectedCount counts the checked binary cells, EXCLUDING the per-group "all"
 // rows (those are aggregate controls, not binaries — counting them on top of
 // their covered arches would double-count).
@@ -699,25 +764,44 @@ func (m model) keySelect(k string) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.navDown(bands)
 	case "left", "h":
-		// On the libs toggle, ←/→ only MOVE the selection cursor (no switch until
-		// ⏎). The band is a single column, so column navigation is a no-op here.
-		if m.libToggleFocused(bands) {
+		// On the flavor toggle, ←/→ move the PENDING side — nothing switches until
+		// ⏎. ← past the leftmost segment (audio) steps back out to the Build button
+		// (so you're never stuck inside without applying); ↑ also leaves into the
+		// grid. The libs toggle only moves its pending cursor (no horizontal exit).
+		switch {
+		case m.onFlavor:
+			if m.flavorPending == flavorAudio { // at the leftmost → exit to Build
+				m.onFlavor = false
+				m.onBuild = true
+			} else {
+				m.flavorPending = flavorAudio
+			}
+		case m.libToggleFocused(bands):
 			m.libPending = "local"
-		} else {
+		default:
 			m.navLeft(bands)
 		}
 	case "right", "l":
-		if m.libToggleFocused(bands) {
+		switch {
+		case m.onBuild: // Build → enter the toggle on its leftmost segment (audio)
+			m.onBuild = false
+			m.onFlavor = true
+			m.flavorPending = flavorAudio
+		case m.onFlavor:
+			m.flavorPending = flavorVideo
+		case m.libToggleFocused(bands):
 			m.libPending = "remote"
-		} else {
+		default:
 			m.navRight(bands)
 		}
 	case " ", "enter":
 		// Activate the focused element: toggle a target, run an action
-		// (Checksums / Verify / Libs), flip the skip option, or start the build.
+		// (Checksums / Verify / Libs), flip a build option, or start the build.
 		switch {
 		case m.onBuild:
 			m.begin()
+		case m.onFlavor:
+			m.applyFlavorPending()
 		case m.onSkip:
 			m.toggleSkip()
 		case m.onCleanWork:
@@ -937,8 +1021,9 @@ func (m model) keyHeaderTabs(k string) (tea.Model, tea.Cmd) {
 
 func (m *model) navUp(bands [][]selColumn) {
 	lo, _ := m.tabBandRange()
-	if m.onBuild { // Compile: Build button → grid (last row)
+	if m.onBuild || m.onFlavor { // bottom action row (Build / flavor) → grid
 		m.onBuild = false
+		m.onFlavor = false
 		m.lastGridCell(bands)
 		return
 	}
@@ -973,7 +1058,7 @@ func (m *model) navUp(bands [][]selColumn) {
 }
 
 func (m *model) navDown(bands [][]selColumn) {
-	if m.onBuild {
+	if m.onBuild || m.onFlavor { // bottom action row — nothing below it
 		return
 	}
 	// Tools options sit ABOVE the grid: Skip → Clean-work → grid (top).
@@ -1001,7 +1086,7 @@ func (m *model) navDown(bands [][]selColumn) {
 	}
 	// bottom of the grid
 	if m.buildTab == 0 {
-		m.onBuild = true // Compile → Build button
+		m.onBuild = true // Compile → Build button (→ moves onto the flavor toggle)
 	}
 	// Tools: the grid is the bottom — nothing below it now.
 }
@@ -1070,6 +1155,7 @@ func (m *model) startRun(keys []string) {
 	m.skipNote = false
 	m.screen = scDash
 	m.onBuild = false
+	m.onFlavor = false
 	m.onTabs = false
 	m.onAllBin = false
 	m.onSkip = false
@@ -1385,6 +1471,13 @@ func preview(which string) {
 		m.onSetTabs = true
 		m.rebuildSetRows()
 		fmt.Println(m.viewSettings())
+	case "settings-video":
+		m.screen = scSettings
+		m.settings.Flavor = flavorVideo
+		m.setTab = 2 // the Video Decoders tab (video flavor only)
+		m.rebuildSetRows()
+		m.setCur = m.firstSelectableRow()
+		fmt.Println(m.viewSettings())
 	case "settings-header":
 		m.screen = scSettings
 		m = m.enterHeaderTabs()
@@ -1634,7 +1727,7 @@ func (m model) viewSelect() string {
 	writeLine(&b, m.renderBuildTabStrip(bfocus))
 	b.WriteByte('\n')
 
-	cursorInGrid := !m.onBuild && !m.onTabs && !m.onAllBin && !m.onSkip && !m.onCleanWork && !m.onBuildTabs
+	cursorInGrid := !m.onBuild && !m.onFlavor && !m.onTabs && !m.onAllBin && !m.onSkip && !m.onCleanWork && !m.onBuildTabs
 
 	okRow := lipgloss.NewStyle().Foreground(cOK)
 	row := func(idx int, focused bool) string {
@@ -1712,14 +1805,18 @@ func (m model) viewSelect() string {
 		b.WriteString(m.renderBandRange(row, cursorInGrid, 0, 2, true))
 
 		label := fmt.Sprintf("Build (%d selected)", sel)
+		var buildBtn string
 		switch {
 		case m.onBuild:
-			writeLine(&b, buildBtnFocusStyle.Render(label))
+			buildBtn = buildBtnFocusStyle.Render(label)
 		case sel == 0:
-			writeLine(&b, buildBtnDisabledStyle.Render(label))
+			buildBtn = buildBtnDisabledStyle.Render(label)
 		default:
-			writeLine(&b, buildBtnStyle.Render(label))
+			buildBtn = buildBtnStyle.Render(label)
 		}
+		// Build button + the audio/video flavor toggle to its right (← → moves
+		// between them; space switches the flavor).
+		writeLine(&b, lipgloss.JoinHorizontal(lipgloss.Center, buildBtn, "   ", m.renderFlavorToggle(m.onFlavor)))
 	} else if m.buildTab == 1 {
 		// ── Tools: the two build options on top, then the one-shot actions ──
 		optRow := func(focused, on bool, text string) string {

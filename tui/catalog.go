@@ -10,6 +10,7 @@ type FFKind int
 const (
 	ffDecoder FFKind = iota
 	ffFilter
+	ffVideoDecoder // video flavor only — see VIDEO_DECODERS in _flavor.sh
 )
 
 // FFItem is one toggleable ffmpeg component (a decoder or an audio filter).
@@ -255,5 +256,65 @@ func ffmpegCatalog() []FFItem {
 		{Name: "aeval", Title: "Eval", Desc: "Synthesize/modify audio via per-sample expressions", Category: "Misc / Analysis", Kind: ffFilter, DefaultOn: true},
 		{Name: "afftfilt", Title: "FFT Filter", Desc: "Apply arbitrary expressions in the frequency domain", Category: "Misc / Analysis", Kind: ffFilter, DefaultOn: true},
 		{Name: "acontrast", Title: "Contrast", Desc: "Simple audio contrast / loudness enhancement", Category: "Misc / Analysis", Kind: ffFilter, DefaultOn: true},
+
+		// ===============================================================
+		// VIDEO DECODERS — only shown / built in the video flavor.
+		// Names mirror VIDEO_DECODERS in scripts/shared/_flavor.sh so a
+		// fully-default selection emits nothing and the shell list is used
+		// verbatim. Hardware decode (VideoToolbox / MediaCodec / D3D11VA /
+		// VAAPI) is enabled per-platform, not as a catalog entry.
+		// ---------------------------------------------------------------
+		// VIDEO — Modern / streaming
+		// ---------------------------------------------------------------
+		{Name: "h264", Title: "H.264 / AVC", Desc: "The dominant streaming/Blu-ray video codec", Category: "Modern / streaming", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "hevc", Title: "H.265 / HEVC", Desc: "4K / HDR / Dolby Vision video codec", Category: "Modern / streaming", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "vp8", Title: "VP8", Desc: "WebM / WebRTC video codec", Category: "Modern / streaming", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "vp9", Title: "VP9", Desc: "YouTube / WebM 4K video codec", Category: "Modern / streaming", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "av1", Title: "AV1", Desc: "Royalty-free next-gen video codec", Category: "Modern / streaming", Kind: ffVideoDecoder, DefaultOn: true},
+
+		// ---------------------------------------------------------------
+		// VIDEO — MPEG family / broadcast
+		// ---------------------------------------------------------------
+		{Name: "mpeg1video", Title: "MPEG-1", Desc: "MPEG-1 video (VCD)", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "mpeg2video", Title: "MPEG-2", Desc: "DVD / broadcast / Blu-ray MPEG-2 video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "mpeg4", Title: "MPEG-4 Part 2", Desc: "DivX / Xvid MPEG-4 ASP video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "msmpeg4v1", Title: "MS MPEG-4 v1", Desc: "Microsoft MPEG-4 version 1 video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "msmpeg4v2", Title: "MS MPEG-4 v2", Desc: "Microsoft MPEG-4 version 2 video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "msmpeg4v3", Title: "MS MPEG-4 v3", Desc: "Microsoft MPEG-4 v3 (DivX 3) video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "h263", Title: "H.263", Desc: "H.263 video (legacy video-conferencing/3GP)", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "h263p", Title: "H.263+", Desc: "H.263+ (H.263 version 2) video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "h263i", Title: "H.263 Intel", Desc: "Intel H.263 variant", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "vc1", Title: "VC-1", Desc: "SMPTE VC-1 / WMV9 (Blu-ray) video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "wmv1", Title: "WMV 7", Desc: "Windows Media Video 7", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "wmv2", Title: "WMV 8", Desc: "Windows Media Video 8", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "wmv3", Title: "WMV 9", Desc: "Windows Media Video 9", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "flv", Title: "Sorenson FLV", Desc: "Sorenson Spark (Flash) video", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "theora", Title: "Theora", Desc: "Ogg Theora video codec", Category: "MPEG / broadcast", Kind: ffVideoDecoder, DefaultOn: true},
+
+		// ---------------------------------------------------------------
+		// VIDEO — Pro / intermediate / lossless
+		// ---------------------------------------------------------------
+		{Name: "prores", Title: "Apple ProRes", Desc: "Apple ProRes intermediate codec", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "dnxhd", Title: "Avid DNxHD/HR", Desc: "Avid DNxHD / DNxHR intermediate codec", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "cfhd", Title: "CineForm", Desc: "GoPro CineForm intermediate codec", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "ffv1", Title: "FFV1", Desc: "FFmpeg lossless archival video codec", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "ffvhuff", Title: "FFVHuff", Desc: "FFmpeg Huffman lossless video", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "huffyuv", Title: "HuffYUV", Desc: "HuffYUV lossless video", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "utvideo", Title: "Ut Video", Desc: "Ut Video lossless codec", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "rawvideo", Title: "Raw Video", Desc: "Uncompressed raw video", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "v210", Title: "V210", Desc: "Uncompressed 10-bit 4:2:2 video", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "qtrle", Title: "QuickTime RLE", Desc: "QuickTime Animation (RLE) video", Category: "Pro / lossless", Kind: ffVideoDecoder, DefaultOn: true},
+
+		// ---------------------------------------------------------------
+		// VIDEO — Image / cover art (real decode)
+		// ---------------------------------------------------------------
+		{Name: "mjpeg", Title: "MJPEG", Desc: "Motion JPEG / JPEG image decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "png", Title: "PNG", Desc: "PNG image decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "bmp", Title: "BMP", Desc: "Windows bitmap image decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "gif", Title: "GIF", Desc: "GIF image / animation decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "webp", Title: "WebP", Desc: "WebP image decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "tiff", Title: "TIFF", Desc: "TIFF image decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "targa", Title: "TGA", Desc: "Truevision Targa image decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
+		{Name: "apng", Title: "APNG", Desc: "Animated PNG decoder", Category: "Image", Kind: ffVideoDecoder, DefaultOn: true},
 	}
 }

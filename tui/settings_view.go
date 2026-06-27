@@ -27,13 +27,14 @@ type setRow struct {
 
 func (r setRow) isHeader() bool { return r.header != "" }
 
-// totalSettingsTabs counts the Settings sub-tabs (one per toggle section).
-func totalSettingsTabs() int { return numToggleSections() }
+// totalSettingsTabs counts the Settings sub-tabs visible for the active flavor.
+func (m model) totalSettingsTabs() int { return len(m.visibleSections()) }
 
-// settingsTabLabels are the sub-tab labels: one per toggle section.
-func settingsTabLabels() []string {
-	out := make([]string, 0, numToggleSections())
-	for _, s := range toggleSections() {
+// settingsTabLabels are the sub-tab labels: one per section in the active flavor.
+func (m model) settingsTabLabels() []string {
+	secs := m.visibleSections()
+	out := make([]string, 0, len(secs))
+	for _, s := range secs {
 		out = append(out, s.Label)
 	}
 	return out
@@ -42,7 +43,7 @@ func settingsTabLabels() []string {
 // rebuildSetRows flattens the active section into header + entry rows.
 func (m *model) rebuildSetRows() {
 	m.setRows = nil
-	secs := toggleSections()
+	secs := m.visibleSections()
 	if m.setTab < 0 || m.setTab >= len(secs) {
 		return
 	}
@@ -112,7 +113,7 @@ func (m *model) moveSetCur(dir int) {
 // countTab returns (on, total) toggleable items for a section tab. Returns
 // (0,0) for the Behavior tab.
 func (m model) countTab(tab int) (on, total int) {
-	secs := toggleSections()
+	secs := m.visibleSections()
 	if tab < 0 || tab >= len(secs) {
 		return 0, 0
 	}
@@ -127,7 +128,7 @@ func (m model) countTab(tab int) (on, total int) {
 }
 
 func (m *model) toggleAllInTab(on bool) {
-	secs := toggleSections()
+	secs := m.visibleSections()
 	if m.setTab >= len(secs) {
 		return
 	}
@@ -149,7 +150,8 @@ func (m *model) resetSelection() {
 
 // isDirty reports whether the staged Settings edits differ from the persisted
 // state. It is computed (not a sticky flag) so toggling something off and back
-// to its original value clears the "unsaved" indicator.
+// to its original value clears the "unsaved" indicator. Flavor is NOT part of
+// this — it lives on the Select page and persists immediately.
 func (m model) isDirty() bool {
 	saved := m.settings.enabledSet()
 	for k, v := range m.setEnabled {
@@ -162,7 +164,8 @@ func (m model) isDirty() bool {
 
 // persistSettings folds the staged edit state into the persisted settings and
 // writes them (JSON + the ffmpeg override script). No-op without a build ctx.
-// SkipOnFailure is owned by the build page, so settingsFromEnabled preserves it.
+// Flavor and SkipOnFailure are owned by the build page, so settingsFromEnabled
+// preserves them.
 func (m *model) persistSettings() {
 	m.settings = m.settings.settingsFromEnabled(m.setEnabled)
 	if m.ctx != nil {
@@ -172,7 +175,7 @@ func (m *model) persistSettings() {
 
 // cycleTab switches the active sub-tab by dir, rebuilding the row list.
 func (m *model) cycleTab(dir int) {
-	n := totalSettingsTabs()
+	n := m.totalSettingsTabs()
 	m.setTab = (m.setTab + dir + n) % n
 	m.rebuildSetRows()
 	m.setCur = m.firstSelectableRow()
@@ -191,7 +194,7 @@ func (m model) keySetTabs(k string) (tea.Model, tea.Cmd) {
 			m.cycleTab(-1)
 		}
 	case "right", "l", "tab":
-		if m.setTab < totalSettingsTabs()-1 {
+		if m.setTab < m.totalSettingsTabs()-1 {
 			m.cycleTab(1)
 		}
 	case "up", "k":
@@ -239,12 +242,12 @@ func (m model) keySettings(k string) (tea.Model, tea.Cmd) {
 			m.moveSetCur(1)
 		}
 	case "a":
-		if m.setTab < numToggleSections() {
+		if m.setTab < m.totalSettingsTabs() {
 			m.toggleAllInTab(true)
 			m.setNotice = "all enabled"
 		}
 	case "n":
-		if m.setTab < numToggleSections() {
+		if m.setTab < m.totalSettingsTabs() {
 			m.toggleAllInTab(false)
 			m.setNotice = "all optional disabled"
 		}
@@ -303,14 +306,11 @@ func (m model) viewSettings() string {
 
 	// sub-tab strip — same filled-accent styling as the header tabs, and
 	// focusable: the cursor moves up here from the list.
-	labels := settingsTabLabels()
+	labels := m.settingsTabLabels()
 	cells := make([]string, len(labels))
 	for i, name := range labels {
-		label := name
-		if i < numToggleSections() {
-			on, total := m.countTab(i)
-			label = fmt.Sprintf("%s %d/%d", name, on, total)
-		}
+		on, total := m.countTab(i)
+		label := fmt.Sprintf("%s %d/%d", name, on, total)
 		switch {
 		case m.onSetTabs && i == m.setTab:
 			cells[i] = tabFocusStyle.Render(label)
@@ -378,7 +378,6 @@ func (m model) viewSettings() string {
 	} else {
 		help = helpBar(
 			[2]string{"↑↓", "move"},
-			[2]string{"↑", "tabs"},
 			[2]string{"space", "toggle"},
 			[2]string{"a/n", "all/none"},
 			[2]string{"r", "reset"},

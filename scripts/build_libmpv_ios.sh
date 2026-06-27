@@ -55,7 +55,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Shared across all build_libmpv_<platform>.sh scripts
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
-source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_flavor.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
 JOBS="${JOBS:-$(sysctl -n hw.logicalcpu)}"
@@ -75,7 +75,7 @@ CXX_BIN="${CC_PREFIX:+${CC_PREFIX} }clang++"
 # applies: we now ship a real Mach-O dylib per slice, ThinLTO output is
 # linked into a complete dylib before xcframework assembly.
 
-BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/iOS}"
+BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work$(flavor_build_seg)/iOS}"
 PREFIX_BASE="$BUILD_DIR/prefix"
 
 # Staging dir for the assembled xcframework — in the build tree, never in the
@@ -737,7 +737,7 @@ slice_ffmpeg() {
     target_os="ios_simulator"
   fi
 
-  # ── ffmpeg: smart audio-only build (see scripts/shared/_audio_only.sh) ─────────────
+  # ── ffmpeg: smart audio-only build (see scripts/shared/_flavor.sh) ─────────────
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
   "$dir/configure" \
     --prefix="$prefix" \
@@ -790,7 +790,7 @@ slice_mpv() {
       "$dir" "$SCRIPT_DIR/shared/mpv.exports" "$prefix"
   fi
   # 9 patches shared across every platform (1 required + 8 optional) —
-  # see scripts/shared/_audio_only.sh.
+  # see scripts/shared/_flavor.sh.
   apply_mpv_patches_common "$dir"
 
   local bdir="$BUILD_DIR/build/mpv-${sdk}-${arch}"; mkdir -p "$bdir"
@@ -933,7 +933,7 @@ EOF
 EOF
   }
 
-  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"
+  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release$(flavor_build_seg)"
   mkdir -p "$release_dir"
 
   local xcodebuild_args=("-create-xcframework")

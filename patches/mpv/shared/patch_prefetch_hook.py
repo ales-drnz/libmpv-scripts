@@ -186,7 +186,7 @@ if 'MAK_PREFETCH_STATE_PATCH_V1' in content:
     print(
         'ERROR: patch_prefetch_state.py ran before patch_prefetch_hook.py '
         '(wrong apply order). Apply the hook patch first — see '
-        'apply_mpv_patches_common() in _audio_only.sh.',
+        'apply_mpv_patches_common() in _flavor.sh.',
         file=sys.stderr,
     )
     sys.exit(1)

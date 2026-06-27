@@ -48,7 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Shared across all build_libmpv_<platform>.sh scripts
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
-source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_flavor.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
 ANDROID_API="${ANDROID_API:-24}"
@@ -78,7 +78,7 @@ NDK_VERSION="r28c"
 # 28.2.13676358, while Google's zip is named android-ndk-r28c. Both forms are
 # searched among the candidates below.
 NDK_SEMVER="28.2.13676358"
-BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Android}"
+BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work$(flavor_build_seg)/Android}"
 PREFIX_BASE="$BUILD_DIR/prefix"
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
@@ -378,7 +378,7 @@ build_abi() {
   android_mpv        "$abi" "$prefix"
 
   # Copy libmpv.so into builds/release
-  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"
+  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release$(flavor_build_seg)"
   mkdir -p "$release_dir"
   local final_name="libmpv_android-${abi}.so"
   cp "$prefix/lib/libmpv.so" "$release_dir/$final_name"
@@ -743,7 +743,7 @@ android_ffmpeg() {
   [[ "$abi" == "armeabi-v7a" ]] && extra_cflags+=" -mfpu=neon -mfloat-abi=softfp"
   [[ "$abi" == "x86" ]] && extra_config="--disable-asm"
 
-  # ── ffmpeg: smart audio-only build (see scripts/shared/_audio_only.sh) ─────────────
+  # ── ffmpeg: smart audio-only build (see scripts/shared/_flavor.sh) ─────────────
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
   "$dir/configure" \
     --prefix="$prefix" \
@@ -851,7 +851,7 @@ android_mpv() {
     # so JNI_OnLoad survives into .dynsym and the version script keeps
     # it global.
     # Shared ELF size flags (-Bsymbolic + RELR relative-reloc packing) come from
-    # mpv_elf_size_ldflags() in _audio_only.sh so linux + android stay in sync.
+    # mpv_elf_size_ldflags() in _flavor.sh so linux + android stay in sync.
     local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv_android.ver"

@@ -115,13 +115,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
-source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_flavor.sh"
 
 ROOT="$(resolve_repo_root "$SCRIPT_DIR")" || exit 1
 # Env-overridable so the regression fixture suite can point at a temp dir
 # containing intentionally-broken binaries (see builds/release/
 # .regression_fixtures/) and confirm the new sanity layers fail correctly.
-RELEASE_DIR="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
+RELEASE_DIR="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release$(flavor_build_seg)}"
 FILTER="${1:-}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -997,7 +997,7 @@ _l14_jni_onload_real() {
 # Layer 7b — adaptive feature presence (tracks Settings ▸ Patches strips)
 # ─────────────────────────────────────────────────────────────────────────────
 # Cross-checks the binary against the CURRENT reduction-patch selection (read
-# from DISABLED_PATCHES via _audio_only.sh, which the build TUI writes into
+# from DISABLED_PATCHES via _flavor.sh, which the build TUI writes into
 # _user_overrides.sh). For each toggleable strip we look for a marker string
 # that is reliably present ONLY when the subsystem is actually linked — chosen
 # empirically against the shipped binaries so it survives strip + LTO:

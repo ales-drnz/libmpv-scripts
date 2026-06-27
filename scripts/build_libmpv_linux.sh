@@ -44,7 +44,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
-source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_flavor.sh"
 source "$SCRIPT_DIR/shared/_cross.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
@@ -72,7 +72,7 @@ LIBPLACEBO_VERSION="7.349.0"
 LIBUNIBREAK_VERSION="6.1"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
-BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Linux/$ARCH}"
+BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work$(flavor_build_seg)/Linux/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
 
 # ── Cross-compile setup (toolchain, meson cross-file, cmake toolchain) ────────
@@ -490,7 +490,7 @@ build_mpv() {
   local link_extra=()
   if [[ "${VIS_HIDDEN:-1}" != "0" || "${SECTION_GC:-1}" != "0" ]]; then
     # Shared ELF size flags (-Bsymbolic + RELR relative-reloc packing) come from
-    # mpv_elf_size_ldflags() in _audio_only.sh so linux + android stay in sync.
+    # mpv_elf_size_ldflags() in _flavor.sh so linux + android stay in sync.
     # NOTE: x86_64 BFD ld packs RELR; the aarch64 BFD/gold in binutils 2.42 do
     # NOT (they accept -z pack-relative-relocs but emit no .relr.dyn), so
     # linux-aarch64 keeps ~0.95M of unpacked .rela.dyn. Fixable with mold once
@@ -526,7 +526,7 @@ build_mpv() {
 # =============================================================================
 
 finalize() {
-  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"
+  local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release$(flavor_build_seg)"
   mkdir -p "$release_dir"
 
   log "Locating libmpv.so..."
@@ -601,7 +601,7 @@ main() {
   # Settings ▸ Patches). By default libass is stripped from mpv, so the whole
   # chain (expat, libpng, freetype ×2, fribidi, harfbuzz, fontconfig, unibreak,
   # libass) is dead weight and skipped. mpv re-detects libass via pkg-config
-  # when these are present; see swscale_stripped()/patch_on in _audio_only.sh.
+  # when these are present; see swscale_stripped()/patch_on in _flavor.sh.
   if ! libass_stripped; then
     build_expat
     build_libpng

@@ -32,28 +32,77 @@ type toggle struct {
 	DefaultOn bool   // part of the curated default set
 }
 
+// Build flavors. The selected flavor decides which sections are shown in the
+// Settings UI and what kind of libmpv the build produces (see MPV_FLAVOR in
+// scripts/shared/_flavor.sh).
+const (
+	flavorAudio = "audio"
+	flavorVideo = "video"
+)
+
+// flavorOrDefault normalises an empty/unknown flavor to the audio default.
+func flavorOrDefault(f string) string {
+	if f == flavorVideo {
+		return flavorVideo
+	}
+	return flavorAudio
+}
+
 // section is one Settings tab.
 type section struct {
 	Key   string // stable id, namespaces the toggles ("decoders", …)
 	Label string // tab label
 	items func() []toggle
+	// Flavors lists the build flavors this section appears in. Empty ⇒ every
+	// flavor (the shared audio sections). A video-only section lists
+	// {flavorVideo}. This is the ONE place flavor membership is declared — the
+	// UI, persistence and override generation all derive from it.
+	Flavors []string
 	// emit returns the shell line(s) this section contributes to the override
 	// script, given the resolved on/off state of its items (keyed by raw Name).
 	// Only called for sections that differ from their defaults.
 	emit func(sel map[string]bool, items []toggle) []string
 }
 
-// toggleSections is the single registry of Settings sections. Add one here to
-// add a tab — nothing else to touch.
+// inFlavor reports whether this section is shown in flavor f.
+func (s section) inFlavor(f string) bool {
+	if len(s.Flavors) == 0 {
+		return true // shared across all flavors
+	}
+	return contains(s.Flavors, f)
+}
+
+// toggleSections is the single registry of ALL Settings sections across every
+// flavor. Persistence iterates this so a flavor's deltas round-trip even while
+// the other flavor is active; the UI shows only visibleSections(flavor). Add a
+// section here (with its Flavors) and the UI, persistence, override file and
+// reset logic all pick it up — there is no per-section special-casing.
 func toggleSections() []section {
 	return []section{
 		{Key: "decoders", Label: "Decoders", items: ffToggles(ffDecoder), emit: emitEnabledCSV("AUDIO_DECODERS")},
 		{Key: "filters", Label: "Filters", items: ffToggles(ffFilter), emit: emitEnabledCSV("AUDIO_FILTERS")},
+		{Key: "video-decoders", Label: "Video Decoders", items: ffToggles(ffVideoDecoder), Flavors: []string{flavorVideo}, emit: emitEnabledCSV("VIDEO_DECODERS")},
 		{Key: "patches", Label: "Patches", items: patchToggles, emit: emitDisabledList("DISABLED_PATCHES")},
 	}
 }
 
-func numToggleSections() int { return len(toggleSections()) }
+// sectionsForFlavor filters the full registry down to the sections shown for
+// flavor f (used by the Settings UI).
+func sectionsForFlavor(f string) []section {
+	f = flavorOrDefault(f)
+	var out []section
+	for _, s := range toggleSections() {
+		if s.inFlavor(f) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// visibleSections are the Settings sub-tabs for the active build flavor. The
+// flavor is chosen on the Select page (next to Build) and persisted, so Settings
+// just reflects it — the Video Decoders tab appears only in the video flavor.
+func (m model) visibleSections() []section { return sectionsForFlavor(m.settings.Flavor) }
 
 // nsKey namespaces a toggle so the global enabled-map never collides across
 // sections.

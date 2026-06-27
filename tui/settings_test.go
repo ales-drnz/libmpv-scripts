@@ -7,6 +7,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -159,6 +161,108 @@ func TestSettingsDeltaRoundTrip(t *testing.T) {
 	if !contains(got.Sections["decoders"].Disabled, "aac") {
 		t.Error("aac should be recorded as disabled (no longer locked)")
 	}
+}
+
+// TestVideoFlavorOverride: a video build at defaults must emit MPV_FLAVOR (and
+// nothing else, so the shell uses its curated VIDEO_DECODERS verbatim); a
+// trimmed video selection emits a VIDEO_DECODERS line without the dropped codec.
+func TestVideoFlavorOverride(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "shared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Default video flavor → only the flavor line.
+	us := defaultSettings()
+	us.Flavor = flavorVideo
+	if err := us.writeOverride(root); err != nil {
+		t.Fatal(err)
+	}
+	s := readFileStr(t, filepath.Join(root, overrideRelPath))
+	if !strings.Contains(s, `export MPV_FLAVOR="video"`) {
+		t.Errorf("video flavor must export MPV_FLAVOR=video, got:\n%s", s)
+	}
+	if strings.Contains(s, "VIDEO_DECODERS=") {
+		t.Errorf("an all-default video selection must NOT emit VIDEO_DECODERS, got:\n%s", s)
+	}
+	// Trim one video decoder → VIDEO_DECODERS appears without it.
+	us.Sections["video-decoders"] = sectionDelta{Disabled: []string{"theora"}}
+	if err := us.writeOverride(root); err != nil {
+		t.Fatal(err)
+	}
+	s = readFileStr(t, filepath.Join(root, overrideRelPath))
+	vidLine := lineWith(s, "VIDEO_DECODERS=")
+	if csvHas(vidLine, "theora") {
+		t.Errorf("theora should be absent from VIDEO_DECODERS: %s", vidLine)
+	}
+	if !csvHas(vidLine, "h264") {
+		t.Errorf("h264 (untouched) should stay in VIDEO_DECODERS: %s", vidLine)
+	}
+}
+
+// TestAudioFlavorNoMpvFlavor: the audio default emits no override at all (so the
+// shell falls back to MPV_FLAVOR=audio + the curated lists).
+func TestAudioFlavorNoMpvFlavor(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "shared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := defaultSettings().writeOverride(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, overrideRelPath)); !os.IsNotExist(err) {
+		t.Error("audio default must not write an override file")
+	}
+}
+
+// TestVideoCatalogMatchesShell guards the load-bearing invariant: the TUI's
+// ffVideoDecoder catalog and the shell's VIDEO_DECODERS list must hold the exact
+// same set of tokens. If they drift, an "all-default" video selection would
+// emit nothing while the shell built a different set (or the audit would trip).
+func TestVideoCatalogMatchesShell(t *testing.T) {
+	shell := parseShellList(t, "VIDEO_DECODERS")
+	var cat []string
+	for _, it := range ffmpegCatalog() {
+		if it.Kind == ffVideoDecoder {
+			cat = append(cat, it.Name)
+		}
+	}
+	sort.Strings(shell)
+	sort.Strings(cat)
+	if strings.Join(shell, ",") != strings.Join(cat, ",") {
+		t.Errorf("ffVideoDecoder catalog and shell VIDEO_DECODERS diverged.\n shell: %v\n catalog: %v", shell, cat)
+	}
+}
+
+// parseShellList extracts the comma-joined tokens a `NAME=`/`NAME+=` shell
+// variable accumulates across its quoted assignments in _flavor.sh.
+func parseShellList(t *testing.T, name string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "scripts", "shared", "_flavor.sh"))
+	if err != nil {
+		t.Fatalf("reading shell script: %v", err)
+	}
+	re := regexp.MustCompile(name + `\+?="([^"]*)"`)
+	var out []string
+	for _, mtch := range re.FindAllStringSubmatch(string(data), -1) {
+		for _, tok := range strings.Split(mtch[1], ",") {
+			if tok = strings.TrimSpace(tok); tok != "" {
+				out = append(out, tok)
+			}
+		}
+	}
+	if len(out) == 0 {
+		t.Fatalf("no tokens parsed for %s", name)
+	}
+	return out
+}
+
+func readFileStr(t *testing.T, p string) string {
+	t.Helper()
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatalf("reading %s: %v", p, err)
+	}
+	return string(data)
 }
 
 func lineWith(s, sub string) string {
