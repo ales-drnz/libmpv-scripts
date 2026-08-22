@@ -1,3 +1,11 @@
+## [0.1.5] - 22-08-2026
+
+### Fixed
+- The Android binaries no longer pack their relative relocations as `DT_RELR`, which the Android linker ignores below API 30, leaving every relative pointer unrelocated and crashing libmpv on load (mpv_audio_kit [#16](https://github.com/ales-drnz/mpv_audio_kit/issues/16)). They now use APS2 packing, supported since API 23, which costs about 150 KB on each 64 bit binary.
+
+### Changed
+- `mpv_elf_size_ldflags` now takes the packing format as an argument, `android` or `relr`. Linux keeps `relr` and its flags are unchanged; `DT_RELR` stays safe there because glibc emits a `GLIBC_ABI_DT_RELR` version dependency, so an old loader refuses the library instead of crashing.
+
 ## [0.1.4] - 18-06-2026
 
 ### Changed

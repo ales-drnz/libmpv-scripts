@@ -2,7 +2,7 @@
 
 #### Audio-only libmpv, built for every platform.
 
-[![](https://img.shields.io/badge/libmpv--scripts-0.1.0-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
+[![](https://img.shields.io/badge/libmpv--scripts-0.1.5-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
 [![](https://img.shields.io/badge/mpv-v0.41.0-orange.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/FFmpeg-8.1.1-green.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg?style=for-the-badge)](LICENSE)

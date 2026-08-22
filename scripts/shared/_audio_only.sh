@@ -902,18 +902,44 @@ dep_unwind_cflags() {
 
 # ── Extra ELF size flags for the final libmpv link (linux + android) ─────────
 # Returned as a COMMA SUFFIX to append inside an existing `-Wl,...` group, e.g.
-#   ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
+#   ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags relr)"
 #   -Bsymbolic            bind libmpv's internal global refs at link time (no
 #                         interposition; only mpv_* is exported) — cuts PLT/GOT.
-#   -z pack-relative-relocs  pack the relative dynrelocs into a bit-packed
-#                         .relr.dyn (~3% of .rela.dyn → ~1MB smaller). Needs a
-#                         DT_RELR-aware loader (glibc>=2.36 / Android NDK / musl
-#                         >=2022) — true for every target this is used on.
+# libmpv carries ~44k relative dynrelocs, ~1MB as plain .rela.dyn, so they get
+# packed — but WHICH packing is safe depends on the loader, so the caller picks:
+#   relr     -z pack-relative-relocs → bit-packed .relr.dyn, ~3% of .rela.dyn.
+#            Needs glibc>=2.36 / musl>=2022 / bionic API 30+. On glibc lld also
+#            emits a GLIBC_ABI_DT_RELR version dep, so an older loader refuses
+#            the library outright instead of misbehaving.
+#   android  --pack-dyn-relocs=android → APS2 (DT_ANDROID_RELA, or
+#            DT_ANDROID_REL on 32-bit arm), understood by bionic since API 23.
+#            Bulkier than RELR, because a RELA group carries an addend per
+#            reloc: on libmpv's ~44k relative relocs that is ~166K against
+#            RELR's ~16K, still far under the ~1MB of unpacked .rela.dyn. The
+#            32-bit arm REL form has no addend and costs only ~41K.
+# Android MUST NOT use relr while minSdk is 24. Bionic learned the official
+# DT_RELR tags only in API 30 (it had them under OS-private tags since API 28);
+# below that it SKIPS them silently, so every relative reloc stays unapplied,
+# .init_array[0] keeps its link-time value and dlopen() segfaults before any app
+# code runs. Android has no GLIBC_ABI_DT_RELR equivalent to turn that into a
+# clean load error. See mpv_audio_kit issue #16.
+#
+# Emit exactly one packing flag: lld selects the format with an if/else, not a
+# merge, so appending an override does NOT undo an earlier flag — `-z
+# pack-relative-relocs` beats `--pack-dyn-relocs=none`, and
+# `--pack-dyn-relocs=relr` beats `-z nopack-relative-relocs`.
+#
 # ELF-only: Mach-O (macOS/iOS) uses automatic chained fixups and PE (Windows)
 # has no RELR, so those platforms must NOT call this. Env opt-out: MPV_SIZE_LD=0.
 mpv_elf_size_ldflags() {
   [[ "${MPV_SIZE_LD:-1}" == "0" ]] && return
-  echo ",-Bsymbolic,-z,pack-relative-relocs"
+  # ${1-relr}, not ${1:-relr}: an omitted argument defaults, an empty one is a
+  # caller bug and must hit the error branch rather than silently pick relr.
+  case "${1-relr}" in
+    android) echo ",-Bsymbolic,--pack-dyn-relocs=android" ;;
+    relr)    echo ",-Bsymbolic,-z,pack-relative-relocs" ;;
+    *)       echo "mpv_elf_size_ldflags: unknown packing '$1'" >&2; return 1 ;;
+  esac
 }
 
 # ── libxml2 ./configure trim — keep only the DASH/IMF DOM subset ─────────────

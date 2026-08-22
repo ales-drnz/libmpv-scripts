@@ -496,7 +496,10 @@ build_mpv() {
     # linux-aarch64 keeps ~0.95M of unpacked .rela.dyn. Fixable with mold once
     # the Docker image's foreign-arch multiarch apt step is repaired (mold links
     # gcc-LTO + packs aarch64 RELR); deferred to avoid an image-rebuild regression.
-    local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
+    # See the note in build_libmpv_android.sh: `local x="$(cmd)"` would mask a
+    # failure inside the command substitution from set -e.
+    local ld_args
+    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags relr)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
     local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"

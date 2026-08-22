@@ -850,9 +850,15 @@ android_mpv() {
     # member) — `--exclude-libs` only suppresses exports from archives,
     # so JNI_OnLoad survives into .dynsym and the version script keeps
     # it global.
-    # Shared ELF size flags (-Bsymbolic + RELR relative-reloc packing) come from
-    # mpv_elf_size_ldflags() in _audio_only.sh so linux + android stay in sync.
-    local ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags)"
+    # Shared ELF size flags (-Bsymbolic + relative-reloc packing) come from
+    # mpv_elf_size_ldflags() in _audio_only.sh. Android asks for APS2 rather
+    # than the RELR that linux uses: bionic ignores DT_RELR below API 30 and
+    # then segfaults in dlopen, and minSdk here is 24. See issue #16.
+    # Declared before assigning: `local x="$(cmd)"` reports local's own exit
+    # status, so a failure inside the substitution slips past set -e and the
+    # link would silently proceed without the size flags.
+    local ld_args
+    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags android)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv_android.ver"
     # Pin C++ runtime statically. -l:<filename>.a forces ld to use that
