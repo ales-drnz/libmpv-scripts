@@ -489,17 +489,14 @@ build_mpv() {
   #     fail at runtime on systems without those .so installed (e.g. WSL).
   local link_extra=()
   if [[ "${VIS_HIDDEN:-1}" != "0" || "${SECTION_GC:-1}" != "0" ]]; then
-    # Shared ELF size flags (-Bsymbolic + RELR relative-reloc packing) come from
-    # mpv_elf_size_ldflags() in _audio_only.sh so linux + android stay in sync.
-    # NOTE: x86_64 BFD ld packs RELR; the aarch64 BFD/gold in binutils 2.42 do
-    # NOT (they accept -z pack-relative-relocs but emit no .relr.dyn), so
-    # linux-aarch64 keeps ~0.95M of unpacked .rela.dyn. Fixable with mold once
-    # the Docker image's foreign-arch multiarch apt step is repaired (mold links
-    # gcc-LTO + packs aarch64 RELR); deferred to avoid an image-rebuild regression.
+    # Shared ELF flags from _audio_only.sh: -Bsymbolic without relocation packing
+    # (`none`): RELR would need glibc 2.36 on the user's machine, see
+    # mpv_elf_size_ldflags. Android asks for APS2 instead. The SONAME suffix
+    # renames the library to the kit's own name, see MPV_SONAME.
     # See the note in build_libmpv_android.sh: `local x="$(cmd)"` would mask a
     # failure inside the command substitution from set -e.
     local ld_args
-    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags relr)"
+    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
     local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"
@@ -556,6 +553,8 @@ finalize() {
 
   log "Stripping symbols..."
   "$STRIP" --strip-unneeded "$out"
+  assert_soname "$out"
+  assert_no_relr "$out"
 
   # Dynsym hygiene check. readelf -W --dyn-syms columns:
   #   Num Value Size Type Bind Vis Ndx Name

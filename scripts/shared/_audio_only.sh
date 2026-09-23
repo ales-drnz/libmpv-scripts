@@ -917,6 +917,9 @@ dep_unwind_cflags() {
 #            reloc: on libmpv's ~44k relative relocs that is ~166K against
 #            RELR's ~16K, still far under the ~1MB of unpacked .rela.dyn. The
 #            32-bit arm REL form has no addend and costs only ~41K.
+#   none     -Bsymbolic only, plain .rela.dyn. What Linux ships since r14: RELR
+#            there needs glibc 2.36 (Ubuntu 22.04 has 2.35, RHEL 9 has 2.34)
+#            and the ~1 MB it saves is not worth that floor on a desktop.
 # Android MUST NOT use relr while minSdk is 24. Bionic learned the official
 # DT_RELR tags only in API 30 (it had them under OS-private tags since API 28);
 # below that it SKIPS them silently, so every relative reloc stays unapplied,
@@ -931,6 +934,40 @@ dep_unwind_cflags() {
 #
 # ELF-only: Mach-O (macOS/iOS) uses automatic chained fixups and PE (Windows)
 # has no RELR, so those platforms must NOT call this. Env opt-out: MPV_SIZE_LD=0.
+# ── SONAME of the bundled library (linux + android) ──────────────────────────
+# mpv's meson names the library libmpv.so.2 on Linux and libmpv.so on Android,
+# the same SONAME media_kit ships. Two libraries with one SONAME cannot live
+# in one process on bionic, which resolves a dlopen by name against the
+# SONAMEs already loaded, and they collide on disk too: lib/<abi>/ in the
+# APK, lib/ in the Linux bundle. The kit's plugin therefore owns its own name,
+# file and SONAME alike, and the consumer's build hook writes the file under
+# it. The release asset names are unchanged. Emitted as a comma suffix for an
+# existing `-Wl,...` group, after meson's own -soname: both GNU ld and lld take
+# the last one on the line. The build scripts assert the result with readelf.
+MPV_SONAME="libmpv_audio_kit.so"
+export MPV_SONAME
+mpv_soname_ldflags() { printf ',-soname,%s' "$MPV_SONAME"; }
+
+# assert_soname <elf> <readelf> — die unless <elf> carries $MPV_SONAME.
+assert_soname() {
+  local elf="$1" readelf="${2:-readelf}" got
+  got="$(LC_ALL=C "$readelf" -dW "$elf" 2>/dev/null | sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p')"
+  [[ "$got" == "$MPV_SONAME" ]] || die "SONAME is '${got:-none}', expected $MPV_SONAME: $elf"
+  ok "SONAME $got"
+}
+
+# assert_no_relr <elf> <readelf> — die if <elf> packs its relative relocs as
+# DT_RELR (tag 0x24). Linux keeps plain RELA: RELR needs glibc 2.36, which
+# leaves Ubuntu 22.04 and RHEL 9 out, for about 1 MB saved. Android has its
+# own guard in the consumer (check_android_relocs.sh).
+assert_no_relr() {
+  local elf="$1" readelf="${2:-readelf}"
+  if LC_ALL=C "$readelf" -dW "$elf" 2>/dev/null | grep -qE '^ *0x0*24 '; then
+    die "DT_RELR present, the loader floor would be glibc 2.36: $elf"
+  fi
+  ok "no DT_RELR"
+}
+
 mpv_elf_size_ldflags() {
   [[ "${MPV_SIZE_LD:-1}" == "0" ]] && return
   # ${1-relr}, not ${1:-relr}: an omitted argument defaults, an empty one is a
@@ -938,6 +975,7 @@ mpv_elf_size_ldflags() {
   case "${1-relr}" in
     android) echo ",-Bsymbolic,--pack-dyn-relocs=android" ;;
     relr)    echo ",-Bsymbolic,-z,pack-relative-relocs" ;;
+    none)    echo ",-Bsymbolic" ;;
     *)       echo "mpv_elf_size_ldflags: unknown packing '$1'" >&2; return 1 ;;
   esac
 }

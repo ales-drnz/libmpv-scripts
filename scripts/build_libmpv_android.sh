@@ -384,6 +384,7 @@ build_abi() {
   cp "$prefix/lib/libmpv.so" "$release_dir/$final_name"
 
   "$(ndk_strip)" --strip-unneeded "$release_dir/$final_name" 2>/dev/null || true
+  assert_soname "$release_dir/$final_name" "$(dirname "$(ndk_strip)")/llvm-readelf"
   ok "Output: $release_dir/$final_name"
 }
 
@@ -858,7 +859,10 @@ android_mpv() {
     # status, so a failure inside the substitution slips past set -e and the
     # link would silently proceed without the size flags.
     local ld_args
-    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags android)"
+    # The SONAME suffix renames the library to the kit's own name (MPV_SONAME
+    # in _audio_only.sh): on bionic a dlopen by name resolves against the SONAMEs
+    # already loaded, so libmpv.so would hand back another plugin's copy.
+    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags android)$(mpv_soname_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv_android.ver"
     # Pin C++ runtime statically. -l:<filename>.a forces ld to use that
