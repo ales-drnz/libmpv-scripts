@@ -57,6 +57,14 @@ export RUBBERBAND_VERSION="${RUBBERBAND_VERSION:-4.0.0}"
 export SPEEXDSP_VERSION="${SPEEXDSP_VERSION:-1.2.1}"
 export LIBSMB2_VERSION="${LIBSMB2_VERSION:-6.0.0}"
 
+# ── PipeWire (Linux, headers and stub source only) ───────────────────────────
+# libmpv does not link PipeWire: its AO goes through a lazily loaded stub (see
+# patches/mpv/linux/patch_optional_audio_libs.py). This version supplies the
+# headers and the symbol set, so it is also the oldest PipeWire the AO works
+# with at run time. 0.3.57 is mpv 0.41's own floor, and building against it
+# keeps mpv on the code paths every later PipeWire supports.
+export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
+
 # ── TLS backend (every platform) ─────────────────────────────────────────────
 # OpenSSL is the unified TLS backend across all five platforms. On Apple
 # we deliberately do NOT use SecureTransport: it's been deprecated by

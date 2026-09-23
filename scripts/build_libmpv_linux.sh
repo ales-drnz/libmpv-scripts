@@ -48,7 +48,6 @@ source "$SCRIPT_DIR/shared/_audio_only.sh"
 source "$SCRIPT_DIR/shared/_cross.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
-ROOT="$(resolve_repo_root "$SCRIPT_DIR")" || exit 1
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 ARCH="${ARCH:-x86_64}"
@@ -63,6 +62,10 @@ case "$ARCH" in
   x86_64|aarch64) ;;
   *) die "Unsupported --arch=$ARCH (must be x86_64 or aarch64)" ;;
 esac
+# The linux image is native-only (glibc 2.31 base, no multiarch cross): build
+# each arch on a host of that arch. See the `linux` stage in docker/Dockerfile.
+[[ "$(uname -m)" == "$ARCH" ]] || \
+  die "--arch=$ARCH needs a $ARCH host (this one is $(uname -m)); the Linux build is native-only"
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
@@ -464,6 +467,74 @@ build_ffmpeg() {
   ok "ffmpeg ✓"
 }
 
+# ── Audio client libraries as lazily loaded stubs ────────────────────────────
+# libmpv must load on systems without PipeWire or PulseAudio, so neither is a
+# DT_NEEDED: mpv links Implib.so stubs (tools/implib) that dlopen the real
+# library on first use, and the Linux mpv patch checks it is there before
+# that first use. The stubs ask the patch for the handle (--dlopen-callback),
+# so there is one loader. mpv finds these through their own .pc files, which
+# point at the stub archives and, for PipeWire, at headers of the pinned
+# PIPEWIRE_VERSION built here (focal's libpipewire is too old for mpv).
+STUBS_DIR="$BUILD_DIR/stubs"
+
+build_audio_stubs() {
+  [[ -f "$STUBS_DIR/pkgconfig/libpipewire-0.3.pc" && \
+     -f "$STUBS_DIR/pkgconfig/libpulse.pc" ]] && return
+  log "Building PipeWire $PIPEWIRE_VERSION (headers and stub source)..."
+  local sdk="$BUILD_DIR/pipewire-sdk"
+  local dir="$BUILD_DIR/src/pipewire-$PIPEWIRE_VERSION"
+  download_git "https://gitlab.freedesktop.org/pipewire/pipewire.git" "$dir" "$PIPEWIRE_VERSION"
+  local bdir="$BUILD_DIR/build/pipewire"
+  rm -rf "$bdir" "$sdk"
+  # Plain flags: none of the LTO/visibility tuning belongs in a library that
+  # only lends its headers and its exported symbol list.
+  CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" LDFLAGS="" \
+    meson setup "$bdir" "$dir" --prefix="$sdk" --libdir=lib --buildtype=release \
+      --auto-features=disabled '-Dsession-managers=[]' \
+      -Djack-devel=false -Dlegacy-rtkit=false
+  ninja -C "$bdir" -j"$JOBS"
+  ninja -C "$bdir" install
+
+  mkdir -p "$STUBS_DIR/pkgconfig"
+  local pulse_so="/usr/lib/$CROSS_TRIPLE/libpulse.so.0"
+  [[ -f "$pulse_so" ]] || die "libpulse not found at $pulse_so (libpulse-dev missing?)"
+  make_stub pipewire "$sdk/lib/libpipewire-0.3.so.0"
+  make_stub pulse "$pulse_so"
+
+  cat > "$STUBS_DIR/pkgconfig/libpipewire-0.3.pc" <<EOF
+Name: libpipewire-0.3
+Description: PipeWire client library, through a lazily loaded stub
+Version: $PIPEWIRE_VERSION
+Cflags: -I$sdk/include/pipewire-0.3 -I$sdk/include/spa-0.2 -D_REENTRANT
+Libs: $STUBS_DIR/libpipewire-stub.a -ldl -lpthread
+EOF
+  cat > "$STUBS_DIR/pkgconfig/libpulse.pc" <<EOF
+Name: libpulse
+Description: PulseAudio client library, through a lazily loaded stub
+Version: $(PKG_CONFIG_LIBDIR="/usr/lib/$CROSS_TRIPLE/pkgconfig:/usr/share/pkgconfig" pkg-config --modversion libpulse)
+Cflags: -D_REENTRANT
+Libs: $STUBS_DIR/libpulse-stub.a -ldl -lpthread
+EOF
+  ok "Audio library stubs ✓"
+}
+
+# make_stub <name> <library.so>: $STUBS_DIR/lib<name>-stub.a, trampolines for
+# every function <library.so> exports, loaded through mak_<name>_dlopen.
+make_stub() {
+  local name="$1" lib="$2" out="$STUBS_DIR/$1"
+  rm -rf "$out"; mkdir -p "$out"
+  python3 "$LIBMPV_SCRIPTS_ROOT/tools/implib/implib-gen.py" -q \
+    --target "$CROSS_TRIPLE" --dlopen-callback "mak_${name}_dlopen" \
+    --outdir "$out" "$lib"
+  local f objs=()
+  for f in "$out"/*.tramp.S "$out"/*.init.c; do
+    "$CC" -O2 -fPIC -c "$f" -o "$f.o"
+    objs+=("$f.o")
+  done
+  rm -f "$STUBS_DIR/lib${name}-stub.a"
+  "$AR" rcs "$STUBS_DIR/lib${name}-stub.a" "${objs[@]}"
+}
+
 build_mpv() {
   [[ -f "$PREFIX/lib/libmpv.so" ]] && return
   log "Building mpv $MPV_VERSION..."
@@ -472,6 +543,7 @@ build_mpv() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/mpv"; mkdir -p "$bdir"
   apply_mpv_patches_common "$dir"
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/linux/patch_optional_audio_libs.py" "$dir"
 
   # ELF dynsym hygiene + section dead-strip + transitive-static linkage:
   #   --gc-sections           drop unreferenced sections (audio-only build)
@@ -505,6 +577,9 @@ build_mpv() {
   fi
 
   pushd "$bdir" >/dev/null
+  # The stub .pc files come first, so libpipewire-0.3 and libpulse resolve to
+  # the stubs (see build_audio_stubs).
+  PKG_CONFIG_LIBDIR="$STUBS_DIR/pkgconfig:$PKG_CONFIG_LIBDIR" \
   meson setup "$dir" --cross-file "$CROSS_MESON_FILE" \
     --prefix="$PREFIX" \
     --buildtype=release \
@@ -555,6 +630,8 @@ finalize() {
   "$STRIP" --strip-unneeded "$out"
   assert_soname "$out"
   assert_no_relr "$out"
+  assert_no_needed "$out" 'libpipewire|libpulse'
+  assert_glibc_floor "$out" "$LINUX_GLIBC_FLOOR"
 
   # Dynsym hygiene check. readelf -W --dyn-syms columns:
   #   Num Value Size Type Bind Vis Ndx Name
@@ -598,6 +675,7 @@ main() {
   build_zlib
   build_bzip2
   build_xz
+  build_audio_stubs
 
   # Font stack — built ONLY when libass is kept (strip_libass disabled in
   # Settings ▸ Patches). By default libass is stripped from mpv, so the whole

@@ -959,6 +959,34 @@ assert_soname() {
   ok "SONAME $got"
 }
 
+# ── Linux loader floor ───────────────────────────────────────────────────────
+# The newest glibc symbol version libmpv may bind on Linux. The linux Docker
+# stage builds on Ubuntu 20.04 for this: 2.31 covers Debian 11, RHEL 9 and
+# every Ubuntu since 20.04.
+LINUX_GLIBC_FLOOR="2.31"
+
+# assert_glibc_floor <elf> <max> <readelf> — die if <elf> needs a GLIBC_x.y
+# symbol version newer than <max>.
+assert_glibc_floor() {
+  local elf="$1" max="$2" readelf="${3:-readelf}" newest
+  newest="$(LC_ALL=C "$readelf" -W -V "$elf" 2>/dev/null \
+    | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/GLIBC_//' | sort -Vu | tail -1)"
+  [[ -n "$newest" ]] || die "no GLIBC symbol versions found in $elf"
+  [[ "$(printf '%s\n%s\n' "$newest" "$max" | sort -V | tail -1)" == "$max" ]] || \
+    die "needs glibc $newest, above the $max floor: $elf"
+  ok "glibc floor: needs $newest (max $max)"
+}
+
+# assert_no_needed <elf> <regex> <readelf> — die if a DT_NEEDED entry of <elf>
+# matches <regex> (libraries that must be loaded at run time, not linked).
+assert_no_needed() {
+  local elf="$1" pattern="$2" readelf="${3:-readelf}" hits
+  hits="$(LC_ALL=C "$readelf" -dW "$elf" 2>/dev/null \
+    | sed -n 's/.*(NEEDED).*\[\(.*\)\].*/\1/p' | grep -E "$pattern" || true)"
+  [[ -z "$hits" ]] || die "must not be DT_NEEDED: $(echo $hits): $elf"
+  ok "no DT_NEEDED on $pattern"
+}
+
 # assert_no_relr <elf> <readelf> — die if <elf> packs its relative relocs as
 # DT_RELR (tag 0x24). Linux keeps plain RELA: RELR needs glibc 2.36, which
 # leaves Ubuntu 22.04 and RHEL 9 out, for about 1 MB saved. Android has its

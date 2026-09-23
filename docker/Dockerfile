@@ -16,7 +16,10 @@
 # The TUI's Docker tab (and expand()) build the missing target on demand.
 #
 #   base    : ubuntu:24.04 + multiarch + common build tooling (meson, cmake, …)
-#   linux   : base + GCC cross (x86_64 + aarch64) + multiarch audio/X11 dev libs
+#   linux   : ubuntu:20.04 on its own (NOT base), native arch only. glibc
+#             2.31, so the libmpv it links loads on every distro since then.
+#   linux-noble : base + GCC cross (x86_64 + aarch64) + multiarch audio/X11
+#             dev libs; what `verify` builds on.
 #   windows : base + GNU MinGW-w64 (x86_64) + llvm-mingw (aarch64)
 #   android : base alias — the NDK is fetched at runtime by build_libmpv_android.sh
 #   verify  : base + the linux/windows cross-compilers + qemu-user + Wine/Hangover
@@ -103,7 +106,7 @@ WORKDIR /src
 # ══════════════════════════════════════════════════════════════════════════════
 # linux — GCC cross-toolchains (both arches) + multiarch audio/X11 dev libs
 # ══════════════════════════════════════════════════════════════════════════════
-FROM base AS linux
+FROM base AS linux-noble
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       gcc-x86-64-linux-gnu g++-x86-64-linux-gnu binutils-x86-64-linux-gnu \
@@ -132,6 +135,51 @@ RUN set -eux; \
       libx11-dev:${FOREIGN_ARCH} libxext-dev:${FOREIGN_ARCH} libxrandr-dev:${FOREIGN_ARCH} libxinerama-dev:${FOREIGN_ARCH} \
       libva-dev:${FOREIGN_ARCH} libvdpau-dev:${FOREIGN_ARCH} zlib1g-dev:${FOREIGN_ARCH} \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# ══════════════════════════════════════════════════════════════════════════════
+# linux — the libmpv the kit ships for Linux
+# ══════════════════════════════════════════════════════════════════════════════
+# Built on its own old base, not on `base`: a shared library needs the glibc
+# it was linked against or newer, and the symbols it binds decide the floor.
+# Ubuntu 20.04 gives glibc 2.31 (Debian 11, RHEL 9 and every Ubuntu since),
+# where noble's 2.39 toolchain produced a libmpv needing 2.38.
+#
+# Native arch only (no multiarch cross): build x86_64 on an x86_64 host and
+# aarch64 on an arm64 one (CI uses GitHub's arm64 runners). gcc 10 is the
+# newest focal ships; its libstdc++ (GLIBCXX 3.4.28) is on the same systems.
+# The scripts call triple-prefixed tools, so the triple names point at it.
+#
+# No libpipewire-0.3-dev: focal's 0.3.5 is below mpv's floor, and libmpv does
+# not link PipeWire anyway. build_libmpv_linux.sh builds PipeWire's headers
+# and turns both audio client libraries into lazily loaded stubs.
+FROM ubuntu:20.04 AS linux
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential gcc-10 g++-10 \
+      nasm pkg-config autoconf automake libtool \
+      git curl ca-certificates \
+      python3 python3-pip python3-setuptools \
+      unzip xz-utils bzip2 gperf gettext autopoint patchelf file \
+      libasound2-dev libpulse-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    triple="$(gcc -dumpmachine)"; \
+    for tool in gcc g++ cpp gcc-ar gcc-nm gcc-ranlib; do \
+      ln -sf "/usr/bin/${triple}-${tool}-10" "/usr/local/bin/${triple}-${tool}"; \
+      ln -sf "/usr/bin/${triple}-${tool}-10" "/usr/local/bin/${tool}"; \
+    done; \
+    ln -sf "/usr/bin/${triple}-gcc-10" /usr/local/bin/cc; \
+    ln -sf "/usr/bin/${triple}-g++-10" /usr/local/bin/c++; \
+    "${triple}-gcc" --version | head -1
+
+# meson, ninja and cmake from pip: focal's are too old for the dependency
+# builds (meson >= 1.6 for mpv).
+RUN pip3 install --no-cache-dir 'meson>=1.6.0,<1.8' 'ninja>=1.11' 'cmake>=3.28,<4'
 
 WORKDIR /src
 
@@ -196,7 +244,7 @@ WORKDIR /src
 # On top it adds the Windows cross-compilers, qemu-user-static (run foreign-arch
 # helpers), Wine/Hangover (load Windows DLLs) and arm32 binutils (Android JNI
 # stub detection). The Android NDK sysroot is bind-mounted at runtime.
-FROM linux AS verify
+FROM linux-noble AS verify
 
 ARG LLVM_MINGW_VERSION=20260421
 ENV LLVM_MINGW_DIR=/opt/llvm-mingw
