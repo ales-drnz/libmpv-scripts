@@ -17,6 +17,10 @@
 # the 8.x line clears comfortably; FFmpeg 8.x + mpv 0.41 is a
 # community-verified pairing.
 export MPV_VERSION="${MPV_VERSION:-0.41.0}"
+# The mpv_audio_kit release these binaries ship as (GitHub release
+# libmpv-<release>). Baked into mpv's own version string, so a running app
+# can tell which build it loaded: mpv-version reads "mpv v0.41.0+r14".
+export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r14}"
 export FFMPEG_VERSION="${FFMPEG_VERSION:-8.1.1}"
 
 # ── Subtitle / font / text shaping (libass + pulls) ──────────────────────────
