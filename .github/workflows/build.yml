@@ -13,6 +13,10 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+# Every source tarball must be pinned in scripts/shared/_sources.sha256.
+env:
+  STRICT_SOURCES: '1'
+
 jobs:
   linux:
     name: Linux ${{ matrix.arch }}
@@ -32,7 +36,7 @@ jobs:
       - name: Build
         run: |
           docker run --rm \
-            -e RECORD_SOURCES=/scripts/builds/sources-linux-${{ matrix.arch }}.txt \
+            -e STRICT_SOURCES -e RECORD_SOURCES=/scripts/builds/sources-linux-${{ matrix.arch }}.txt \
             -v "$PWD:/scripts" -w /scripts \
             mpv-build-linux bash scripts/build_libmpv_linux.sh --arch=${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
@@ -53,7 +57,7 @@ jobs:
         run: |
           docker run --rm --platform linux/amd64 \
             -e ABIS="arm64-v8a armeabi-v7a x86_64" \
-            -e RECORD_SOURCES=/scripts/builds/sources-android.txt \
+            -e STRICT_SOURCES -e RECORD_SOURCES=/scripts/builds/sources-android.txt \
             -v "$PWD:/scripts" -w /scripts \
             mpv-build-android bash scripts/build_libmpv_android.sh
       - uses: actions/upload-artifact@v4
@@ -77,7 +81,7 @@ jobs:
       - name: Build
         run: |
           docker run --rm \
-            -e RECORD_SOURCES=/scripts/builds/sources-windows-${{ matrix.arch }}.txt \
+            -e STRICT_SOURCES -e RECORD_SOURCES=/scripts/builds/sources-windows-${{ matrix.arch }}.txt \
             -v "$PWD:/scripts" -w /scripts \
             mpv-build-windows bash scripts/build_libmpv_windows.sh --arch=${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
