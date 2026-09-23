@@ -52,4 +52,11 @@ void mak_scan_start(const char *url, double duration_secs,
                     const char *format_name, bool is_network,
                     bool seekable);
 
+/* Core lifetime bracket, called from mp_create / mp_destroy. When the last
+ * core goes away, the in-flight analysis is cancelled and its detached
+ * threads are drained (bounded), so none outlives the libav and TLS state
+ * that process teardown frees. */
+void mak_scan_core_acquire(void);
+void mak_scan_core_release(void);
+
 #endif

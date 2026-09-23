@@ -341,6 +341,56 @@ static bool mak_url_scheme_is(const char *url, const char *sep,
     return true;
 }
 
+/* ─── lifetime ───────────────────────────────────────────────────── */
+
+/* Coordinators are detached so a track change never blocks mpv's core on a
+ * still-decoding analysis. They must still not outlive the process's libav
+ * and TLS state: exit handlers freeing those under a running decode crash
+ * the process. Every coordinator is counted; teardown cancels the current
+ * generation (the workers stop within one 4096-sample budget) and waits for
+ * the count to drain, when the last core is destroyed and, for a process
+ * that exits without destroying its cores, from an atexit handler.
+ *
+ * No atexit on Windows: the OS terminates the other threads before DLL
+ * teardown, so a drain there could only time out. */
+static atomic_int g_live_coordinators;
+static atomic_int g_live_cores;
+
+#define MAK_SCAN_DRAIN_TIMEOUT_NS MP_TIME_S_TO_NS(2)
+
+static void drain_coordinators(void)
+{
+    if (atomic_load(&g_live_coordinators) == 0)
+        return;
+    mak_waveform_stop();
+    int64_t deadline = mp_time_ns() + MAK_SCAN_DRAIN_TIMEOUT_NS;
+    while (atomic_load(&g_live_coordinators) > 0 && mp_time_ns() < deadline)
+        mp_sleep_ns(MP_TIME_MS_TO_NS(1));
+}
+
+#if !defined(_WIN32)
+static void drain_at_exit(void)
+{
+    drain_coordinators();
+}
+#endif
+
+void mak_scan_core_acquire(void)
+{
+    atomic_fetch_add(&g_live_cores, 1);
+#if !defined(_WIN32)
+    static atomic_bool registered;
+    if (!atomic_exchange(&registered, true))
+        atexit(drain_at_exit);
+#endif
+}
+
+void mak_scan_core_release(void)
+{
+    if (atomic_fetch_sub(&g_live_cores, 1) == 1)
+        drain_coordinators();
+}
+
 static MP_THREAD_VOID coordinator_main(void *p)
 {
     struct coord_args *args = p;
@@ -635,6 +685,9 @@ cleanup:
     if (bins_filled) av_free(bins_filled);
     if (probe_fmt) avformat_close_input(&probe_fmt);
     free(url);
+    /* Last touch of shared state: a drain waiting on this count may let the
+     * process tear libav down as soon as it reads zero. */
+    atomic_fetch_sub(&g_live_coordinators, 1);
     MP_THREAD_RETURN();
 }
 
@@ -688,7 +741,9 @@ void mak_scan_start(const char *url, double duration_secs,
     if (!args->url) { free(args); return; }
 
     mp_thread t;
+    atomic_fetch_add(&g_live_coordinators, 1);
     if (mp_thread_create(&t, coordinator_main, args) != 0) {
+        atomic_fetch_sub(&g_live_coordinators, 1);
         free(args->url);
         free(args);
         mak_waveform_mark_failed(new_gen);
