@@ -487,11 +487,23 @@ build_audio_stubs() {
   local bdir="$BUILD_DIR/build/pipewire"
   rm -rf "$bdir" "$sdk"
   # Plain flags: none of the LTO/visibility tuning belongs in a library that
-  # only lends its headers and its exported symbol list.
+  # only lends its headers and its exported symbol list. auto-features only
+  # turns off the `auto` features; the ones listed after it default to
+  # `enabled` in 0.3.57 (dbus among them, which would need libdbus).
   CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC" LDFLAGS="" \
     meson setup "$bdir" "$dir" --prefix="$sdk" --libdir=lib --buildtype=release \
       --auto-features=disabled '-Dsession-managers=[]' \
-      -Djack-devel=false -Dlegacy-rtkit=false
+      -Djack-devel=false -Dlegacy-rtkit=false \
+      -Dexamples=disabled -Dtests=disabled \
+      -Dsystemd-user-service=disabled -Dpipewire-jack=disabled \
+      -Dpipewire-v4l2=disabled -Dspa-plugins=disabled \
+      -Daudiomixer=disabled -Daudioconvert=disabled \
+      -Dbluez5-backend-hsp-native=disabled \
+      -Dbluez5-backend-hfp-native=disabled \
+      -Dbluez5-backend-ofono=disabled -Dbluez5-backend-hsphfpd=disabled \
+      -Dcontrol=disabled -Daudiotestsrc=disabled -Dsupport=disabled \
+      -Ddbus=disabled -Dvideoconvert=disabled -Dvideotestsrc=disabled \
+      -Dvolume=disabled -Dflatpak=disabled
   ninja -C "$bdir" -j"$JOBS"
   ninja -C "$bdir" install
 
