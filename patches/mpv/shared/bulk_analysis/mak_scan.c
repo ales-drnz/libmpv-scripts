@@ -356,6 +356,10 @@ static MP_THREAD_VOID coordinator_main(void *p)
     /* Per-worker high-waters for the live publish loop; one cache line each. */
     struct mak_wave_hw hw[MAK_WAVEFORM_WORKERS] = {0};
     int                spawned = 0;
+    /* Workers [0, joined) are already joined. The fail path joins only the
+     * rest: a second join of a finished thread reads its freed descriptor
+     * and crashes, which a single cancelled worker used to trigger. */
+    int                joined = 0;
     int                bins = 0;
     float             *bins_min = NULL;
     float             *bins_max = NULL;
@@ -567,6 +571,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
         mp_thread_join(threads[w]);
         if (chunks[w].status != 0) all_ok = false;
     }
+    joined = spawned;
     if (!all_ok) goto fail;
 
     /* High-water mark of bins any worker actually filled. bins_filled is
@@ -617,7 +622,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
 fail:
     /* Tear down any workers already spawned before declaring failure
      * (otherwise we'd leak threads and their open AVFormatContexts). */
-    for (int w = 0; w < spawned; w++) mp_thread_join(threads[w]);
+    for (int w = joined; w < spawned; w++) mp_thread_join(threads[w]);
     spawned = 0;
     /* Drop any partial envelope the live publish loop attached, then mark
      * FAILED (the partial is g_wave-owned, so the product frees it). */
