@@ -48,10 +48,13 @@ Active-tap selection
 ====================
 
 A new read-write property `analyzer-taps` carries a comma-separated
-list of filter names to tap. Setting it from the wrapper enables the
-hooks for the named filters; the empty string disables every tap.
-The tap snapshots themselves are read via the new `audio-tap-frames`
-property — a `MPV_FORMAT_NODE_MAP` keyed by filter name, each entry
+list of chain labels to tap (`@label:` in the `af` string; mpv_audio_kit
+labels every typed stage `aek_<filter>_<n>`). Taps key on the label, not
+the filter type, so two instances of one filter in the chain have two
+separate rings. Setting it from the wrapper enables the hooks for the
+named stages; the empty string disables every tap. The tap snapshots
+themselves are read via the new `audio-tap-frames` property — a
+`MPV_FORMAT_NODE_MAP` keyed by label, each entry
 holding `{pre, post}` sub-maps with the same shape as
 `pcm-tap-frame` (sample_rate, channels, pts_ns, samples). Empty
 sub-maps when no frame has flowed through that side yet.
@@ -151,9 +154,9 @@ USER_WRAPPER_PRE_PATCHED = (
     '            u->last_in_pts = pts;\n'
     '\n'
     '        /* ' + MARKER + ' */\n'
-    '        if (frame.type == MP_FRAME_AUDIO && u->name &&\n'
-    '            mak_tap_label_active(u->name))\n'
-    '            mak_tap_write(u->name, false, frame.data);\n'
+    '        if (frame.type == MP_FRAME_AUDIO && u->label &&\n'
+    '            mak_tap_label_active(u->label))\n'
+    '            mak_tap_write(u->label, false, frame.data);\n'
     '\n'
     '        /* ' + MARKER + ' ─── pre-DSP fold for the progressive waveform\n'
     '         * (self-gates to the "in" filter + active progressive). */\n'
@@ -184,9 +187,9 @@ USER_WRAPPER_POST_PATCHED = (
     '            u->last_out_pts = pts;\n'
     '\n'
     '        /* ' + MARKER + ' */\n'
-    '        if (frame.type == MP_FRAME_AUDIO && u->name &&\n'
-    '            mak_tap_label_active(u->name))\n'
-    '            mak_tap_write(u->name, true, frame.data);\n'
+    '        if (frame.type == MP_FRAME_AUDIO && u->label &&\n'
+    '            mak_tap_label_active(u->label))\n'
+    '            mak_tap_write(u->label, true, frame.data);\n'
     '\n'
     '        mp_pin_in_write(f->ppins[1], frame);'
 )
