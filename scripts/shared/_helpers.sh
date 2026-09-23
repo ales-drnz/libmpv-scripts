@@ -124,6 +124,7 @@ download() {
   local url="$1" dest="$2"
   if [[ -s "$dest" && "${FORCE_DOWNLOAD:-0}" != "1" ]]; then
     ok "Cached: $(basename "$dest")"
+    verify_source "$url" "$dest"
     return
   fi
   log "Download: $(basename "$dest")"
@@ -135,13 +136,47 @@ download() {
   else
     die "neither curl nor wget available"
   fi
+  verify_source "$url" "$dest"
+}
+
+# ── Source pinning ───────────────────────────────────────────────────────────
+# Every tarball is checked against scripts/shared/_sources.sha256, lines of
+# "<sha256>  <url>". A mismatch deletes the file and stops the build. A URL
+# with no entry stops it too under STRICT_SOURCES=1 (what CI runs); locally
+# it only warns, and RECORD_SOURCES=<file> appends the line to pin it.
+SOURCES_SHA256_FILE="$LIBMPV_SCRIPTS_ROOT/scripts/shared/_sources.sha256"
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+verify_source() {
+  local url="$1" file="$2" want got
+  got="$(sha256_of "$file")"
+  want="$(awk -v u="$url" '!/^#/ && $2 == u { print $1 }' "$SOURCES_SHA256_FILE" 2>/dev/null)"
+  if [[ -z "$want" ]]; then
+    [[ "${STRICT_SOURCES:-0}" == "1" ]] && \
+      die "Unpinned source, add to _sources.sha256: $got  $url"
+    warn "Unpinned source: $got  $url"
+    [[ -n "${RECORD_SOURCES:-}" ]] && printf '%s  %s\n' "$got" "$url" >> "$RECORD_SOURCES"
+    return 0
+  fi
+  if [[ "$got" != "$want" ]]; then
+    rm -f "$file"
+    die "SHA-256 mismatch for $url: got $got, expected $want"
+  fi
 }
 
 # ── Git clone with cache ─────────────────────────────────────────────────────
 # Usage: download_git <repo_url> <dest_dir> [tag_or_branch]
 # Smart default: an existing clone is always reused. Pass FORCE_DOWNLOAD=1
-# to wipe and reclone. If a specific tag is requested, falls back to a full
-# shallow clone when the tag isn't reachable on the remote.
+# to wipe and reclone. A requested tag that does not exist stops the build:
+# falling back to the default branch would silently build whatever is on it
+# today.
 download_git() {
   local url="$1" dest="$2" tag="${3:-}"
   if [[ -d "$dest/.git" && "${FORCE_DOWNLOAD:-0}" != "1" ]]; then
@@ -152,8 +187,9 @@ download_git() {
   log "Git clone: $(basename "$dest")"
   mkdir -p "$(dirname "$dest")"
   if [[ -n "$tag" ]]; then
-    git clone --depth=1 --branch "$tag" "$url" "$dest" 2>/dev/null \
-      || { rm -rf "$dest"; git clone --depth=1 "$url" "$dest"; }
+    git clone --depth=1 --branch "$tag" "$url" "$dest" \
+      || { rm -rf "$dest"; die "git clone failed, or no tag $tag: $url"; }
+    ok "$(basename "$dest") $tag at $(git -C "$dest" rev-parse HEAD)"
   else
     git clone --depth=1 "$url" "$dest" || die "git clone failed: $url"
   fi

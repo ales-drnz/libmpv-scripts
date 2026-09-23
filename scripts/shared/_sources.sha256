@@ -1,0 +1,3 @@
+# SHA-256 of every source tarball the build scripts download: "<sha256>  <url>".
+# Checked by verify_source in _helpers.sh. Add a line with the hash a local
+# build prints for an unpinned URL (or run with RECORD_SOURCES=<file>).
