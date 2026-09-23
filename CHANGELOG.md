@@ -4,6 +4,7 @@
 - The bulk analysis re-opens a network source with mpv's own network options (`tls-verify`, `tls-ca-file`, `http-header-fields`, user agent, cookies, proxy), so the waveform and loudness scan no longer skip certificate verification or drop auth headers (mpv_audio_kit [#19](https://github.com/ales-drnz/mpv_audio_kit/issues/19)).
 - The bulk waveform downmixes to mono with the same channel average as the progressive path, so peaks stay within `[-1, 1]` instead of reaching about 1.41 on correlated stereo.
 - A cancelled analysis worker is joined only once, which could crash the process.
+- The detached analysis threads are cancelled and drained before the last core is destroyed or the process exits, so they no longer decode while libav and TLS state are freed under them.
 
 ### Added
 - `waveform-data` carries a per-bin `rms` array next to `min` and `max`, on the bulk, progressive and rolling paths (mpv_audio_kit [#20](https://github.com/ales-drnz/mpv_audio_kit/issues/20)).

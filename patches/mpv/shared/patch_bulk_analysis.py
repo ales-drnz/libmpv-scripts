@@ -295,6 +295,61 @@ def patch_command_c(path):
     print(f'Patched: {path}')
 
 
+# ─── player/main.c ────────────────────────────────────────────────────
+
+# Bracket every core's lifetime so the last mp_destroy drains the detached
+# analysis threads (see "lifetime" in mak_scan.c). Pristine lines lifted from
+# mpv 0.41.0.
+MAIN_INCLUDE_PRISTINE = '#include "screenshot.h"'
+
+MAIN_INCLUDE_PATCHED = (
+    '#include "screenshot.h"\n'
+    '/* ' + MARKER + ' */\n'
+    '#include "audio/mak_scan.h"'
+)
+
+MAIN_DESTROY_PRISTINE = (
+    'void mp_destroy(struct MPContext *mpctx)\n'
+    '{\n'
+    '    mp_shutdown_clients(mpctx);'
+)
+
+MAIN_DESTROY_PATCHED = (
+    'void mp_destroy(struct MPContext *mpctx)\n'
+    '{\n'
+    '    mp_shutdown_clients(mpctx);\n'
+    '    /* ' + MARKER + ' */\n'
+    '    mak_scan_core_release();'
+)
+
+MAIN_CREATE_PRISTINE = '    mp_time_init();\n'
+
+MAIN_CREATE_PATCHED = (
+    '    mp_time_init();\n'
+    '    /* ' + MARKER + ' */\n'
+    '    mak_scan_core_acquire();\n'
+)
+
+
+def patch_main_c(path):
+    with open(path) as f:
+        text = f.read()
+    for name, anchor in (('includes', MAIN_INCLUDE_PRISTINE),
+                         ('mp_destroy', MAIN_DESTROY_PRISTINE),
+                         ('mp_create', MAIN_CREATE_PRISTINE)):
+        if text.count(anchor) != 1:
+            raise RuntimeError(
+                f'Pristine anchor (main.c {name}) not found exactly once '
+                f'in {path}.'
+            )
+    text = text.replace(MAIN_INCLUDE_PRISTINE, MAIN_INCLUDE_PATCHED, 1)
+    text = text.replace(MAIN_DESTROY_PRISTINE, MAIN_DESTROY_PATCHED, 1)
+    text = text.replace(MAIN_CREATE_PRISTINE, MAIN_CREATE_PATCHED, 1)
+    with open(path, 'w') as f:
+        f.write(text)
+    print(f'Patched: {path}')
+
+
 # ─── meson.build ──────────────────────────────────────────────────────
 
 # Anchor on the same `audio/out/ao.c` line patch_pcm_tap uses, but
@@ -375,6 +430,7 @@ def main():
                    read_src('mak_scan.c'))
     patch_loadfile_c(os.path.join(src, 'player', 'loadfile.c'))
     patch_command_c(os.path.join(src, 'player', 'command.c'))
+    patch_main_c(os.path.join(src, 'player', 'main.c'))
     patch_meson(os.path.join(src, 'meson.build'))
 
 
