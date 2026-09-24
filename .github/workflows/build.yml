@@ -1,0 +1,124 @@
+name: Build
+
+# Builds every libmpv binary the mpv_audio_kit release ships, on GitHub's
+# runners (macOS ones included, so no Mac is needed), and collects them with
+# SHA256SUMS into one artifact. Publishing the libmpv-<release> GitHub
+# release stays a manual step.
+on:
+  push:
+    branches: ['release/**']
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each arch builds on its own native runner, so the image skips the
+          # foreign-arch dev libs.
+          - arch: x86_64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target linux --build-arg LINUX_FOREIGN_LIBS=0 -t mpv-build-linux docker/
+      - name: Build
+        run: |
+          docker run --rm \
+            -v "$PWD:/scripts" -w /scripts \
+            mpv-build-linux bash scripts/build_libmpv_linux.sh --arch=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: builds/release/libmpv_linux-${{ matrix.arch }}.so
+          if-no-files-found: error
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --platform linux/amd64 --target android -t mpv-build-android docker/
+      - name: Build
+        run: |
+          docker run --rm --platform linux/amd64 \
+            -e ABIS="arm64-v8a armeabi-v7a x86_64" \
+            -v "$PWD:/scripts" -w /scripts \
+            mpv-build-android bash scripts/build_libmpv_android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: builds/release/libmpv_android-*.so
+          if-no-files-found: error
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target windows -t mpv-build-windows docker/
+      - name: Build
+        run: |
+          docker run --rm \
+            -v "$PWD:/scripts" -w /scripts \
+            mpv-build-windows bash scripts/build_libmpv_windows.sh --arch=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}
+          path: builds/release/libmpv_windows-*.dll
+          if-no-files-found: error
+
+  apple:
+    name: ${{ matrix.name }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            script: scripts/build_libmpv_macos.sh
+            output: builds/release/libmpv_macos.xcframework.zip
+          - name: iOS
+            script: scripts/build_libmpv_ios.sh
+            output: builds/release/libmpv_ios.xcframework.zip
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install meson ninja nasm cmake pkg-config autoconf automake libtool
+      - name: Build
+        run: bash ${{ matrix.script }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.output }}
+          if-no-files-found: error
+
+  release:
+    name: Collect release
+    needs: [linux, android, windows, apple]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Assemble release
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release && sha256sum * | tee SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libmpv-release
+          path: release/
+          if-no-files-found: error

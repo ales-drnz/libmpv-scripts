@@ -124,7 +124,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libva-dev libvdpau-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# LINUX_FOREIGN_LIBS=0 skips the foreign pass: CI builds each arch on its own
+# native runner, so it needs only the native libs above.
+ARG LINUX_FOREIGN_LIBS=1
 RUN set -eux; \
+    if [ "$LINUX_FOREIGN_LIBS" = "0" ]; then exit 0; fi; \
     NATIVE_ARCH="$(dpkg --print-architecture)"; \
     if [ "$NATIVE_ARCH" = "arm64" ]; then FOREIGN_ARCH=amd64; else FOREIGN_ARCH=arm64; fi; \
     apt-get update && apt-get install -y --no-install-recommends \

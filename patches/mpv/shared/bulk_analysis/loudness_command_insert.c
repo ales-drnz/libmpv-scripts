@@ -71,7 +71,8 @@ static int mp_property_loudness_scan_enabled(void *ctx,
                                    get_time_length(mpctx),
                                    mpctx->demuxer ? mpctx->demuxer->filetype : NULL,
                                    mpctx->demuxer ? mpctx->demuxer->is_network : false,
-                                   mpctx->demuxer ? mpctx->demuxer->seekable : false);
+                                   mpctx->demuxer ? mpctx->demuxer->seekable : false,
+                               mpctx->global, mpctx->log);
                 }
             }
             return M_PROPERTY_OK;

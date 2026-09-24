@@ -4,7 +4,8 @@
  * scan: ONE pass over the source. On mak_scan_start() it spawns a detached
  * coordinator that probes the URL, classifies it, and either
  *   - BULK: partitions the track across MAK_WAVEFORM_WORKERS worker threads on
- *     disjoint sample regions, decodes each to mono Float32, and drives the
+ *     disjoint sample regions, decodes each to mono Float32 (the same average
+ *     downmix the af-tap uses, mak_downmix_mono), and drives the
  *     waveform product (incremental publish + final commit) while the loudness
  *     accumulator rides the same decode; or
  *   - hands a playback-grown source (adaptive / live / non-seekable) to the
@@ -47,9 +48,20 @@
  *
  * [format_name] is the lavf format name (mpv's `demuxer->filetype`, e.g.
  * "hls" / "flac"; may be NULL). [is_network] / [seekable] come straight from
- * mpv's demuxer. The coordinator takes its own copy of the URL. */
+ * mpv's demuxer. The coordinator takes its own copy of the URL.
+ *
+ * [global] and [log] are the core's (mpctx->global / mpctx->log). The
+ * coordinator and its workers re-open [url] with the SAME network options mpv
+ * uses for its own lavf opens (mp_setup_av_network_options: tls-verify,
+ * tls-ca-file, http-header-fields incl. file-local ones, user-agent, cookies,
+ * proxy, stream-lavf-o). They are snapshotted here, on the core thread, so
+ * the detached coordinator never reads the core's config and a file-local
+ * header set for this track is the one that rides the re-open. */
+struct mpv_global;
+struct mp_log;
 void mak_scan_start(const char *url, double duration_secs,
                     const char *format_name, bool is_network,
-                    bool seekable);
+                    bool seekable, struct mpv_global *global,
+                    struct mp_log *log);
 
 #endif

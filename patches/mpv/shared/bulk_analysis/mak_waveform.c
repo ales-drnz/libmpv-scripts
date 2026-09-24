@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── waveform product (min/max amplitude envelope).
+/* MAK_WAVEFORM_PATCH ─── waveform product (min/max/RMS amplitude envelope).
  *
  * Owns the visible waveform state `g_wave` and everything that touches it: the
  * generation/lifecycle, the reader, the decode-progress fraction, the
@@ -68,6 +68,10 @@ struct mak_wave {
     int      coverage_bins;
     float   *bins_min;
     float   *bins_max;
+    /* Per-bin energy: sum of squares and sample count, same indexing as
+     * bins_min/max. The reader turns them into the "rms" array. */
+    double   *bins_sq;
+    uint32_t *bins_n;
     /* Per-bin "has a sample yet" flag. Lets the reader expose "filled" so
      * the UI tells unplayed bins (0) from played-but-silent (1). BULK fills
      * it as each region's bins seal; PROGRESSIVE grows it as the af-tap folds
@@ -112,6 +116,14 @@ static void reset_g_wave_locked(void)
     if (g_wave.bins_max) {
         av_free(g_wave.bins_max);
         g_wave.bins_max = NULL;
+    }
+    if (g_wave.bins_sq) {
+        av_free(g_wave.bins_sq);
+        g_wave.bins_sq = NULL;
+    }
+    if (g_wave.bins_n) {
+        av_free(g_wave.bins_n);
+        g_wave.bins_n = NULL;
     }
     if (g_wave.bins_filled) {
         av_free(g_wave.bins_filled);
@@ -171,14 +183,18 @@ void mak_waveform_arm_progressive(int my_gen, double duration_secs)
     }
     reset_g_wave_locked();
     if (pbins >= 1) {
-        float   *pmin = av_calloc(pbins, sizeof(float));
-        float   *pmax = av_calloc(pbins, sizeof(float));
-        uint8_t *pfil = av_calloc(pbins, sizeof(uint8_t));
-        if (pmin && pmax && pfil) {
+        float    *pmin = av_calloc(pbins, sizeof(float));
+        float    *pmax = av_calloc(pbins, sizeof(float));
+        double   *psq  = av_calloc(pbins, sizeof(double));
+        uint32_t *pn   = av_calloc(pbins, sizeof(uint32_t));
+        uint8_t  *pfil = av_calloc(pbins, sizeof(uint8_t));
+        if (pmin && pmax && psq && pn && pfil) {
             g_wave.bins          = pbins;
             g_wave.valid_bins    = 0;  /* grows via fold high-water */
             g_wave.bins_min      = pmin;
             g_wave.bins_max      = pmax;
+            g_wave.bins_sq       = psq;
+            g_wave.bins_n        = pn;
             g_wave.bins_filled   = pfil;
             g_wave.duration_secs = duration_secs;
             g_wave.duration_us   = (int64_t)(duration_secs * 1e6);
@@ -187,6 +203,8 @@ void mak_waveform_arm_progressive(int my_gen, double duration_secs)
         } else {
             if (pmin) av_free(pmin);
             if (pmax) av_free(pmax);
+            if (psq)  av_free(psq);
+            if (pn)   av_free(pn);
             if (pfil) av_free(pfil);
             g_wave.state = MAK_WAVE_FAILED;
         }
@@ -203,7 +221,7 @@ void mak_waveform_arm_progressive(int my_gen, double duration_secs)
  * Cache-driven eviction (mak_waveform_update_cache_range) is the normal way
  * bins leave the window; MAK_WAVE_ROLL_BINS is only a memory backstop against
  * a pathologically large demuxer back-buffer. 131072 bins × 40 ms ≈ 87 min
- * (~1.2 MB across the three arrays) — comfortably past mpv's default 125 MiB
+ * (~2.8 MB across the five arrays) — comfortably past mpv's default 125 MiB
  * back-buffer at typical audio bitrates, so eviction fires first and never
  * drops a still-seekable bin. If the back-buffer is enlarged far beyond that
  * AND the user scrolls past the cap, the oldest bins are dropped silently
@@ -227,14 +245,18 @@ void mak_waveform_arm_rolling(int my_gen)
     }
     reset_g_wave_locked();
     const int cap = MAK_WAVE_ROLL_BINS;
-    float   *pmin = av_calloc(cap, sizeof(float));
-    float   *pmax = av_calloc(cap, sizeof(float));
-    uint8_t *pfil = av_calloc(cap, sizeof(uint8_t));
-    if (pmin && pmax && pfil) {
+    float    *pmin = av_calloc(cap, sizeof(float));
+    float    *pmax = av_calloc(cap, sizeof(float));
+    double   *psq  = av_calloc(cap, sizeof(double));
+    uint32_t *pn   = av_calloc(cap, sizeof(uint32_t));
+    uint8_t  *pfil = av_calloc(cap, sizeof(uint8_t));
+    if (pmin && pmax && psq && pn && pfil) {
         g_wave.bins           = cap;
         g_wave.valid_bins     = 0;
         g_wave.bins_min       = pmin;
         g_wave.bins_max       = pmax;
+        g_wave.bins_sq        = psq;
+        g_wave.bins_n         = pn;
         g_wave.bins_filled    = pfil;
         g_wave.progressive    = true;   /* shares the af-tap fold path */
         g_wave.rolling        = true;
@@ -246,6 +268,8 @@ void mak_waveform_arm_rolling(int my_gen)
     } else {
         if (pmin) av_free(pmin);
         if (pmax) av_free(pmax);
+        if (psq)  av_free(psq);
+        if (pn)   av_free(pn);
         if (pfil) av_free(pfil);
         g_wave.state = MAK_WAVE_FAILED;
     }
@@ -255,7 +279,8 @@ void mak_waveform_arm_rolling(int my_gen)
 void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
                                   int nregions, const int *bin_start,
                                   const int *cnt, const float *src_min,
-                                  const float *src_max,
+                                  const float *src_max, const double *src_sq,
+                                  const uint32_t *src_n,
                                   const uint8_t *const *src_filled,
                                   int coverage_bins)
 {
@@ -270,15 +295,19 @@ void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
      * only g_wave-owned memory. valid_bins stays 0 so the reader emits the
      * FULL axis and the per-bin mask drives rendering. */
     if (!g_wave.bins_min && !g_wave.bins_max && !g_wave.bins_filled) {
-        float   *pmin = av_calloc(bins, sizeof(float));
-        float   *pmax = av_calloc(bins, sizeof(float));
-        uint8_t *pfil = av_calloc(bins, sizeof(uint8_t));
-        if (pmin && pmax && pfil) {
+        float    *pmin = av_calloc(bins, sizeof(float));
+        float    *pmax = av_calloc(bins, sizeof(float));
+        double   *psq  = av_calloc(bins, sizeof(double));
+        uint32_t *pn   = av_calloc(bins, sizeof(uint32_t));
+        uint8_t  *pfil = av_calloc(bins, sizeof(uint8_t));
+        if (pmin && pmax && psq && pn && pfil) {
             g_wave.bins          = bins;
             g_wave.valid_bins    = 0;
             g_wave.coverage_bins = 0;
             g_wave.bins_min      = pmin;
             g_wave.bins_max      = pmax;
+            g_wave.bins_sq       = psq;
+            g_wave.bins_n        = pn;
             g_wave.bins_filled   = pfil;
             g_wave.progressive   = false;
             g_wave.rolling       = false;
@@ -287,6 +316,8 @@ void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
         } else {
             if (pmin) av_free(pmin);
             if (pmax) av_free(pmax);
+            if (psq)  av_free(psq);
+            if (pn)   av_free(pn);
             if (pfil) av_free(pfil);
             mp_mutex_unlock(&g_wave_lock);
             return;   /* alloc failed: skip live surfacing, commit at join */
@@ -297,12 +328,13 @@ void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
      * thread, so bins [0,cnt) are visible; the workers only touch indices
      * >= cnt, so no slot is concurrently read and written.
      *
-     * Source-array asymmetry: src_min/src_max are the engine's GLOBAL bin
-     * arrays (read at +off, the region's global offset), but src_filled[w] is
+     * Source-array asymmetry: src_min/src_max/src_sq/src_n are the engine's
+     * GLOBAL bin arrays (read at +off, the region's global offset), but
+     * src_filled[w] is
      * the worker's PER-REGION mask, local-indexed from 0 — both land the same
      * global destination range [off, off+h). */
     if (g_wave.bins == bins && g_wave.bins_min && g_wave.bins_max &&
-        g_wave.bins_filled) {
+        g_wave.bins_sq && g_wave.bins_n && g_wave.bins_filled) {
         for (int w = 0; w < nregions; w++) {
             int off = bin_start[w];
             int h   = cnt[w];
@@ -312,6 +344,10 @@ void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
                    (size_t)h * sizeof(float));
             memcpy(g_wave.bins_max + off, src_max + off,
                    (size_t)h * sizeof(float));
+            memcpy(g_wave.bins_sq + off, src_sq + off,
+                   (size_t)h * sizeof(double));
+            memcpy(g_wave.bins_n + off, src_n + off,
+                   (size_t)h * sizeof(uint32_t));
             if (src_filled[w])
                 memcpy(g_wave.bins_filled + off, src_filled[w], (size_t)h);
         }
@@ -321,20 +357,24 @@ void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
 }
 
 bool mak_waveform_commit(int gen, int bins, int64_t duration_us,
-                         float *min, float *max, uint8_t *filled,
-                         int valid_bins)
+                         float *min, float *max, double *sq, uint32_t *n,
+                         uint8_t *filled, int valid_bins)
 {
     bool took = false;
     mp_mutex_lock(&g_wave_lock);
     if (atomic_load(&g_wave.current_gen) == gen) {
         if (g_wave.bins_min) av_free(g_wave.bins_min);
         if (g_wave.bins_max) av_free(g_wave.bins_max);
+        if (g_wave.bins_sq) av_free(g_wave.bins_sq);
+        if (g_wave.bins_n) av_free(g_wave.bins_n);
         if (g_wave.bins_filled) av_free(g_wave.bins_filled);
         g_wave.bins          = bins;
         g_wave.valid_bins    = valid_bins;
         g_wave.coverage_bins = valid_bins;   /* fully covered at READY */
         g_wave.bins_min      = min;
         g_wave.bins_max      = max;
+        g_wave.bins_sq       = sq;
+        g_wave.bins_n        = n;
         g_wave.bins_filled   = filled;
         g_wave.duration_us   = duration_us;
         g_wave.state         = MAK_WAVE_READY;
@@ -368,7 +408,8 @@ void mak_waveform_update_cache_range(double begin_secs, double end_secs)
     mp_mutex_lock(&g_wave_lock);
     if (g_wave.rolling && g_wave.state == MAK_WAVE_ROLLING &&
         g_wave.roll_bin_secs > 0 && g_wave.bins > 0 &&
-        g_wave.bins_min && g_wave.bins_max && g_wave.bins_filled) {
+        g_wave.bins_min && g_wave.bins_max && g_wave.bins_sq &&
+        g_wave.bins_n && g_wave.bins_filled) {
         const int cap = g_wave.bins;
         if (begin_secs >= 0) {
             int64_t new_base = (int64_t)(begin_secs / g_wave.roll_bin_secs);
@@ -382,6 +423,10 @@ void mak_waveform_update_cache_range(double begin_secs, double end_secs)
                             (size_t)keep * sizeof(float));
                     memmove(g_wave.bins_max, g_wave.bins_max + shift,
                             (size_t)keep * sizeof(float));
+                    memmove(g_wave.bins_sq, g_wave.bins_sq + shift,
+                            (size_t)keep * sizeof(double));
+                    memmove(g_wave.bins_n, g_wave.bins_n + shift,
+                            (size_t)keep * sizeof(uint32_t));
                     memmove(g_wave.bins_filled, g_wave.bins_filled + shift,
                             (size_t)keep);
                     g_wave.valid_bins = keep;
@@ -494,7 +539,8 @@ double mak_waveform_decode_fraction(void)
  * position. The first sample is at media time [pts_secs]; [rate] is the
  * frame's sample rate (sample j sits at pts_secs + j/rate). Binning goes
  * through the shared kernel (same mapping as the bulk path); a run-walk
- * reduces each contiguous same-bin run to one min/max widen. [gen] must
+ * reduces each contiguous same-bin run to one min/max widen plus one energy
+ * add (mak_fold_run). [gen] must
  * still be current or the frame is dropped. Grows the high-water
  * valid_bins so the reader emits only what playback has reached. */
 void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
@@ -505,7 +551,8 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
     mp_mutex_lock(&g_wave_lock);
     const bool live_gen = atomic_load(&g_wave.current_gen) == gen;
     if (live_gen && g_wave.progressive && g_wave.bins > 0 &&
-        g_wave.bins_min && g_wave.bins_max && g_wave.bins_filled) {
+        g_wave.bins_min && g_wave.bins_max && g_wave.bins_sq &&
+        g_wave.bins_n && g_wave.bins_filled) {
         if (g_wave.rolling && g_wave.state == MAK_WAVE_ROLLING &&
             g_wave.roll_bin_secs > 0) {
             /* ROLLING: absolute media-time bins into the linear sliding
@@ -530,6 +577,10 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
                                 (size_t)keep * sizeof(float));
                         memmove(g_wave.bins_max, g_wave.bins_max + shift,
                                 (size_t)keep * sizeof(float));
+                        memmove(g_wave.bins_sq, g_wave.bins_sq + shift,
+                                (size_t)keep * sizeof(double));
+                        memmove(g_wave.bins_n, g_wave.bins_n + shift,
+                                (size_t)keep * sizeof(uint32_t));
                         memmove(g_wave.bins_filled, g_wave.bins_filled + shift,
                                 (size_t)keep);
                         g_wave.valid_bins = keep;
@@ -540,18 +591,20 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
                     local -= shift;
                 }
                 const int li = (int)local;
-                float rmin = mono[i];
-                float rmax = mono[i];
+                float  rmin = mono[i];
+                float  rmax = mono[i];
+                double rsq  = (double)mono[i] * mono[i];
                 int j = i + 1;
                 while (j < n &&
                        (int64_t)((pts_secs + (double)j / rate) / bs) == ab) {
                     if (mono[j] < rmin) rmin = mono[j];
                     if (mono[j] > rmax) rmax = mono[j];
+                    rsq += (double)mono[j] * mono[j];
                     j++;
                 }
-                mak_fold_bin(rmin, &g_wave.bins_min[li], &g_wave.bins_max[li],
-                             &g_wave.bins_filled[li]);
-                mak_fold_bin(rmax, &g_wave.bins_min[li], &g_wave.bins_max[li],
+                mak_fold_run(rmin, rmax, rsq, (uint32_t)(j - i),
+                             &g_wave.bins_min[li], &g_wave.bins_max[li],
+                             &g_wave.bins_sq[li], &g_wave.bins_n[li],
                              &g_wave.bins_filled[li]);
                 if (li + 1 > g_wave.valid_bins)
                     g_wave.valid_bins = li + 1;
@@ -565,18 +618,20 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
             int i = 0;
             while (i < n) {
                 int64_t b = mak_sample_to_bin(base + i, bins, total);
-                float rmin = mono[i];
-                float rmax = mono[i];
+                float  rmin = mono[i];
+                float  rmax = mono[i];
+                double rsq  = (double)mono[i] * mono[i];
                 int j = i + 1;
                 while (j < n &&
                        mak_sample_to_bin(base + j, bins, total) == b) {
                     if (mono[j] < rmin) rmin = mono[j];
                     if (mono[j] > rmax) rmax = mono[j];
+                    rsq += (double)mono[j] * mono[j];
                     j++;
                 }
-                mak_fold_bin(rmin, &g_wave.bins_min[b], &g_wave.bins_max[b],
-                             &g_wave.bins_filled[b]);
-                mak_fold_bin(rmax, &g_wave.bins_min[b], &g_wave.bins_max[b],
+                mak_fold_run(rmin, rmax, rsq, (uint32_t)(j - i),
+                             &g_wave.bins_min[b], &g_wave.bins_max[b],
+                             &g_wave.bins_sq[b], &g_wave.bins_n[b],
                              &g_wave.bins_filled[b]);
                 if ((int)b + 1 > g_wave.valid_bins)
                     g_wave.valid_bins = (int)b + 1;
@@ -650,6 +705,7 @@ int mak_waveform_read(struct mpv_node *out, void *parent)
     int      snap_bins = 0;
     float   *snap_min  = NULL;
     float   *snap_max  = NULL;
+    float   *snap_rms  = NULL;
     uint8_t *snap_fill = NULL;
 
     if (has_data) {
@@ -676,10 +732,18 @@ int mak_waveform_read(struct mpv_node *out, void *parent)
         if (b > 0 && g_wave.bins_min && g_wave.bins_max) {
             snap_min  = av_malloc((size_t)b * sizeof(float));
             snap_max  = av_malloc((size_t)b * sizeof(float));
+            snap_rms  = av_malloc((size_t)b * sizeof(float));
             snap_fill = av_malloc((size_t)b);   /* one byte per bin */
-            if (snap_min && snap_max && snap_fill) {
+            if (snap_min && snap_max && snap_rms && snap_fill) {
                 memcpy(snap_min, g_wave.bins_min + off, (size_t)b * sizeof(float));
                 memcpy(snap_max, g_wave.bins_max + off, (size_t)b * sizeof(float));
+                /* Energy cells → RMS here, so only the mean square leaves
+                 * the lock. A bin with no samples reads 0. */
+                for (int k = 0; k < b; k++)
+                    snap_rms[k] = (g_wave.bins_sq && g_wave.bins_n)
+                        ? mak_bin_rms(g_wave.bins_sq[off + k],
+                                      g_wave.bins_n[off + k])
+                        : 0.0f;
                 /* "filled" lets the UI tell "not yet covered" (0) from
                  * "covered + silent" (1). All paths track it per bin now
                  * (BULK fills it as each region seals), so copy it through;
@@ -704,18 +768,19 @@ int mak_waveform_read(struct mpv_node *out, void *parent)
     if (progress < 0.0) progress = 0.0;
     if (progress > 1.0) progress = 1.0;
 
-    bool emit_data = has_data && snap_min && snap_max && snap_fill &&
-                     snap_bins > 0;
+    bool emit_data = has_data && snap_min && snap_max && snap_rms &&
+                     snap_fill && snap_bins > 0;
 
     /* Top-level map:
      * { state, duration_us, min, max, filled, range_start_us, range_end_us,
-     *   coverage_bins, total_bins, progress }.
+     *   coverage_bins, total_bins, progress, rms }.
      * The range_* keys carry the absolute media placement of a ROLLING
-     * window; they are 0 for the other states. */
+     * window; they are 0 for the other states. "rms" is last so a reader
+     * indexing the older keys by position keeps working. */
     struct mpv_node_list *list = talloc_zero(NULL, struct mpv_node_list);
-    list->num    = 10;
-    list->keys   = talloc_array(list, char *, 10);
-    list->values = talloc_array(list, struct mpv_node, 10);
+    list->num    = 11;
+    list->keys   = talloc_array(list, char *, 11);
+    list->values = talloc_array(list, struct mpv_node, 11);
 
     list->keys[0] = talloc_strdup(list, "state");
     list->values[0] = (struct mpv_node){
@@ -773,8 +838,21 @@ int mak_waveform_read(struct mpv_node *out, void *parent)
     list->values[9] = (struct mpv_node){
         .format = MPV_FORMAT_DOUBLE, .u.double_ = progress};
 
+    /* Per-bin RMS of the mono signal, same length and indexing as min/max. */
+    struct mpv_byte_array *ba_rms = talloc_zero(list, struct mpv_byte_array);
+    if (emit_data) {
+        size_t bytes = (size_t)snap_bins * sizeof(float);
+        ba_rms->data = talloc_size(ba_rms, bytes);
+        ba_rms->size = bytes;
+        memcpy(ba_rms->data, snap_rms, bytes);
+    }
+    list->keys[10] = talloc_strdup(list, "rms");
+    list->values[10] = (struct mpv_node){
+        .format = MPV_FORMAT_BYTE_ARRAY, .u.ba = ba_rms};
+
     if (snap_min)  av_free(snap_min);
     if (snap_max)  av_free(snap_max);
+    if (snap_rms)  av_free(snap_rms);
     if (snap_fill) av_free(snap_fill);
 
     *out = (struct mpv_node){

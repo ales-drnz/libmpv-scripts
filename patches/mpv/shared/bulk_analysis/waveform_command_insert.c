@@ -1,7 +1,7 @@
 /* MAK_WAVEFORM_PATCH ─── read-only property: bulk waveform analyser
  * snapshot. Returns a MAP_NODE { state, duration_us, min, max, filled,
- * range_start_us, range_end_us, coverage_bins, total_bins, progress }.
- * "min"/"max" are interleaved Float32 byte arrays, one entry per bin
+ * range_start_us, range_end_us, coverage_bins, total_bins, progress, rms }.
+ * "min"/"max"/"rms" are Float32 byte arrays, one entry per bin
  * (empty until data is present). The wrapper polls this on its own
  * cadence — we deliberately do NOT call mp_notify_property because the
  * coordinator writes the result asynchronously and we do not want to
@@ -68,7 +68,8 @@ static int mp_property_waveform_enabled(void *ctx, struct m_property *prop,
                                get_time_length(mpctx),
                                mpctx->demuxer ? mpctx->demuxer->filetype : NULL,
                                mpctx->demuxer ? mpctx->demuxer->is_network : false,
-                               mpctx->demuxer ? mpctx->demuxer->seekable : false);
+                               mpctx->demuxer ? mpctx->demuxer->seekable : false,
+                               mpctx->global, mpctx->log);
             return M_PROPERTY_OK;
         }
     }
