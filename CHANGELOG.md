@@ -7,7 +7,7 @@
 
 ### Added
 - `waveform-data` carries a per-bin `rms` array next to `min` and `max`, on the bulk, progressive and rolling paths (mpv_audio_kit [#20](https://github.com/ales-drnz/mpv_audio_kit/issues/20)).
-- A GitHub Actions workflow builds every platform, Apple included, on each push to a `release/` branch.
+- A GitHub Actions workflow builds every platform, Apple included, on each push to a release branch.
 
 ## [0.1.5] - 22-08-2026
 

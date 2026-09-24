@@ -84,6 +84,7 @@ Each binary exports only the stable `mpv_*` C API, has the audio-only patch set 
     * [4.2 Linux and Windows](#42-linux-and-windows)
     * [4.3 Android](#43-android)
     * [4.4 Everything at once](#44-everything-at-once)
+    * [4.5 On GitHub Actions](#45-on-github-actions)
 
     </details>
 
@@ -244,6 +245,10 @@ On **macOS** the Android build runs **natively on the host** (uses the macOS NDK
 ```
 
 Run `./build list` to see every target name.
+
+#### 4.5 On GitHub Actions
+
+Every push to a release branch (`release/*`) runs `.github/workflows/build.yml`, which builds all nine binaries on GitHub's runners: Linux on native x86_64 and arm64 runners, Android and Windows in their Docker images, macOS and iOS on macOS runners, so no Mac is needed. The last job collects them with a `SHA256SUMS` into one `libmpv-release` artifact. Publishing the `libmpv-rN` release on mpv_audio_kit stays a manual step.
 
 ---
 
