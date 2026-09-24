@@ -48,7 +48,6 @@ source "$SCRIPT_DIR/shared/_audio_only.sh"
 source "$SCRIPT_DIR/shared/_cross.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
-ROOT="$(resolve_repo_root "$SCRIPT_DIR")" || exit 1
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 ARCH="${ARCH:-x86_64}"
