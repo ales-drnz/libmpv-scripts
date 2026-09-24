@@ -210,7 +210,8 @@ LOADFILE_NOTIFY_PATCHED = (
     'get_time_length(mpctx),\n'
     '                   mpctx->demuxer ? mpctx->demuxer->filetype : NULL,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->is_network : false,\n'
-    '                   mpctx->demuxer ? mpctx->demuxer->seekable : false);'
+    '                   mpctx->demuxer ? mpctx->demuxer->seekable : false,\n'
+    '                   mpctx->global, mpctx->log);'
 )
 
 

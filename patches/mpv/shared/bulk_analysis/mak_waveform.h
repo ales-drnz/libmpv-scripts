@@ -9,7 +9,7 @@
  * engine, not this file, owns the threading and decode.
  *
  * Output is a single fixed-resolution envelope of up to MAK_WAVEFORM_BINS
- * min/max pairs (fewer for very short tracks).
+ * bins (fewer for very short tracks), each with its min, max and RMS.
  *
  * The analyzer is gated: OFF by default, runs only while the waveform-enabled
  * flag is set (the loudness scan can also drive the engine via its own flag).
@@ -85,8 +85,8 @@ bool mak_waveform_is_enabled(void);
 
 /* Builds an MPV_FORMAT_NODE_MAP describing the current state
  * (idle / decoding / ready / failed / progressive / rolling). When data is
- * present, the map carries the per-bin "min"/"max" Float32 byte arrays plus
- * the "filled" mask and decode-progress keys. Always returns 0. */
+ * present, the map carries the per-bin "min"/"max"/"rms" Float32 byte arrays
+ * plus the "filled" mask and decode-progress keys. Always returns 0. */
 int mak_waveform_read(struct mpv_node *out, void *parent);
 
 /* ── Interface for the scan engine (mak_scan.c) ───────────────────────────
@@ -113,22 +113,25 @@ void mak_waveform_arm_rolling(int gen);
  * coverage_bins + DECODING. The caller MUST have ACQUIRE-loaded the per-worker
  * high-waters before computing cnt[] (so [0,cnt) is published-visible on this
  * thread); this copies that sealed, no-longer-written prefix. [src_min] /
- * [src_max] are the contiguous global arrays; [src_filled] is one per-region
- * mask (region w local-indexed, length >= cnt[w]). No-op if [gen] is stale. */
+ * [src_max] / [src_sq] / [src_n] are the contiguous global arrays;
+ * [src_filled] is one per-region mask (region w local-indexed, length >=
+ * cnt[w]). No-op if [gen] is stale. */
 void mak_waveform_publish_partial(int gen, int bins, int64_t duration_us,
                                   int nregions, const int *bin_start,
                                   const int *cnt, const float *src_min,
-                                  const float *src_max,
+                                  const float *src_max, const double *src_sq,
+                                  const uint32_t *src_n,
                                   const uint8_t *const *src_filled,
                                   int coverage_bins);
 
 /* Commit the FINAL bulk envelope: free any prior arrays, install [min]/[max]/
- * [filled] into g_wave (ownership transferred on success), mark READY. Returns
- * true iff it took ownership — the caller then NULLs its locals. No-op +
- * false if [gen] is stale (caller keeps + frees its locals). */
+ * [sq]/[n]/[filled] into g_wave (ownership transferred on success), mark READY.
+ * [sq] and [n] are the per-bin sum of squares and sample count. Returns true
+ * iff it took ownership — the caller then NULLs its locals. No-op + false if
+ * [gen] is stale (caller keeps + frees its locals). */
 bool mak_waveform_commit(int gen, int bins, int64_t duration_us,
-                         float *min, float *max, uint8_t *filled,
-                         int valid_bins);
+                         float *min, float *max, double *sq, uint32_t *n,
+                         uint8_t *filled, int valid_bins);
 
 /* Drop any partial bulk buffer attached for [gen] (the engine's fail path), so
  * a FAILED state never leaves stale partial data referenced. */

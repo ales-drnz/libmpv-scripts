@@ -1,3 +1,30 @@
+## [0.2.0] - unreleased
+
+### Breaking
+- On Linux and Android the library's SONAME is `libmpv_audio_kit.so`, so it no longer clashes with another plugin's libmpv. The release asset names are unchanged.
+- The per-filter tap is keyed on chain labels instead of filter types: `analyzer-taps` and `audio-tap-frames` take and return labels, and two instances of one filter get separate rings.
+
+### Changed
+- Linux builds on Ubuntu 20.04, so the library needs glibc 2.31 instead of 2.38, and loads PipeWire and PulseAudio only when they are installed. Linux builds natively, one architecture per host.
+- Linux keeps plain RELA relocations: RELR would need glibc 2.36.
+- mpv's version string carries the release (`mpv v0.41.0+r15`), and a build writes `manifest.json` with the versions, the compiled filters and the hash of every library.
+
+### Build
+- Every source tarball is pinned by SHA-256, and CI stops on an unpinned one.
+- A missing git tag stops the build instead of falling back to the default branch.
+
+## [0.1.6] - 24-09-2026
+
+### Fixed
+- The bulk analysis re-opens a network source with mpv's own network options (`tls-verify`, `tls-ca-file`, `http-header-fields`, user agent, cookies, proxy), so the waveform and loudness scan no longer skip certificate verification or drop auth headers (mpv_audio_kit [#19](https://github.com/ales-drnz/mpv_audio_kit/issues/19)).
+- The bulk waveform downmixes to mono with the same channel average as the progressive path, so peaks stay within `[-1, 1]` instead of reaching about 1.41 on correlated stereo.
+- A cancelled analysis worker is joined only once, which could crash the process.
+- The detached analysis threads are cancelled and drained before the last core is destroyed or the process exits, so they no longer decode while libav and TLS state are freed under them.
+
+### Added
+- `waveform-data` carries a per-bin `rms` array next to `min` and `max`, on the bulk, progressive and rolling paths (mpv_audio_kit [#20](https://github.com/ales-drnz/mpv_audio_kit/issues/20)).
+- A GitHub Actions workflow builds every platform, Apple included, on each push to a release branch.
+
 ## [0.1.5] - 22-08-2026
 
 ### Fixed

@@ -20,6 +20,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/dict.h>
 #include <libavutil/mathematics.h>
 #include <libavutil/mem.h>
 #include <libavutil/opt.h>
@@ -28,8 +29,10 @@
 
 #include "osdep/threads.h"
 #include "osdep/timer.h"
+#include "stream/stream.h"
 
 #include "audio/mak_scan.h"
+#include "audio/mak_wave_fold.h"
 #include "audio/mak_waveform.h"
 
 /* Sample budget per worker cancellation check. 4096 samples is
@@ -74,6 +77,9 @@ struct worker_chunk {
      * worker does not publish live, e.g. a future caller that omits it). */
     struct mak_wave_hw *hwslot;
     const char *url;             /* shared, owned by coordinator */
+    /* mpv's network options for the re-open (shared, read-only, owned by the
+     * coordinator; NULL for a local path). */
+    const AVDictionary *net_opts;
     int      audio_idx;
     enum AVCodecID codec_id;
     AVCodecParameters *codecpar; /* shared, used to init each ctx */
@@ -85,13 +91,17 @@ struct worker_chunk {
     int64_t  time_base_den;
     /* Output slice. total_bins is the global envelope size; the
      * worker writes only [bin_start, bin_end) — disjoint by
-     * construction. out_min / out_max point into the coordinator's
-     * global arrays. bins_filled has length bin_end - bin_start. */
+     * construction. out_min / out_max / out_sq / out_n point into the
+     * coordinator's global arrays (out_sq and out_n are each bin's sum of
+     * squares and sample count, for the RMS). bins_filled has length
+     * bin_end - bin_start. */
     int      total_bins;
     int      bin_start;          /* inclusive */
     int      bin_end;            /* exclusive */
     float   *out_min;
     float   *out_max;
+    double  *out_sq;
+    uint32_t *out_n;
     uint8_t *bins_filled;
     int      status;             /* 0 = ok */
 };
@@ -122,6 +132,8 @@ static void process_samples(const float *samples, int count,
                     if (s < a->out_min[local]) a->out_min[local] = s;
                     if (s > a->out_max[local]) a->out_max[local] = s;
                 }
+                a->out_sq[local] += (double)s * s;
+                a->out_n[local]++;
                 /* SEAL: bin_idx is monotone in e, so every LOCAL bin strictly
                  * below `local` can no longer widen — publish `local` (NEVER
                  * local+1: the bin being widened must stay private). The
@@ -143,6 +155,29 @@ static void process_samples(const float *samples, int count,
  * callback (defined below, just before coordinator_main). */
 static int coord_interrupt_cb(void *opaque);
 
+/* Open [url] into the pre-allocated [*fmt] with mpv's own network options
+ * ([net_opts], NULL for a local path: tls-verify, CA file, headers, user
+ * agent, cookies...) so the re-open verifies and authenticates exactly like
+ * playback does. FFmpeg's own defaults would skip certificate verification
+ * and drop the headers. The 5 s I/O timeout then overrides mpv's
+ * network-timeout, bounding a stalled connection as before. */
+static int open_source(AVFormatContext **fmt, const char *url,
+                       const AVDictionary *net_opts)
+{
+    AVDictionary *opts = NULL;
+    if (net_opts && av_dict_copy(&opts, net_opts, 0) < 0) {
+        av_dict_free(&opts);
+        avformat_free_context(*fmt);
+        *fmt = NULL;
+        return AVERROR(ENOMEM);
+    }
+    av_dict_set(&opts, "rw_timeout", "5000000", 0);  /* 5 s (microseconds) */
+    av_dict_set(&opts, "timeout",    "5000000", 0);  /* 5 s (HTTP/TCP) */
+    int ret = avformat_open_input(fmt, url, NULL, &opts);
+    av_dict_free(&opts);
+    return ret;
+}
+
 static MP_THREAD_VOID worker_chunk_thread(void *p)
 {
     struct worker_chunk *a = p;
@@ -153,8 +188,10 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
     SwrContext      *swr = NULL;
     AVFrame         *iframe = NULL;
     AVPacket        *pkt = NULL;
-    float           *out_buf = NULL;
-    int              out_buf_capacity = 0;
+    float           *out_buf = NULL;     /* interleaved, all channels */
+    int              out_buf_capacity = 0;   /* in frames */
+    float           *mono_buf = NULL;    /* out_buf downmixed */
+    int              channels = 0;
     int              ret = 0;
     int              samples_since_check = 0;
 
@@ -166,12 +203,7 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
     if (!fmt) goto cleanup;
     fmt->interrupt_callback.callback = coord_interrupt_cb;
     fmt->interrupt_callback.opaque   = &a->my_gen;
-    AVDictionary *open_opts = NULL;
-    av_dict_set(&open_opts, "rw_timeout", "5000000", 0);  /* 5 s (microseconds) */
-    av_dict_set(&open_opts, "timeout",    "5000000", 0);  /* 5 s (HTTP/TCP) */
-    int open_ret = avformat_open_input(&fmt, a->url, NULL, &open_opts);
-    av_dict_free(&open_opts);
-    if (open_ret < 0) goto cleanup;
+    if (open_source(&fmt, a->url, a->net_opts) < 0) goto cleanup;
     if (avformat_find_stream_info(fmt, NULL) < 0)          goto cleanup;
 
     const AVCodec *codec = avcodec_find_decoder(a->codec_id);
@@ -181,9 +213,15 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
     if (avcodec_parameters_to_context(dec, a->codecpar) < 0) goto cleanup;
     if (avcodec_open2(dec, codec, NULL) < 0) goto cleanup;
 
-    AVChannelLayout out_layout = AV_CHANNEL_LAYOUT_MONO;
+    /* Convert to interleaved float in the SOURCE layout, then fold to mono
+     * with mak_downmix_mono: the same average the progressive af-tap path
+     * uses, so both envelopes agree and a full-scale stereo track peaks at
+     * 1.0. (A MONO swr target would apply swresample's 1/sqrt(2) per channel
+     * matrix, which sums a correlated stereo pair to sqrt(2).) */
+    channels = dec->ch_layout.nb_channels;
+    if (channels <= 0) goto cleanup;
     ret = swr_alloc_set_opts2(&swr,
-        &out_layout, AV_SAMPLE_FMT_FLT, a->sample_rate,
+        &dec->ch_layout, AV_SAMPLE_FMT_FLT, a->sample_rate,
         &dec->ch_layout, dec->sample_fmt, a->sample_rate,
         0, NULL);
     if (ret < 0 || !swr) goto cleanup;
@@ -193,8 +231,9 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
     pkt    = av_packet_alloc();
     if (!iframe || !pkt) goto cleanup;
     out_buf_capacity = 8192;
-    out_buf = av_malloc(out_buf_capacity * sizeof(float));
-    if (!out_buf) goto cleanup;
+    out_buf  = av_malloc((size_t)out_buf_capacity * channels * sizeof(float));
+    mono_buf = av_malloc((size_t)out_buf_capacity * sizeof(float));
+    if (!out_buf || !mono_buf) goto cleanup;
 
     /* Seek to the assigned region (skipped for the first worker
      * which already starts at sample 0). AV_TIME_BASE units; the
@@ -253,9 +292,12 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
             if (needed > out_buf_capacity) {
                 int new_cap = needed + 1024;
                 float *grown = av_realloc(out_buf,
-                    (size_t)new_cap * sizeof(float));
+                    (size_t)new_cap * channels * sizeof(float));
                 if (!grown) { av_frame_unref(iframe); goto cleanup; }
                 out_buf = grown;
+                grown = av_realloc(mono_buf, (size_t)new_cap * sizeof(float));
+                if (!grown) { av_frame_unref(iframe); goto cleanup; }
+                mono_buf = grown;
                 out_buf_capacity = new_cap;
             }
             uint8_t *out_data[1] = { (uint8_t *)out_buf };
@@ -269,7 +311,8 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
             if (emitted_samples == 0 && frame_sample_pos > 0)
                 emitted_samples = frame_sample_pos;
 
-            process_samples(out_buf, converted,
+            mak_downmix_mono(out_buf, converted, channels, mono_buf);
+            process_samples(mono_buf, converted,
                             &emitted_samples, a->total_samples, a);
 
             samples_since_check += converted;
@@ -287,6 +330,7 @@ done_decode:
 
 cleanup:
     if (out_buf)  av_free(out_buf);
+    if (mono_buf) av_free(mono_buf);
     if (pkt)      av_packet_free(&pkt);
     if (iframe)   av_frame_free(&iframe);
     if (swr)      swr_free(&swr);
@@ -306,6 +350,7 @@ struct coord_args {
     char  *url;          /* coordinator takes ownership */
     int    my_gen;
     double duration_secs; /* caller's (mpv's) duration — PROGRESSIVE axis */
+    AVDictionary *net_opts; /* mpv's network options; coordinator owns */
 };
 
 /* Abort a coordinator's blocking probe (avformat_open_input /
@@ -397,6 +442,8 @@ static MP_THREAD_VOID coordinator_main(void *p)
     int    my_gen   = args->my_gen;
     char  *url      = args->url;
     double dur_secs = args->duration_secs;
+    /* Shared read-only with the workers, freed in cleanup after they join. */
+    AVDictionary *net_opts = args->net_opts;
     free(args);
 
     AVFormatContext   *probe_fmt = NULL;
@@ -413,6 +460,8 @@ static MP_THREAD_VOID coordinator_main(void *p)
     int                bins = 0;
     float             *bins_min = NULL;
     float             *bins_max = NULL;
+    double            *bins_sq = NULL;
+    uint32_t          *bins_n = NULL;
     uint8_t           *bins_filled = NULL;
     int                audio_idx = -1;
 
@@ -429,12 +478,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
     if (!probe_fmt) goto fail;
     probe_fmt->interrupt_callback.callback = coord_interrupt_cb;
     probe_fmt->interrupt_callback.opaque   = &my_gen;
-    AVDictionary *probe_opts = NULL;
-    av_dict_set(&probe_opts, "rw_timeout", "5000000", 0);  /* 5 s (microseconds) */
-    av_dict_set(&probe_opts, "timeout",    "5000000", 0);  /* 5 s (HTTP/TCP) */
-    int probe_ret = avformat_open_input(&probe_fmt, url, NULL, &probe_opts);
-    av_dict_free(&probe_opts);
-    if (probe_ret < 0) goto fail;
+    if (open_source(&probe_fmt, url, net_opts) < 0) goto fail;
     if (avformat_find_stream_info(probe_fmt, NULL) < 0)       goto fail;
 
     for (unsigned i = 0; i < probe_fmt->nb_streams; i++) {
@@ -518,14 +562,17 @@ static MP_THREAD_VOID coordinator_main(void *p)
     int nworkers = fanout_ok ? MAK_WAVEFORM_WORKERS : 1;
 
     /* Fixed bin count, clamped down for tracks shorter than the
-     * target resolution. Allocate the global min/max arrays. */
+     * target resolution. Allocate the global min/max/energy arrays. */
     bins = MAK_WAVEFORM_BINS;
     if ((int64_t)bins > total_samples) bins = (int)total_samples;
     if (bins < 1) goto fail;
     bins_min = av_calloc(bins, sizeof(float));
     bins_max = av_calloc(bins, sizeof(float));
+    bins_sq  = av_calloc(bins, sizeof(double));
+    bins_n   = av_calloc(bins, sizeof(uint32_t));
     bins_filled = av_calloc(bins, sizeof(uint8_t));
-    if (!bins_min || !bins_max || !bins_filled) goto fail;
+    if (!bins_min || !bins_max || !bins_sq || !bins_n || !bins_filled)
+        goto fail;
 
     /* Spawn the workers (nworkers: all for local/SMB/file, 1 for remote
      * http(s)). Each worker covers a disjoint sample range and a disjoint bin
@@ -546,6 +593,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
             .my_gen        = my_gen,
             .hwslot        = &hw[w],
             .url           = url,
+            .net_opts      = net_opts,
             .audio_idx     = audio_idx,
             .codec_id      = st->codecpar->codec_id,
             .codecpar      = codecpar_copies[w],
@@ -560,6 +608,8 @@ static MP_THREAD_VOID coordinator_main(void *p)
             .bin_end       = be,
             .out_min       = bins_min + bs,
             .out_max       = bins_max + bs,
+            .out_sq        = bins_sq + bs,
+            .out_n         = bins_n + bs,
             .bins_filled   = av_calloc(be - bs > 0 ? be - bs : 1, 1),
             .status        = -1,
         };
@@ -609,7 +659,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
 
         mak_waveform_publish_partial(my_gen, bins, duration_us, spawned,
                                      bin_start, cnt, bins_min, bins_max,
-                                     filled_ptrs, coverage);
+                                     bins_sq, bins_n, filled_ptrs, coverage);
 
         if (all_done) break;
         mp_sleep_ns(MAK_WAVE_PUBLISH_INTERVAL_NS);
@@ -660,11 +710,13 @@ static MP_THREAD_VOID coordinator_main(void *p)
      * only if we are still the current generation; takes ownership of the
      * arrays on success). */
     bool committed = mak_waveform_commit(my_gen, bins, duration_us,
-                                         bins_min, bins_max, bins_filled,
-                                         valid_bins);
+                                         bins_min, bins_max, bins_sq, bins_n,
+                                         bins_filled, valid_bins);
     if (committed) {
         bins_min    = NULL;  /* ownership moved into g_wave */
         bins_max    = NULL;
+        bins_sq     = NULL;
+        bins_n      = NULL;
         bins_filled = NULL;
     }
     goto cleanup;
@@ -687,8 +739,11 @@ cleanup:
     }
     if (bins_min) av_free(bins_min);
     if (bins_max) av_free(bins_max);
+    if (bins_sq) av_free(bins_sq);
+    if (bins_n) av_free(bins_n);
     if (bins_filled) av_free(bins_filled);
     if (probe_fmt) avformat_close_input(&probe_fmt);
+    av_dict_free(&net_opts);
     free(url);
     /* Last touch of shared state: a drain waiting on this count may let the
      * process tear libav down as soon as it reads zero. */
@@ -700,7 +755,8 @@ cleanup:
 
 void mak_scan_start(const char *url, double duration_secs,
                     const char *format_name, bool is_network,
-                    bool seekable)
+                    bool seekable, struct mpv_global *global,
+                    struct mp_log *log)
 {
     if (!mak_waveform_is_enabled()) return;
     if (!url || !*url) return;
@@ -744,11 +800,19 @@ void mak_scan_start(const char *url, double duration_secs,
     args->my_gen        = new_gen;
     args->duration_secs = duration_secs;
     if (!args->url) { free(args); return; }
+    /* Snapshot mpv's network options now, on the core thread: the current
+     * values include this file's file-local ones (Media headers), and the
+     * detached coordinator must not read the core's config later. Keyed on
+     * the URL scheme like the coordinator's own is_network, so a URL with no
+     * demuxer yet still gets them; a local path needs none. */
+    if (global && strstr(url, "://"))
+        mp_setup_av_network_options(&args->net_opts, NULL, global, log);
 
     mp_thread t;
     atomic_fetch_add(&g_live_coordinators, 1);
     if (mp_thread_create(&t, coordinator_main, args) != 0) {
         atomic_fetch_sub(&g_live_coordinators, 1);
+        av_dict_free(&args->net_opts);
         free(args->url);
         free(args);
         mak_waveform_mark_failed(new_gen);

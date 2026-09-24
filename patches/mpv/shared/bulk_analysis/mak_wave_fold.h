@@ -1,13 +1,16 @@
-/* MAK_WAVEFORM_PATCH ─── shared min/max-per-bin kernel.
+/* MAK_WAVEFORM_PATCH ─── shared min/max/energy-per-bin kernel.
  *
  * Used by the bulk parallel decode AND the progressive pre-DSP fold, so
  * the two envelopes are produced by identical math (same downmix, same
  * bin mapping, same seed/widen rule) and converge bin-for-bin over the
- * region both have seen. No state — pure helpers, safe from any thread.
+ * region both have seen. Besides min/max each bin keeps a sum of squares
+ * and a sample count, so the reader can surface a per-bin RMS. No state —
+ * pure helpers, safe from any thread.
  */
 #ifndef MP_AUDIO_MAK_WAVE_FOLD_H_
 #define MP_AUDIO_MAK_WAVE_FOLD_H_
 
+#include <math.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -26,6 +29,32 @@ static inline void mak_fold_bin(float s, float *bmin, float *bmax,
         if (s < *bmin) *bmin = s;
         if (s > *bmax) *bmax = s;
     }
+}
+
+/* Fold one contiguous same-bin RUN into a bin: its extremes [rmin]/[rmax],
+ * its sum of squares [sq] and its sample count [n]. A bin's first touch
+ * (bfilled == 0) also restarts its energy, so a slot reused by the rolling
+ * window never carries a stale sum. A re-fold of audio already seen (a
+ * progressive seek back) adds to both sum and count, so their ratio stays a
+ * fair mean square. */
+static inline void mak_fold_run(float rmin, float rmax, double sq, uint32_t n,
+                                float *bmin, float *bmax, double *bsq,
+                                uint32_t *bn, uint8_t *bfilled)
+{
+    if (!*bfilled) {
+        *bsq = 0.0;
+        *bn  = 0;
+    }
+    mak_fold_bin(rmin, bmin, bmax, bfilled);
+    mak_fold_bin(rmax, bmin, bmax, bfilled);
+    *bsq += sq;
+    *bn  += n;
+}
+
+/* Per-bin RMS from its energy cells; 0 for a bin with no samples. */
+static inline float mak_bin_rms(double sq, uint32_t n)
+{
+    return n ? (float)sqrt(sq / (double)n) : 0.0f;
 }
 
 /* Canonical absolute-sample -> bin mapping. Identical denominator for both
