@@ -18,7 +18,7 @@
 #   base    : ubuntu:24.04 + multiarch + common build tooling (meson, cmake, …)
 #   linux   : ubuntu:20.04 on its own (NOT base), native arch only. glibc
 #             2.31, so the libmpv it links loads on every distro since then.
-#   linux-noble : base + GCC cross (x86_64 + aarch64) + multiarch audio/X11
+#   linux-noble : base + GCC cross (x86_64 + aarch64) + native audio/X11
 #             dev libs; what `verify` builds on.
 #   windows : base + GNU MinGW-w64 (x86_64) + llvm-mingw (aarch64)
 #   android : base alias — the NDK is fetched at runtime by build_libmpv_android.sh
@@ -127,10 +127,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libva-dev libvdpau-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# LINUX_FOREIGN_LIBS=0 skips the foreign pass, whose dev packages no longer
-# install cleanly. The verify stage on top needs the foreign arch only to load
-# that binary, and its runtime libraries alone are enough for that.
-ARG LINUX_FOREIGN_LIBS=1
+# Off by default: the foreign dev packages no longer install cleanly. The
+# verify stage on top needs the foreign arch only to load that binary, and
+# installs its runtime libraries itself. LINUX_FOREIGN_LIBS=1 turns it back on.
+ARG LINUX_FOREIGN_LIBS=0
 RUN set -eux; \
     if [ "$LINUX_FOREIGN_LIBS" = "0" ]; then exit 0; fi; \
     NATIVE_ARCH="$(dpkg --print-architecture)"; \
@@ -238,9 +238,9 @@ WORKDIR /src
 # ══════════════════════════════════════════════════════════════════════════════
 # verify — the union needed by scripts/verify_binaries.sh
 # ══════════════════════════════════════════════════════════════════════════════
-# Built on the `linux` stage so it inherits the Linux cross-compilers AND the
-# multiarch RUNTIME libs (libpipewire / libpulse / libasound / libc6 for BOTH
-# arches). The verifier needs those present, not just at mpv-compile time:
+# Built on the `linux-noble` stage so it inherits the Linux cross-compilers and
+# the native audio libs, and adds the foreign arch's runtime libs below. The
+# verifier needs those present, not just at mpv-compile time:
 #   • L12 (UND resolvability) resolves the binary's NEEDED symbols against the
 #     container's actual .so files;
 #   • L13 (dlopen) loads the binary, which fails if a NEEDED .so is missing;
@@ -282,6 +282,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       qemu-user-static binfmt-support \
       winbind \
       binutils-arm-linux-gnueabihf \
+    && rm -rf /var/lib/apt/lists/*
+
+# Runtime libraries of the foreign Linux arch, for the load test of that
+# binary under qemu-user: its glibc loader, libstdc++ and the audio libraries.
+RUN set -eux; \
+    if [ "$(dpkg --print-architecture)" = "arm64" ]; then F=amd64; else F=arm64; fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
+      libc6:$F libstdc++6:$F libgcc-s1:$F \
+      libasound2t64:$F libpulse0:$F libpipewire-0.3-0t64:$F \
     && rm -rf /var/lib/apt/lists/*
 
 # Wine for the Windows DLL load test. The build-host arch decides which Wine:

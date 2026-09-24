@@ -12,6 +12,7 @@
 ### Build
 - Every source tarball is pinned by SHA-256, and CI stops on an unpinned one.
 - A missing git tag stops the build instead of falling back to the default branch.
+- CI runs `scripts/verify_binaries.sh` on the nine libraries once they are built, and the verify image can load the foreign Linux arch.
 
 ## [0.1.6] - 24-09-2026
 

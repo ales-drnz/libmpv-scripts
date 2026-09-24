@@ -117,7 +117,6 @@ source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
 source "$SCRIPT_DIR/shared/_audio_only.sh"
 
-ROOT="$(resolve_repo_root "$SCRIPT_DIR")" || exit 1
 # Env-overridable so the regression fixture suite can point at a temp dir
 # containing intentionally-broken binaries (see builds/release/
 # .regression_fixtures/) and confirm the new sanity layers fail correctly.

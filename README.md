@@ -224,7 +224,7 @@ To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` an
 
 #### 3.5 On GitHub Actions
 
-Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries and `manifest.json`.
+Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries and `manifest.json`, then checks them as in [4.3](#43-verifying).
 
 ---
 

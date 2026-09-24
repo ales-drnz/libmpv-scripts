@@ -1,9 +1,9 @@
 name: Build
 
 # Builds every libmpv binary the mpv_audio_kit release ships, on GitHub's
-# runners (macOS ones included, so no Mac is needed), and collects them with
-# manifest.json into one artifact. Publishing the libmpv-<release> GitHub
-# release stays a manual step.
+# runners (macOS ones included, so no Mac is needed), collects them with
+# manifest.json into one artifact and checks them with verify_binaries.sh.
+# Publishing the libmpv-<release> GitHub release stays a manual step.
 on:
   push:
     branches: ['release/**']
@@ -143,3 +143,25 @@ jobs:
           name: libmpv-release
           path: builds/release/
           if-no-files-found: error
+
+  verify:
+    name: Verify
+    needs: release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: libmpv-release
+          path: builds/release
+      - run: docker build --target verify -t mpv-build-verify docker/
+      # The runner's NDK sysroot backs the Android symbol check. Apple
+      # binaries get the static checks only, and the aarch64 DLL no load test.
+      - name: Verify
+        run: |
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib"
+          test -d "$sysroot"
+          docker run --rm \
+            -v "$PWD:/scripts" -w /scripts \
+            -v "$sysroot:/ndk-sysroot:ro" \
+            mpv-build-verify bash scripts/verify_binaries.sh
