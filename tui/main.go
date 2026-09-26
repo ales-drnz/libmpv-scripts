@@ -63,7 +63,6 @@ const (
 	scSettings
 	scDeps
 	scVerify
-	scChecksums
 	scUpdateCacert
 )
 
@@ -137,16 +136,6 @@ type model struct {
 	vSummary                               bool
 	vXaudit, vXauditMsg                    string
 
-	// checksums screen — install-and-diff result (see checksums_view.go). The
-	// same screen renders the Libs actions (local / remote / clean); csTitle is
-	// the subtitle and csVerb the summary noun ("installed" / "updated" / …).
-	csEntries []csEntry
-	csRunning bool
-	csErr     error
-	csScroll  int
-	csTitle   string
-	csVerb    string
-
 	// update-cacert screen — runs scripts/update_cacert.sh, streams its output
 	// live, then shows the refreshed bundle's provenance (date / cert count /
 	// size / path). See update_cacert_view.go.
@@ -155,14 +144,6 @@ type model struct {
 	ucErr     error
 	ucResult  cacertResult
 	ucScroll  int
-
-	// libModeState is mpv_audio_kit's current libs source ("local" / "remote" /
-	// "mixed" / "unknown"), detected on entering the Tools tab and after a Libs
-	// action — the colored segment of the toggle. libPending is the segment the
-	// cursor is on ("local"/"remote"): ←/→ move it, ⏎ confirms (applies) it, so a
-	// switch never fires on a stray arrow press.
-	libModeState string
-	libPending   string
 
 	// Docker tab — multi-stage image management. dockerCursor walks the image
 	// rows + the "delete all" row; dockerState is the per-stage on-disk status
@@ -280,12 +261,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.startNext() // launch the next queued build (mutates m)
 		return m, listen(m.sub)
 
-	case checksumsDoneMsg:
-		m.csRunning = false
-		m.csEntries = msg.entries
-		m.csErr = msg.err
-		return m, listen(m.sub)
-
 	case ucLineMsg:
 		m.ucLog = append(m.ucLog, msg.line)
 		// Follow the tail while the script is still running.
@@ -369,8 +344,6 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keyDeps(k)
 	case scVerify:
 		return m.keyVerify(k)
-	case scChecksums:
-		return m.keyChecksums(k)
 	case scUpdateCacert:
 		return m.keyUpdateCacert(k)
 	}
@@ -505,7 +478,7 @@ func (m model) groupAllIndex(group string) int {
 func (m model) cellCovered(idx int) bool {
 	if m.allBinaries {
 		// "All binaries" covers only the binary builds — the Publish steps
-		// (Checksums, Verify) stay independently selectable.
+		// (Manifest, Verify) stay independently selectable.
 		return m.targets[idx].Group != "Tools"
 	}
 	t := m.targets[idx]
@@ -533,94 +506,13 @@ func (m model) focusedUnavailReason() string {
 	return ""
 }
 
-// refreshLibMode re-detects mpv_audio_kit's libs source so the toggle reflects
-// reality. Cheap (reads a handful of small files) — called on entering the
-// Tools tab and after a Libs action.
-func (m *model) refreshLibMode() {
-	if m.ctx == nil {
-		return
-	}
-	m.libModeState = libDetectMode(m.ctx.repoRoot)
-	// Start the cursor on the current side; default to local for mixed/unknown.
-	if m.libModeState == "local" || m.libModeState == "remote" {
-		m.libPending = m.libModeState
-	} else {
-		m.libPending = "local"
-	}
-}
-
-// libToggleFocused reports whether the grid cursor is on the lib-mode toggle.
-func (m model) libToggleFocused(bands [][]selColumn) bool {
-	idx, ok := m.focusedIdx(bands)
-	return ok && m.targets[idx].Key == "lib-mode"
-}
-
-// applyLibPending confirms the toggle: it runs the switch to the pending side,
-// but only when that differs from the current source (so pressing ⏎ on the
-// already-active side is a harmless no-op). This is the confirmation step —
-// ←/→ only move the cursor; nothing changes on disk until ⏎.
-func (m *model) applyLibPending() {
-	if m.libPending == "" || m.libPending == m.libModeState {
-		return
-	}
-	m.startLibAction("lib-" + m.libPending)
-}
-
-// renderLibToggle draws the local⇄remote libs source as a segmented, colored
-// control styled like the Build button (rounded border), with the active
-// segment filled in and the detected state spelled out to its right. The
-// border + filled segment are green when a side is set, cyan when focused, and
-// faint when the package is in a mixed / unknown state.
-func (m model) renderLibToggle(focused bool) string {
-	// Green segment = what's currently set. When focused, a cyan-filled segment
-	// is the selection cursor (moved by ←/→); it only takes effect on ⏎.
-	seg := func(name string) string {
-		switch {
-		case focused && m.libPending == name:
-			return lipgloss.NewStyle().Background(cAccent).Foreground(cBg).Bold(true).Padding(0, 1).Render(name)
-		case m.libModeState == name:
-			return lipgloss.NewStyle().Background(cOK).Foreground(cBg).Bold(true).Padding(0, 1).Render(name)
-		default:
-			return lipgloss.NewStyle().Foreground(cFaint).Padding(0, 1).Render(name)
-		}
-	}
-	inner := seg("local") + dimStyle.Render("│") + seg("remote")
-
-	border := cBorder
-	switch {
-	case focused:
-		border = cAccent
-	case m.libModeState == "local" || m.libModeState == "remote":
-		border = cOK
-	}
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).BorderForeground(border).
-		MarginLeft(2).Render(inner)
-
-	var hint string
-	switch {
-	case focused && m.libPending != m.libModeState:
-		hint = lipgloss.NewStyle().Foreground(cAccent).Bold(true).Render("⏎ switch to "+m.libPending) +
-			dimStyle.Render("   (currently "+m.libModeState+")")
-	case m.libModeState == "local":
-		hint = dimStyle.Render("mpv_audio_kit uses the local libmpv — never downloads   ←→ change")
-	case m.libModeState == "remote":
-		hint = dimStyle.Render("downloads libmpv from GitHub when a local copy is missing   ←→ change")
-	case m.libModeState == "mixed":
-		hint = warnStyle.Render("⚠ mixed") + dimStyle.Render(" — ←→ pick a side, ⏎ to apply")
-	default:
-		hint = dimStyle.Render("source unknown — ←→ pick a side, ⏎ to apply")
-	}
-	return lipgloss.JoinHorizontal(lipgloss.Center, box, "  "+hint)
-}
-
 // selectedCount counts the checked binary cells, EXCLUDING the per-group "all"
 // rows (those are aggregate controls, not binaries — counting them on top of
 // their covered arches would double-count).
 func (m model) selectedCount() int {
 	n := 0
 	for i, t := range m.targets {
-		if m.isAction(i) { // Checksums / Verify run on their own
+		if m.isAction(i) { // Manifest / Verify run on their own
 			continue
 		}
 		if m.cellChecked(i) && t.Available() && m.groupAllIndex(t.Group) != i {
@@ -634,7 +526,7 @@ func (m model) selectedCount() int {
 func (m model) cellLocked(idx int) bool { return m.cellCovered(idx) }
 
 // allBinaryKeys resolves "All binaries" to the minimal build set: each OS
-// group's "all", filtered by availability. The Publish steps (Checksums,
+// group's "all", filtered by availability. The Publish steps (Manifest,
 // Verify) are NOT included — they stay opt-in.
 func (m model) allBinaryKeys() []string {
 	var keys []string
@@ -699,22 +591,12 @@ func (m model) keySelect(k string) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.navDown(bands)
 	case "left", "h":
-		// On the libs toggle, ←/→ only MOVE the selection cursor (no switch until
-		// ⏎). The band is a single column, so column navigation is a no-op here.
-		if m.libToggleFocused(bands) {
-			m.libPending = "local"
-		} else {
-			m.navLeft(bands)
-		}
+		m.navLeft(bands)
 	case "right", "l":
-		if m.libToggleFocused(bands) {
-			m.libPending = "remote"
-		} else {
-			m.navRight(bands)
-		}
+		m.navRight(bands)
 	case " ", "enter":
 		// Activate the focused element: toggle a target, run an action
-		// (Checksums / Verify / Libs), flip the skip option, or start the build.
+		// (Manifest / Update CA / Verify), flip the skip option, or start the build.
 		switch {
 		case m.onBuild:
 			m.begin()
@@ -757,11 +639,11 @@ func (m *model) toggleCleanWork() {
 }
 
 // isAction reports whether a cell is a one-shot action (Publish steps:
-// Checksums / Verify) that runs immediately rather than being toggled.
+// Manifest / Verify) that runs immediately rather than being toggled.
 func (m model) isAction(idx int) bool { return m.targets[idx].Group == "Tools" }
 
 // activateFocused acts on the grid cell under the cursor: run it immediately if
-// it's an action (Checksums / Verify), otherwise toggle it (honouring coverage
+// it's an action (Manifest / Verify), otherwise toggle it (honouring coverage
 // locks; turning a group "all" on clears its now-covered per-arch selections).
 func (m *model) activateFocused(bands [][]selColumn) {
 	idx, ok := m.focusedIdx(bands)
@@ -769,18 +651,12 @@ func (m *model) activateFocused(bands [][]selColumn) {
 		return
 	}
 	t := m.targets[idx]
-	if m.isAction(idx) { // Checksums / Verify → run now, each on its own screen
+	if m.isAction(idx) { // Manifest / Verify → run now, each on its own screen
 		switch t.Key {
 		case "verify":
 			m.startVerify()
-		case "checksums":
-			m.startChecksums()
 		case "update-cacert":
 			m.startUpdateCacert()
-		case "lib-mode":
-			m.applyLibPending()
-		case "lib-clean":
-			m.startLibAction(t.Key)
 		default:
 			m.startRun([]string{t.Key})
 		}
@@ -832,9 +708,6 @@ func (m model) keyBuildTabs(k string) (tea.Model, tea.Cmd) {
 		if m.buildTab < len(buildTabLabels)-1 {
 			m.buildTab++
 		}
-		if m.buildTab == 1 { // entering Tools → detect the libs source
-			m.refreshLibMode()
-		}
 		if m.buildTab == 2 { // hovering Docker → prefetch image status (async)
 			m.startDockerRefresh()
 		}
@@ -846,7 +719,6 @@ func (m model) keyBuildTabs(k string) (tea.Model, tea.Cmd) {
 		case 0: // Compile → land on All binaries
 			m.onAllBin = true
 		case 1: // Tools → the build options sit at the top
-			m.refreshLibMode()
 			m.onSkip = true
 		case 2: // Docker → the image-management list
 			m.dockerCursor = 0     // cursor visible immediately (no wait)
@@ -1049,7 +921,7 @@ func (m *model) begin() {
 
 // startRun expands the given keys into a build queue and switches to the
 // dashboard. Shared by the Build button and the one-shot action targets
-// (Checksums / Verify).
+// (Manifest / Verify).
 func (m *model) startRun(keys []string) {
 	if len(keys) == 0 {
 		return
@@ -1266,13 +1138,6 @@ func main() {
 	}
 
 	// Hidden Go steps (kSelf targets re-exec the orchestrator with these).
-	if len(args) > 0 && args[0] == "_checksums" {
-		if err := runChecksums(ctx, func(l string) { fmt.Println(l) }); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-		return
-	}
 	if len(args) > 0 && args[0] == "_updatecacert" {
 		if err := runUpdateCacert(ctx, func(l string) { fmt.Println(l) }); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -1286,30 +1151,6 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	}
-	if len(args) > 0 && args[0] == "_libmode" { // toggle to the opposite of the current source
-		key := "lib-local"
-		if libDetectMode(ctx.repoRoot) == "local" {
-			key = "lib-remote"
-		}
-		if err := runLibAction(ctx, key, func(l string) { fmt.Println(l) }); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(args) > 0 {
-		if key, ok := map[string]string{
-			"_liblocal":  "lib-local",
-			"_libremote": "lib-remote",
-			"_libclean":  "lib-clean",
-		}[args[0]]; ok {
-			if err := runLibAction(ctx, key, func(l string) { fmt.Println(l) }); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				os.Exit(1)
-			}
-			return
-		}
 	}
 
 	// No args (or `menu`) → interactive dashboard. Otherwise headless CLI.
@@ -1481,22 +1322,6 @@ func preview(which string) {
 		}
 		m.vCursor = 2
 		fmt.Println(m.viewVerify())
-	case "checksums":
-		m.screen = scChecksums
-		m.csEntries = []csEntry{
-			{Label: "macos xcframework", Status: "ok", Hash: "a1b2c3d4e5f60718", Dest: "macos/mpv_audio_kit/Frameworks", Edits: []csEdit{
-				{File: "macos/mpv_audio_kit.podspec", Old: `EXPECTED_SHA256="00000000000000000000000000000000000000000000000000000000deadbeef"`, New: `EXPECTED_SHA256="a1b2c3d4e5f60718000000000000000000000000000000000000000000000000"`},
-				{File: "macos/mpv_audio_kit/Package.swift", Old: `checksum: "0000000000000000000000000000000000000000000000000000000000000000"`, New: `checksum: "a1b2c3d4e5f60718000000000000000000000000000000000000000000000000"`},
-			}},
-			{Label: "android arm64-v8a", Status: "ok", Hash: "3f2a1b0c9d8e7f60", Dest: "android/src/main/jniLibs/arm64-v8a/libmpv.so", Edits: []csEdit{
-				{File: "android/build.gradle.kts", Old: `"sha256" to "deadbeef00000000000000000000000000000000000000000000000000000000"`, New: `"sha256" to "3f2a1b0c9d8e7f60000000000000000000000000000000000000000000000000"`},
-			}},
-			{Label: "linux x86_64", Status: "ok", Hash: "9c8d7e6f5a4b3c20", Dest: "linux/libs/x86_64/libmpv.so", Edits: []csEdit{
-				{File: "linux/CMakeLists.txt", Old: `set(EXPECTED_SHA256_X86_64  "00000000000000000000000000000000000000000000000000000000feedface")`, New: `set(EXPECTED_SHA256_X86_64  "9c8d7e6f5a4b3c20000000000000000000000000000000000000000000000000")`},
-			}},
-			{Label: "ios xcframework", Status: "skipped", Message: "not built"},
-		}
-		fmt.Println(m.viewChecksums())
 	case "select-docker":
 		m.buildTab = 2
 		m.dockerDaemonUp = true
@@ -1530,8 +1355,7 @@ func preview(which string) {
 		fmt.Println(m.viewSelect())
 	case "select-tools":
 		m.buildTab = 1
-		m.libModeState, m.libPending = "local", "remote" // cursor moved to remote, not yet applied
-		m.selBand, m.selCol, m.selRow = 2, 0, 3          // focus the libs toggle
+		m.selBand, m.selCol, m.selRow = 2, 0, 2 // focus Verify
 		fmt.Println(m.viewSelect())
 	case "select-build":
 		m.onBuild = true // cursor on the Build button
@@ -1608,8 +1432,6 @@ func (m model) View() string {
 		return m.viewDeps()
 	case scVerify:
 		return m.viewVerify()
-	case scChecksums:
-		return m.viewChecksums()
 	case scUpdateCacert:
 		return m.viewUpdateCacert()
 	}
@@ -1643,14 +1465,8 @@ func (m model) viewSelect() string {
 
 		// Action cells (run buttons, not checkboxes): the label on the left, a
 		// dim one-line description on the right — like the "All binaries" row and
-		// the Settings rows. A blank line precedes the first Libs action so the
-		// local/remote/clean trio reads as its own group, apart from Checksums /
-		// Verify.
+		// the Settings rows.
 		if m.isAction(idx) {
-			// The libs source is a segmented toggle, not a plain run button.
-			if t.Key == "lib-mode" {
-				return "\n" + m.renderLibToggle(focused) // blank line separates it from Checksums/Verify
-			}
 			const actLabelW = 11
 			if focused {
 				line := "▷ " + padTrunc(t.Label, actLabelW) + t.Desc
@@ -1814,7 +1630,7 @@ func (m model) viewSelect() string {
 }
 
 // dashBands is the grid shown on the build dashboard: only the compile OS
-// sections. The Tools actions (Checksums / Verify) run on their own screens and
+// sections. The Tools actions (Manifest / Verify) run on their own screens and
 // are never part of a compile run, so they aren't shown here.
 func (m model) dashBands() [][]selColumn {
 	b := m.selBands()
@@ -2119,7 +1935,7 @@ func (m model) cellRunItems(idx int) []*item {
 	if len(items) == 0 {
 		return nil
 	}
-	// Action cells (Checksums / Verify) show whenever they're in the run;
+	// Action cells (Manifest / Verify) show whenever they're in the run;
 	// build cells show when selected or covered.
 	if m.isAction(idx) || m.cellChecked(idx) {
 		return items

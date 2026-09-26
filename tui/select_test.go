@@ -12,18 +12,24 @@ import (
 
 // TestAvailabilityByHost locks the per-host feasibility matrix.
 func TestAvailabilityByHost(t *testing.T) {
-	saved := hostOS
-	defer func() { hostOS = saved }()
+	saved, savedArch := hostOS, hostArch
+	defer func() { hostOS, hostArch = saved, savedArch }()
 	get := func(k string) Target { tg, _ := targetByKey(k); return tg }
 
+	// The Linux build is native-only: only the host's arch is available.
+	hostArch = "x86_64"
+	if get("linux-aarch64").Available() {
+		t.Error("linux-aarch64 must be unavailable on an x86_64 host")
+	}
+
 	hostOS = "windows"
-	for _, k := range []string{"macos", "ios"} { // only Apple is off-limits
+	for _, k := range []string{"macos", "ios", "manifest"} { // Apple + bash scripts are off-limits
 		if get(k).Available() {
 			t.Errorf("%s must be unavailable on Windows", k)
 		}
 	}
-	// Android (Docker) + checksums (Go self-exec) now work on Windows too.
-	for _, k := range []string{"windows-x86_64", "windows-arm64", "linux-x86_64", "verify", "android", "checksums"} {
+	// Android (Docker) works on Windows too.
+	for _, k := range []string{"windows-x86_64", "windows-arm64", "linux-x86_64", "verify", "android"} {
 		if !get(k).Available() {
 			t.Errorf("%s should be available on Windows", k)
 		}
@@ -33,14 +39,14 @@ func TestAvailabilityByHost(t *testing.T) {
 	if get("macos").Available() || get("ios").Available() {
 		t.Error("Apple targets must be unavailable on Linux")
 	}
-	for _, k := range []string{"android", "checksums", "windows-x86_64", "linux-aarch64", "verify"} {
+	for _, k := range []string{"android", "manifest", "windows-x86_64", "linux-x86_64", "verify"} {
 		if !get(k).Available() {
 			t.Errorf("%s should be available on Linux", k)
 		}
 	}
 
 	hostOS = "darwin"
-	for _, k := range []string{"macos", "ios", "android", "checksums", "windows-x86_64", "linux-x86_64", "verify"} {
+	for _, k := range []string{"macos", "ios", "android", "manifest", "windows-x86_64", "linux-x86_64", "verify"} {
 		if !get(k).Available() {
 			t.Errorf("%s should be available on macOS", k)
 		}
@@ -172,12 +178,12 @@ func TestBuildTabSwitch(t *testing.T) {
 	}
 }
 
-// TestPublishCellsAreActions: Checksums / Verify are one-shot actions (run on
+// TestPublishCellsAreActions: Manifest / Verify are one-shot actions (run on
 // activate), not toggleable build targets.
 func TestPublishCellsAreActions(t *testing.T) {
 	m := newTestModel()
-	if !m.isAction(targetIndex(m, "checksums")) {
-		t.Error("checksums should be an action")
+	if !m.isAction(targetIndex(m, "manifest")) {
+		t.Error("manifest should be an action")
 	}
 	if !m.isAction(targetIndex(m, "verify")) {
 		t.Error("verify should be an action")
@@ -194,7 +200,7 @@ func TestAllBinariesCoversAndResolves(t *testing.T) {
 	m.allBinaries = true
 	for i := range m.targets {
 		covered := m.cellCovered(i)
-		if m.targets[i].Group == "Tools" { // Checksums + Verify stay opt-in
+		if m.targets[i].Group == "Tools" { // Manifest + Verify stay opt-in
 			if covered {
 				t.Errorf("%s (Publish) must NOT be covered by All binaries", m.targets[i].Key)
 			}
@@ -206,7 +212,7 @@ func TestAllBinariesCoversAndResolves(t *testing.T) {
 	}
 	keys := m.allBinaryKeys()
 	for _, k := range keys {
-		if k == "verify" || k == "checksums" {
+		if k == "verify" || k == "manifest" {
 			t.Errorf("Publish step %q must not be in All-binaries build keys", k)
 		}
 	}

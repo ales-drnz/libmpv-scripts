@@ -96,6 +96,7 @@ var verifyPhaseOrder = []struct{ id, label string }{
 	{"l12", "UND symbol resolvability"},
 	{"l13", "Runtime load test"},
 	{"l14", "Stub detection"},
+	{"l16", "ELF invariants"},
 }
 
 // phaseLabel maps a phase id to its readable section title.

@@ -3,16 +3,26 @@
 ### Breaking
 - On Linux and Android the library's SONAME is `libmpv_audio_kit.so`, so it no longer clashes with another plugin's libmpv. The release asset names are unchanged.
 - The per-filter tap is keyed on chain labels instead of filter types: `analyzer-taps` and `audio-tap-frames` take and return labels, and two instances of one filter get separate rings.
+- The Checksums, libs and Clean actions are gone, since mpv_audio_kit 0.5.0 takes libmpv through its build hook. The new Manifest action writes `manifest.json`.
+
+### Fixed
+- OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
+- When an analysis worker fails to start, the ones already running are stopped before the join instead of decoding their whole region.
 
 ### Changed
-- Linux builds on Ubuntu 20.04, so the library needs glibc 2.31 instead of 2.38, and loads PipeWire and PulseAudio only when they are installed. Linux builds natively, one architecture per host.
+- Linux builds on Ubuntu 20.04, so the library needs glibc 2.31 instead of 2.38, plus ALSA (`libasound.so.2`). It loads PipeWire and PulseAudio only when they are installed, and skips a PipeWire older than 0.3.57 in favour of PulseAudio, then ALSA.
+- Linux builds natively, one architecture per host: the menu greys out the other one, and `./build all` skips what the host cannot build.
 - Linux keeps plain RELA relocations: RELR would need glibc 2.36.
 - mpv's version string carries the release (`mpv v0.41.0+r15`), and a build writes `manifest.json` with the versions, the compiled filters and the hash of every library.
 
 ### Build
-- Every source tarball is pinned by SHA-256, and CI stops on an unpinned one.
+- Every source tarball, Windows included, is pinned by SHA-256, and every git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. CI stops on an unpinned source and uploads the line to add.
 - A missing git tag stops the build instead of falling back to the default branch.
 - CI runs `scripts/verify_binaries.sh` on the nine libraries once they are built, and the verify image can load the foreign Linux arch.
+- Verify also checks the SONAME, the absence of `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries, the glibc 2.31 floor and every audio filter, and counts a failing tool as a failure.
+- CI plays a tone with the Linux x86_64 library in a Debian 11 container without PipeWire and PulseAudio.
+- The Android build stops on `DT_RELR` or on 64 bit libraries not aligned for 16 KB pages.
+- The PipeWire and PulseAudio stubs come from Implib.so, vendored in `tools/implib`. They build without asserts, so no build path ends up in the library, and rebuild when `PIPEWIRE_VERSION` changes.
 
 ## [0.1.6] - 24-09-2026
 

@@ -39,7 +39,7 @@ type Target struct {
 	env     []string // extra "K=V" pairs for native runs
 	ndk     bool     // mount the host NDK sysroot (verify only)
 	members []string // for kAggregate
-	selfArg string   // hidden subcommand for kSelf (e.g. "_checksums")
+	selfArg string   // hidden subcommand for kSelf (e.g. "_updatecacert")
 	// image is the multi-stage Dockerfile stage / image suffix this target uses.
 	// kDocker targets run in mpv-build-<image>; kImage targets build that stage.
 	image string
@@ -53,26 +53,36 @@ type Target struct {
 	// full native speed with no emulation. Overridable (settings.ForceAndroidDocker
 	// / ANDROID_FORCE_DOCKER) and a no-op off macOS (stays Docker). See expand().
 	nativeOnDarwin bool
+	// hostArch, when set, is the only host CPU arch the target builds on: the
+	// linux image is native-only and build_libmpv_linux.sh refuses a foreign
+	// arch ("x86_64" or "aarch64", as uname -m spells it).
+	hostArch string
 }
 
 // hostOS is the OS the orchestrator runs on. A package var so tests can
 // simulate other hosts.
 var hostOS = runtime.GOOS
 
+// hostArch is the host CPU arch as uname -m spells it, which is also the arch
+// of the native Docker images. A package var so tests can simulate other hosts.
+var hostArch = map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
+
 // Available reports whether this target can run on the current host:
 //
 //   - Apple targets (macOS / iOS) need macOS + Xcode — there is no legal,
 //     supported way to build them off a Mac, so they're disabled elsewhere.
-//   - The other NATIVE build scripts (Android, checksums, version bump) are
+//   - The other NATIVE build scripts (Android, manifest, version bump) are
 //     bash + Unix tools run on the host, so they don't work on native Windows
 //     (they're fine on macOS / Linux, and under WSL — which reports "linux").
 //   - Docker targets (Windows / Linux builds, verify) run bash INSIDE the
-//     container, so the host only needs Docker. They work on every host OS,
-//     and on any host CPU arch: the build image is multi-arch (built native to
-//     the host) and cross-compiles every target architecture, so an arm64 or
-//     x86 Windows/Linux box builds all desktop arches at native speed.
+//     container, so the host only needs Docker. They work on every host OS and
+//     CPU arch: the images are multi-arch (built native to the host). The
+//     Windows image cross-compiles both arches; the Linux one builds only the
+//     host's arch (hostArch), so each Linux arch needs a host of that arch.
 func (t Target) Available() bool {
 	switch {
+	case t.hostArch != "" && t.hostArch != hostArch:
+		return false
 	case t.AppleOnly:
 		return hostOS == "darwin"
 	case t.kind == kNative:
@@ -87,6 +97,9 @@ func (t Target) Available() bool {
 func (t Target) unavailReason() string {
 	if t.Available() {
 		return ""
+	}
+	if t.hostArch != "" && t.hostArch != hostArch {
+		return "needs an " + t.hostArch + " host (the Linux build is native-only)"
 	}
 	if t.AppleOnly {
 		return "needs macOS + Xcode"
@@ -134,10 +147,11 @@ func allTargets() []Target {
 		{Key: "windows-arm64", Label: "arm64", Group: "Windows", InMenu: true, kind: kDocker, script: sWin, image: "windows", args: []string{"--arch=aarch64"}},
 		{Key: "windows", Label: "all", Group: "Windows", InMenu: true, kind: kAggregate, members: []string{"windows-x86_64", "windows-arm64"}},
 
-		// ── Linux (Docker — any host) ──
-		{Key: "linux-x86_64", Label: "x86_64", Group: "Linux", InMenu: true, kind: kDocker, script: sLinux, image: "linux", args: []string{"--arch=x86_64"}},
-		{Key: "linux-aarch64", Label: "aarch64", Group: "Linux", InMenu: true, kind: kDocker, script: sLinux, image: "linux", args: []string{"--arch=aarch64"}},
-		{Key: "linux", Label: "all", Group: "Linux", InMenu: true, kind: kAggregate, members: []string{"linux-x86_64", "linux-aarch64"}},
+		// ── Linux (Docker, host arch only: the image is native-only, so each
+		//    arch builds on a host of that arch, as CI does) ──
+		{Key: "linux-x86_64", Label: "x86_64", Group: "Linux", InMenu: true, kind: kDocker, script: sLinux, image: "linux", hostArch: "x86_64", args: []string{"--arch=x86_64"}},
+		{Key: "linux-aarch64", Label: "aarch64", Group: "Linux", InMenu: true, kind: kDocker, script: sLinux, image: "linux", hostArch: "aarch64", args: []string{"--arch=aarch64"}},
+		{Key: "linux", Label: "all (host arch)", Group: "Linux", InMenu: true, kind: kAggregate, members: []string{"linux-" + hostArch}},
 
 		// ── Android (Docker — NDK fetched at runtime; runs on the base image) ──
 		{Key: "android-arm64-v8a", Label: "arm64-v8a", Group: "Android", InMenu: true, kind: kDocker, script: sAndroid, image: "android", dockerPlatform: "linux/amd64", nativeOnDarwin: true, env: []string{"ABIS=arm64-v8a"}},
@@ -150,26 +164,12 @@ func allTargets() []Target {
 		{Key: "android", Label: "all", Group: "Android", InMenu: true, kind: kAggregate, members: []string{"android-arm64-v8a", "android-armeabi-v7a", "android-x86_64"}},
 
 		// ── Publish / validate ──
-		{Key: "checksums", Label: "Checksums", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_checksums",
-			Desc: "install built libs into mpv_audio_kit + refresh its SHA-256s"},
+		{Key: "manifest", Label: "Manifest", Group: "Tools", InMenu: true, kind: kNative, script: "scripts/write_manifest.sh",
+			Desc: "write builds/release/manifest.json (SHA-256 of every binary) for update_libmpv.sh"},
 		{Key: "update-cacert", Label: "Update CA", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_updatecacert",
 			Desc: "refresh the Mozilla CA bundle the embed_cacert patch compiles in"},
 		{Key: "verify", Label: "Verify", Group: "Tools", InMenu: true, kind: kDocker, script: "scripts/verify_binaries.sh", image: "verify", ndk: true,
 			Desc: "deep static + runtime audit of every release binary"},
-		{Key: "lib-clean", Label: "Clean", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_libclean",
-			Desc: "remove the bundled libs from every platform slot"},
-
-		// ── Libs source switch for mpv_audio_kit ──
-		// lib-mode is the in-menu local⇄remote toggle (rendered as a segmented
-		// button); lib-local / lib-remote are the explicit force-setters it (and
-		// the CLI) drive. lib-clean (above, grouped with Checksums/Verify) wipes
-		// the bundled binaries.
-		{Key: "lib-mode", Label: "libs", Group: "Tools", InMenu: true, kind: kSelf, selfArg: "_libmode",
-			Desc: "libmpv source for mpv_audio_kit (local ⇄ remote)"},
-		{Key: "lib-local", Label: "local", Group: "Tools", InMenu: false, kind: kSelf, selfArg: "_liblocal",
-			Desc: "use bundled libs only — never download from GitHub"},
-		{Key: "lib-remote", Label: "remote", Group: "Tools", InMenu: false, kind: kSelf, selfArg: "_libremote",
-			Desc: "download from GitHub Releases when a local lib is missing"},
 
 		// ── Non-menu (CLI / internal) ──
 		// One image-build step per multi-stage target; expand() prepends only the
@@ -182,7 +182,7 @@ func allTargets() []Target {
 
 		// ── Aggregates (CLI convenience) ──
 		{Key: "desktop-all", Label: "All desktop targets", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"linux", "windows"}},
-		{Key: "all", Label: "Everything + checksums", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "android", "desktop-all", "checksums"}},
+		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "android", "desktop-all", "manifest"}},
 	}
 }
 

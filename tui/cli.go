@@ -57,13 +57,14 @@ USAGE
 EXAMPLES
   ./build                          # open the dashboard
   ./build macos verify             # build macOS, then verify
-  ./build all                      # everything + checksums
+  ./build all                      # everything this host can build + manifest
 
 THROTTLE (env, forwarded into Docker builds)
   JOBS=N  ENABLE_LTO_DEPS=0  FORCE_DOWNLOAD=1  KEEP_BUILD=1  WIPE_ALL=1
 
 The mpv_audio_kit package is found as a sibling checkout, or via
-MPV_AUDIO_KIT_ROOT. Apple targets require macOS; the rest build in Docker.
+MPV_AUDIO_KIT_ROOT. Apple targets require macOS; the rest build in Docker,
+Linux only for the host's arch.
 `)
 }
 
@@ -75,8 +76,8 @@ func printList() {
 			group = t.Group
 		}
 		avail := ""
-		if !t.Available() {
-			avail = "  (" + t.Note + ")"
+		if r := t.unavailReason(); r != "" {
+			avail = "  (" + r + ")"
 		}
 		fmt.Printf("  %-16s %s%s\n", t.Key, t.Label, avail)
 	}

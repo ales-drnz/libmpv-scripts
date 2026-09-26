@@ -46,7 +46,7 @@ type dockerImage struct {
 // order. Kept in sync with docker/Dockerfile's stages and targets.go's `image`.
 func dockerImages() []dockerImage {
 	return []dockerImage{
-		{"linux", "Linux", "GCC cross (x86_64 + aarch64) + audio/X11 dev libs"},
+		{"linux", "Linux", "Ubuntu 20.04 native GCC 10 (glibc 2.31), host arch only"},
 		{"windows", "Windows", "GNU MinGW-w64 (x86_64) + llvm-mingw (arm64)"},
 		{"android", "Android", "base toolchain; the NDK is fetched per build"},
 		{"verify", "Verify", "all cross-compilers + qemu + Wine for the load tests"},

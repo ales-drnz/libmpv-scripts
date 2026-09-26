@@ -29,7 +29,7 @@ func dockerPlatformFor(t Target) string {
 // Makefile's REPO_ROOT / DOCKER_RUN / NDK-mount machinery.
 type buildCtx struct {
 	scriptsRoot string // the libmpv-scripts checkout (holds scripts/, docker/, tui/)
-	repoRoot    string // the mpv_audio_kit package (build outputs land here)
+	repoRoot    string // the mpv_audio_kit package, or "" when not found
 	ndkSysroot  string // host NDK sysroot for verify's Android layer, or ""
 	// androidForceDocker pins the Android build to Docker even on macOS (default
 	// false ⇒ native host build on Apple Silicon). The TUI sets it from
@@ -55,10 +55,9 @@ func newBuildCtx() (*buildCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	rr, err := resolveRepoRoot(sr)
-	if err != nil {
-		return nil, err
-	}
+	// Optional: no build writes into mpv_audio_kit any more (it takes the
+	// libraries through its build hook), so it is only mounted when present.
+	rr, _ := resolveRepoRoot(sr)
 	return &buildCtx{
 		scriptsRoot:        sr,
 		repoRoot:           rr,
@@ -203,8 +202,10 @@ func (c *buildCtx) command(t Target) *exec.Cmd {
 		for _, kv := range t.env {
 			argv = append(argv, "-e", kv)
 		}
+		if c.repoRoot != "" {
+			argv = append(argv, "-v", c.repoRoot+":/repo")
+		}
 		argv = append(argv,
-			"-v", c.repoRoot+":/repo",
 			"-v", c.scriptsRoot+":/scripts",
 			"-w", "/scripts")
 		if t.ndk && c.ndkSysroot != "" {
@@ -214,7 +215,7 @@ func (c *buildCtx) command(t Target) *exec.Cmd {
 		argv = append(argv, t.args...)
 	case kSelf:
 		// Run the orchestrator itself with a hidden subcommand (cross-platform
-		// Go steps like checksums) — works on any host, no bash/Docker.
+		// Go steps like update-cacert) — works on any host, no bash/Docker.
 		argv = []string{selfExe(), t.selfArg}
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -235,19 +236,27 @@ func dockerImageExists(image string) bool {
 func (c *buildCtx) expand(keys []string) ([]Target, error) {
 	var out []Target
 	seen := map[string]bool{}
-	var add func(key string) error
-	add = func(key string) error {
+	var add func(key string, viaAggregate bool) error
+	add = func(key string, viaAggregate bool) error {
 		t, ok := targetByKey(key)
 		if !ok {
 			return fmt.Errorf("unknown target %q", key)
 		}
 		if t.kind == kAggregate {
 			for _, m := range t.members {
-				if err := add(m); err != nil {
+				if err := add(m, true); err != nil {
 					return err
 				}
 			}
 			return nil
+		}
+		// An aggregate ("all", "desktop-all") takes what this host can build;
+		// a target named on its own that cannot run here is an error.
+		if !t.Available() {
+			if viaAggregate {
+				return nil
+			}
+			return fmt.Errorf("target %q: %s", key, t.unavailReason())
 		}
 		if !seen[t.Key] {
 			seen[t.Key] = true
@@ -256,7 +265,7 @@ func (c *buildCtx) expand(keys []string) ([]Target, error) {
 		return nil
 	}
 	for _, k := range keys {
-		if err := add(k); err != nil {
+		if err := add(k, false); err != nil {
 			return nil, err
 		}
 	}

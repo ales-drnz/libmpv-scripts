@@ -21,8 +21,6 @@ Everything runs from `./build`, a terminal menu where you pick the targets and f
 
 ```bash
 git clone https://github.com/ales-drnz/libmpv-scripts
-git clone https://github.com/ales-drnz/mpv_audio_kit
-
 cd libmpv-scripts
 ./build
 ```
@@ -41,9 +39,9 @@ On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Andr
 | Linux | x86_64, aarch64 | `libmpv_linux-<arch>.so` |
 | Windows | x86_64, arm64 | `libmpv_windows-<arch>.dll` |
 
-Each library exports only the `mpv_*` C API and carries no video decoders. On Linux and Android its SONAME is `libmpv_audio_kit.so`, so it can live next to another plugin's libmpv. The Linux one needs glibc 2.31 or later and loads PipeWire and PulseAudio only when they are installed.
+Each library exports only the `mpv_*` C API and carries no video decoders. On Linux and Android its SONAME is `libmpv_audio_kit.so`, so it can live next to another plugin's libmpv. The Linux one needs glibc 2.31 or later and ALSA (`libasound.so.2`). It loads PipeWire and PulseAudio only when they are installed, through stubs made with Implib.so (vendored in `tools/implib`), and skips a PipeWire older than 0.3.57 in favour of PulseAudio, then ALSA.
 
-The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and each source tarball is pinned by its SHA-256 in `scripts/shared/_sources.sha256`. A build also writes `builds/release/manifest.json`, with the versions, the compiled audio filters and the hash of every library.
+The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and `scripts/shared/_sources.sha256` pins each source tarball by its SHA-256 and each git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. A build also writes `builds/release/manifest.json`, with the versions, the compiled audio filters and the hash of every library.
 
 ---
 
@@ -134,15 +132,7 @@ Apple targets need a Mac, and Linux builds only for the host's own architecture.
 
 #### 1.3 Folder layout
 
-Building needs only this repo. Installing the results needs `mpv_audio_kit` next to it:
-
-```
-your-projects/
-├── libmpv-scripts/
-└── mpv_audio_kit/
-```
-
-If the package lives somewhere else, set `MPV_AUDIO_KIT_ROOT=/path/to/mpv_audio_kit`.
+Building needs only this repo. Everything it produces lands in `builds/`: the libraries and `manifest.json` in `builds/release/`, the logs in `builds/logs/`.
 
 ---
 
@@ -155,7 +145,7 @@ Run `./build`. Arrow keys move, Space selects, Enter confirms, Q quits. The keys
 Three tabs:
 
 - **Compile**: pick platforms and architectures, then press Build. Each build shows its progress, time and warning count, and Enter opens its log.
-- **Tools**: install the results into `mpv_audio_kit` (Checksums), check them (Verify), switch the package between local and downloaded libraries, remove the bundled ones (Clean), and refresh the bundled CA certificates (Update CA).
+- **Tools**: write `manifest.json` for the built libraries (Manifest), check them (Verify), and refresh the bundled CA certificates (Update CA).
 - **Docker**: see, build or delete the Docker images. The image a build needs is created automatically the first time.
 
 #### 2.2 Settings
@@ -203,7 +193,7 @@ On macOS it builds directly on the host, which is the fastest option. Elsewhere 
 `./build` accepts targets as arguments and runs them in order, stopping at the first failure:
 
 ```bash
-./build all            # everything this host can build, then checksums
+./build all            # everything this host can build, then the manifest
 ./build macos verify   # build macOS, then verify it
 ./build list           # every target
 ```
@@ -224,7 +214,7 @@ To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` an
 
 #### 3.5 On GitHub Actions
 
-Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries and `manifest.json`, then checks them as in [4.3](#43-verifying).
+Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio. A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
 
 ---
 
@@ -252,11 +242,11 @@ hooks:
       libmpv: path/to/libmpv_linux-x86_64.so
 ```
 
-The Checksums action and the local or remote switch in the Tools tab install into the layout of `mpv_audio_kit` 0.4.x, which has no build hook.
+The Manifest action in the Tools tab writes `builds/release/manifest.json` for a local build, ready for `update_libmpv.sh`.
 
 #### 4.3 Verifying
 
-`./build verify` checks every library in `builds/release/`: architecture, exported API, the patched mpv properties, the included decoders and filters, that no video code slipped in, and the libraries it depends on. Where the host can load it, it also opens the library and calls into it. The report has one row per library, and Enter shows the full log.
+`./build verify` checks every library in `builds/release/`: architecture, exported API, the patched mpv properties, the included decoders and filters, that no video code slipped in, and the libraries it depends on. On Linux and Android it also checks the SONAME, that there is no `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries and the glibc 2.31 floor. Where the host can load it, it also opens the library and calls into it. The report has one row per library, and Enter shows the full log.
 
 #### 4.4 Publishing a release
 
@@ -279,7 +269,6 @@ Each build downloads the pinned sources, applies the patches in `patches/` to mp
 - **"Go not found"**: install Go and run again.
 - **A Linux, Windows or Android build fails right away**: Docker isn't running.
 - **macOS and iOS are greyed out**: they need a Mac with Xcode. GitHub Actions can build them instead.
-- **"could not locate the mpv_audio_kit repo"**: clone it next to this folder or set `MPV_AUDIO_KIT_ROOT`.
 - **The first Docker build is slow**: it is building the image, later builds reuse it.
 - **"Unpinned source"**: a download is not in `scripts/shared/_sources.sha256`. Add the line the error prints, or build without `STRICT_SOURCES=1` and collect the lines with `RECORD_SOURCES`.
 - **"the Linux build is native-only"**: Linux builds only for the host's architecture. Use a host of the other architecture, or GitHub Actions.
