@@ -7,7 +7,7 @@
 #
 #   ./build                 interactive dashboard (pick targets, watch progress)
 #   ./build macos verify    headless: build macOS, then verify
-#   ./build all             everything + checksums
+#   ./build all             everything this host can build + manifest
 #   ./build list            list every target
 #   ./build help            usage
 #

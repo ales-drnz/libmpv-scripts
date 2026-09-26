@@ -155,19 +155,12 @@ export PKG_CONFIG_LIBDIR="$DIST/lib/pkgconfig:$DIST/share/pkgconfig"
 export PKG_CONFIG_PATH="$PKG_CONFIG_LIBDIR"
 
 # Convenience helpers ─────────────────────────────────────────────────────────
+# Downloads through the shared helper (cache, retries, SHA-256 pin check) and
+# prints the archive path. The name argument is kept for readability only.
 fetch() {
-  local name="$1" url="$2"
+  local url="$2"
   local archive="$SRC/$(basename "$url")"
-  if [[ ! -f "$archive" ]]; then
-    log "→ Downloading $name..."
-    local success=0
-    for i in {1..3}; do
-      if curl -fsSL "$url" -o "$archive"; then success=1; break; fi
-      warn "Retrying $name download ($i/3)..."
-      rm -f "$archive"; sleep 5
-    done
-    [[ $success -eq 1 ]] || die "Failed to download $name after 3 attempts"
-  fi
+  download "$url" "$archive"
   echo "$archive"
 }
 

@@ -52,6 +52,12 @@
 #       Parses the Mach-O CodeDirectory directly (no macOS codesign needed), so
 #       it runs in-container. Catches the libmpv-r9 bare-Mach-O re-sign bug that
 #       every other layer missed (only a physical-device install enforces it).
+#  16.  ELF invariants (Linux + Android): SONAME is libmpv_audio_kit.so, no
+#       DT_RELR, LOAD segments aligned for 16 KB pages on 64-bit Android, and
+#       on Linux no GLIBC symbol version above LINUX_GLIBC_FLOOR.
+#
+# A layer whose tool fails or returns nothing counts as FAILED, never as a
+# vacuous pass, and a run that finds no binary at all exits non-zero.
 #
 # All inspection runs inside the mpv-build-env Docker container so we have
 # a single toolchain (binutils, llvm-readobj, llvm-objdump, qemu-user,
@@ -70,7 +76,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-OS check applicability matrix
 # ─────────────────────────────────────────────────────────────────────────────
-# Every binary is reported against the SAME 15 categories, so the per-OS output
+# Every binary is reported against the SAME 16 categories, so the per-OS output
 # is consistent and directly comparable. Each category resolves to one of:
 #   ✓ / ⚠ / ✗  it ran and asserted a result
 #   N/A        it intentionally does NOT apply to this platform — a one-line
@@ -94,6 +100,7 @@
 # 13  Runtime load test          ✓†   N/A    ✓     ✓    N/A   needs the platform's real loader (Apple dyld; no emulator-less Android path)
 # 14  Stub detection             N/A  N/A   N/A   N/A    ✓    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
 # 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A   Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
+# 16  ELF invariants             N/A  N/A    ✓    N/A    ✓    SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns
 #
 #  † macOS L13 runs the REAL dyld dlopen(RTLD_NOW) when verify is invoked
 #    natively on a macOS host (./scripts/verify_binaries.sh macos) — clang
@@ -104,9 +111,10 @@
 #
 # Static categories (1-11, plus 7b) run on EVERY artifact — including the
 # macOS/iOS xcframeworks, whose inner Mach-O dylib is extracted and inspected.
-# Only the runtime categories (12-14) vary by platform, and every non-applicable
-# cell emits its reason, so the report never shows an unexplained gap and the
-# per-OS "passed" tally is always paired with an "N/A (reason)" breakdown.
+# Only the runtime categories (12-14) and the ELF one (16) vary by platform,
+# and every non-applicable cell emits its reason, so the report never shows an
+# unexplained gap and the per-OS "passed" tally is always paired with an
+# "N/A (reason)" breakdown.
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
@@ -168,7 +176,7 @@ FFMPEG_PATCH_MARKERS=(
 )
 
 mapfile -t REQUIRED_DECODERS < <(echo "$AUDIO_DECODERS" | tr ',' '\n' | head -8)
-mapfile -t REQUIRED_FILTERS  < <(echo "$AUDIO_FILTERS"  | tr ',' '\n' | head -10)
+mapfile -t REQUIRED_FILTERS  < <(echo "$AUDIO_FILTERS"  | tr ',' '\n')
 
 FORBIDDEN_VIDEO=(h264 hevc vp8 vp9 av1 mpeg4 mpeg2video mpeg1video theora prores)
 
@@ -332,7 +340,8 @@ layer11_needed_allowlist() {
       # libc + libm + libdl + libpthread + librt = glibc (always present).
       # libstdc++ + libgcc_s = GCC runtime (always present on a Linux desktop).
       # ld-linux* = the dynamic loader itself.
-      # libasound / libpulse / libpipewire = audio backends mpv enables.
+      # libasound = ALSA, the one audio backend linked. PipeWire and
+      # PulseAudio are loaded at run time and must NOT be NEEDED.
       # libX11 family + libva + libvdpau = X11 / VA-API / VDPAU stubs (some
       # distros keep them in NEEDED even with the audio-only build).
       # ld-linux variants by arch:
@@ -340,7 +349,7 @@ layer11_needed_allowlist() {
       #   aarch64: ld-linux-aarch64.so.1
       #   i386:   ld-linux.so.2
       #   armhf:  ld-linux-armhf.so.3
-      allowed_re='^(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|libasound|libpulse|libpipewire-0\.3|libX11|libXext|libXrandr|libXinerama|libva|libva-drm|libva-x11|libvdpau|ld-linux[-a-zA-Z0-9_]*)\.(so|so\.[0-9]+(\.[0-9]+)*)$'
+      allowed_re='^(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|libasound|libX11|libXext|libXrandr|libXinerama|libva|libva-drm|libva-x11|libvdpau|ld-linux[-a-zA-Z0-9_]*)\.(so|so\.[0-9]+(\.[0-9]+)*)$'
       ;;
     android)
       # NDK API surface for libmpv: bionic libc + libm + libdl, the loader
@@ -404,7 +413,9 @@ layer11_needed_allowlist() {
     fi
   done <<<"$deps"
 
-  if (( ${#violations[@]} == 0 )); then
+  if (( total == 0 )); then
+    fail "L11 NEEDED allowlist: no NEEDED entries read (tool failure or unreadable binary)"
+  elif (( ${#violations[@]} == 0 )); then
     pass "L11 NEEDED allowlist: $total/$total deps in platform whitelist"
   else
     fail "L11 NEEDED allowlist: ${#violations[@]}/$total forbidden dep(s)"
@@ -540,9 +551,13 @@ layer12_und_resolvable() {
   # with __ANDROID_API__ < 28 (added to bionic in 28), with a /dev/urandom
   # fallback, so the .so stays correct on the API-24 floor.
   local und_db="$(mktemp)"
-  nm -D --undefined-only "$artifact" 2>/dev/null \
+  if ! nm -D --undefined-only "$artifact" 2>/dev/null \
     | awk '$1 == "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
-    | sort -u > "$und_db"
+    | sort -u > "$und_db"; then
+    fail "L12 UND resolvability: nm failed on $(basename "$artifact")"
+    rm -f "$exports_db" "$und_db"
+    return 0
+  fi
 
   # Whitelist of symbols that legitimately stay UND in a .so:
   #   __gmon_start__, _ITM_*  → gprof / Intel TM stubs (always weak).
@@ -561,7 +576,9 @@ layer12_und_resolvable() {
   exports_count=$(wc -l <"$exports_db" | tr -d ' ')
   unresolved_count=$(wc -l <"$unresolved" | tr -d ' ')
 
-  if (( unresolved_count == 0 )); then
+  if (( und_count == 0 || exports_count == 0 )); then
+    fail "L12 UND resolvability: empty symbol set ($und_count UND, $exports_count NEEDED exports), nothing was checked"
+  elif (( unresolved_count == 0 )); then
     pass "L12 UND resolvability: all $und_count UND symbols resolve against $exports_count NEEDED exports"
   else
     fail "L12 UND resolvability: $unresolved_count/$und_count UND symbol(s) NOT resolved by any NEEDED lib"
@@ -1163,6 +1180,84 @@ layer15_codesign_identity() {
   fi
 }
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Layer 16 — ELF loader invariants (Linux + Android)
+# ─────────────────────────────────────────────────────────────────────────────
+# The same facts the build scripts assert (assert_soname, assert_no_relr,
+# assert_load_align, assert_glibc_floor in _audio_only.sh), checked again on
+# the shipped file:
+#   SONAME     libmpv_audio_kit.so, so the kit never collides with media_kit's
+#              libmpv in one process or one bundle.
+#   DT_RELR    absent (tag 0x24, or Android's OS-private 0x6fffe000): glibc
+#              below 2.36 refuses it, bionic below API 30 skips it silently.
+#   alignment  every LOAD segment aligned to >= 0x4000 on arm64-v8a and
+#              x86_64, which Android 15+ devices with 16 KB pages require.
+#   glibc      no GLIBC_x.y symbol version above LINUX_GLIBC_FLOOR.
+# Args: $1 = platform, $2 = arch, $3 = artifact path, $4 = readelf
+layer16_elf_invariants() {
+  local platform="$1" arch="$2" artifact="$3" readelf="${4:-readelf}"
+  phase l16
+  case "$platform" in
+    linux|android) ;;
+    *) na "ELF loader invariants; $platform binaries are not ELF."; return 0 ;;
+  esac
+
+  local dyn
+  dyn="$(LC_ALL=C "$readelf" -dW "$artifact" 2>/dev/null)"
+  if [[ -z "$dyn" ]]; then
+    fail "L16: readelf -d produced no output (tool failure)"
+    return 0
+  fi
+
+  local soname
+  soname="$(sed -n 's/.*(SONAME).*\[\(.*\)\].*/\1/p' <<<"$dyn")"
+  if [[ "$soname" == "$MPV_SONAME" ]]; then
+    pass "L16 SONAME $soname"
+  else
+    fail "L16 SONAME is '${soname:-none}', expected $MPV_SONAME"
+  fi
+
+  if grep -qE '^ *0x0*(24|6fffe000) ' <<<"$dyn"; then
+    fail "L16 DT_RELR present (glibc < 2.36 refuses it, Android < 11 skips it)"
+  else
+    pass "L16 no DT_RELR"
+  fi
+
+  if [[ "$platform" == android ]]; then
+    case "$arch" in
+      arm64-v8a|x86_64)
+        local aligns a low=""
+        aligns="$(LC_ALL=C "$readelf" -lW "$artifact" 2>/dev/null | awk '$1 == "LOAD" {print $NF}')"
+        if [[ -z "$aligns" ]]; then
+          fail "L16: no LOAD segments read (tool failure)"
+        else
+          for a in $aligns; do
+            (( a >= 0x4000 )) || low+="$a "
+          done
+          if [[ -z "$low" ]]; then
+            pass "L16 LOAD alignment >= 0x4000 (16 KB pages)"
+          else
+            fail "L16 LOAD segment(s) aligned below 0x4000: $low"
+          fi
+        fi
+        ;;
+      *) info "L16 16 KB alignment: not required on $arch (32-bit)" ;;
+    esac
+  else
+    local newest
+    newest="$(LC_ALL=C "$readelf" -W -V "$artifact" 2>/dev/null \
+      | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/GLIBC_//' | sort -Vu | tail -1)"
+    if [[ -z "$newest" ]]; then
+      fail "L16 glibc floor: no GLIBC symbol versions read (tool failure)"
+    elif [[ "$(printf '%s\n%s\n' "$newest" "$LINUX_GLIBC_FLOOR" | sort -V | tail -1)" == "$LINUX_GLIBC_FLOOR" ]]; then
+      pass "L16 glibc floor: needs $newest (max $LINUX_GLIBC_FLOOR)"
+    else
+      fail "L16 glibc floor: needs $newest, above $LINUX_GLIBC_FLOOR"
+    fi
+  fi
+  return 0
+}
+
 # ── Per-binary check runner ───────────────────────────────────────────────────
 check_binary() {
   local artifact="$1"
@@ -1269,7 +1364,8 @@ check_binary() {
       fi
       ;;
   esac
-  str_text=$(strings -a "$inspect" 2>/dev/null)
+  str_text=$(strings -a "$inspect" 2>/dev/null || true)
+  [[ -n "$str_text" ]] || fail "strings produced no output for $name (tool failure)"
 
   # ── 2. mpv_* exports ──
   phase exports
@@ -1399,9 +1495,9 @@ check_binary() {
     grep -qF "$flt" <<<"$str_text" || missing_flt=$((missing_flt + 1))
   done
   if (( missing_flt == 0 )); then
-    pass "audio filters sample (${#REQUIRED_FILTERS[@]}) present"
+    pass "audio filters (all ${#REQUIRED_FILTERS[@]}) present"
   else
-    fail "$missing_flt/${#REQUIRED_FILTERS[@]} sampled audio filters missing"
+    fail "$missing_flt/${#REQUIRED_FILTERS[@]} audio filters missing"
   fi
 
   # ── 7. audio-only invariant: no video decoder compiled in ──
@@ -1432,7 +1528,7 @@ check_binary() {
   fi
 
   # ── 7b. adaptive feature presence (tracks Settings ▸ Patches strips) ──
-  layer_feature_presence "$platform" "$str_text" "$inspect" "$LD" || true
+  layer_feature_presence "$platform" "$str_text" "$inspect" "$LD" || fail "7b: layer aborted (exit $?)"
 
   # ── 8. external runtime deps (informative) ──
   phase deps
@@ -1479,35 +1575,39 @@ check_binary() {
   SYMBOL_HASHES_BY_BINARY["$name"]="$sym_hash"
   info "mpv API surface hash: $sym_hash"
 
-  # ── 11-14. Sanity layers ─────────────────────────────────────────────────
-  # Each layer call ends with `|| true` so a fail() inside it (which
-  # increments FAILED but is NOT itself a script-level error) cannot trip
-  # set -e and abort the per-binary loop. The summary at the end of the
-  # script reads $FAILED and exits non-zero if anything failed.
+  # ── 11-16. Sanity layers ─────────────────────────────────────────────────
+  # Each layer call ends with `|| fail` so a non-zero return cannot trip
+  # set -e and abort the per-binary loop, but still counts. The `||` also
+  # turns set -e off inside the layer, so every layer checks its own tool
+  # output and fails on an empty one. The summary at the end of the script
+  # reads $FAILED and exits non-zero if anything failed.
   local arch
   arch="$(arch_from_artifact "$name")"
 
   # Layer 11: NEEDED allowlist — purely static, runs on every artifact.
-  layer11_needed_allowlist "$platform" "$deps" || true
+  layer11_needed_allowlist "$platform" "$deps" || fail "L11: layer aborted (exit $?)"
 
   # Layer 12: UND symbol resolvability. Runs the real nm-based check on Linux +
   # Android; self-dispatches an N/A-with-reason on Windows / macOS / iOS (whose
   # imports are bound by their own loader, see L13). Always called so every
   # binary reports this category — no silent gap.
-  layer12_und_resolvable "$platform" "$arch" "$artifact" "$deps" || true
+  layer12_und_resolvable "$platform" "$arch" "$artifact" "$deps" || fail "L12: layer aborted (exit $?)"
 
   # Layer 13: actual dlopen / LoadLibrary load test. Pass the extracted inner
   # dylib ($inspect) so the macOS host load test loads the real Mach-O, not the
   # outer .xcframework.zip.
-  layer13_load_test "$platform" "$arch" "$artifact" "$inspect" || true
+  layer13_load_test "$platform" "$arch" "$artifact" "$inspect" || fail "L13: layer aborted (exit $?)"
 
   # Layer 14: stub-function detection — Android only (defense-in-depth
   # for the ffmpeg --enable-jni / CONFIG_JNI=0 silent-stub bug class).
-  layer14_stub_detection "$platform" "$arch" "$artifact" || true
+  layer14_stub_detection "$platform" "$arch" "$artifact" || fail "L14: layer aborted (exit $?)"
 
   # Layer 15: Apple code-signing identity (xcframework slices) — runs off the
   # already-extracted tree ($xcf_tmp) before it is removed below.
-  layer15_codesign_identity "$platform" "$xcf_tmp" || true
+  layer15_codesign_identity "$platform" "$xcf_tmp" || fail "L15: layer aborted (exit $?)"
+
+  # Layer 16: ELF loader invariants — Linux + Android.
+  layer16_elf_invariants "$platform" "$arch" "$artifact" "${READELF:-}" || fail "L16: layer aborted (exit $?)"
 
   [[ -n "$xcf_tmp" ]] && rm -rf "$xcf_tmp"
   emit bindone "$name"
@@ -1543,6 +1643,7 @@ if [[ -n "$FILTER" ]]; then echo "Filter: only ${FILTER}*"; fi
 echo
 
 found=0
+shopt -s nullglob
 for f in "$RELEASE_DIR"/libmpv_*; do
   [[ -f "$f" ]] || continue
   if [[ -n "$FILTER" && "$(basename "$f")" != *"$FILTER"* ]]; then
@@ -1566,5 +1667,6 @@ printf "${DIM}N/A: %d${NC}\n" "$SKIPPED_NA"
 echo
 emit summary "$PASSED" "$FAILED" "$WARNED" "$SKIPPED_NA" "$found"
 
+(( found == 0 )) && { printf "${RED}No binary found in %s${NC}\n" "$RELEASE_DIR"; exit 1; }
 (( FAILED > 0 )) && exit 1
 exit 0

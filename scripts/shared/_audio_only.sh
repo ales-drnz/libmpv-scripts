@@ -903,40 +903,6 @@ dep_unwind_cflags() {
   echo "-fno-asynchronous-unwind-tables"
 }
 
-# ── Extra ELF size flags for the final libmpv link (linux + android) ─────────
-# Returned as a COMMA SUFFIX to append inside an existing `-Wl,...` group, e.g.
-#   ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags relr)"
-#   -Bsymbolic            bind libmpv's internal global refs at link time (no
-#                         interposition; only mpv_* is exported) — cuts PLT/GOT.
-# libmpv carries ~44k relative dynrelocs, ~1MB as plain .rela.dyn, so they get
-# packed — but WHICH packing is safe depends on the loader, so the caller picks:
-#   relr     -z pack-relative-relocs → bit-packed .relr.dyn, ~3% of .rela.dyn.
-#            Needs glibc>=2.36 / musl>=2022 / bionic API 30+. On glibc lld also
-#            emits a GLIBC_ABI_DT_RELR version dep, so an older loader refuses
-#            the library outright instead of misbehaving.
-#   android  --pack-dyn-relocs=android → APS2 (DT_ANDROID_RELA, or
-#            DT_ANDROID_REL on 32-bit arm), understood by bionic since API 23.
-#            Bulkier than RELR, because a RELA group carries an addend per
-#            reloc: on libmpv's ~44k relative relocs that is ~166K against
-#            RELR's ~16K, still far under the ~1MB of unpacked .rela.dyn. The
-#            32-bit arm REL form has no addend and costs only ~41K.
-#   none     -Bsymbolic only, plain .rela.dyn. What Linux ships since r15: RELR
-#            there needs glibc 2.36 (Ubuntu 22.04 has 2.35, RHEL 9 has 2.34)
-#            and the ~1 MB it saves is not worth that floor on a desktop.
-# Android MUST NOT use relr while minSdk is 24. Bionic learned the official
-# DT_RELR tags only in API 30 (it had them under OS-private tags since API 28);
-# below that it SKIPS them silently, so every relative reloc stays unapplied,
-# .init_array[0] keeps its link-time value and dlopen() segfaults before any app
-# code runs. Android has no GLIBC_ABI_DT_RELR equivalent to turn that into a
-# clean load error. See mpv_audio_kit issue #16.
-#
-# Emit exactly one packing flag: lld selects the format with an if/else, not a
-# merge, so appending an override does NOT undo an earlier flag — `-z
-# pack-relative-relocs` beats `--pack-dyn-relocs=none`, and
-# `--pack-dyn-relocs=relr` beats `-z nopack-relative-relocs`.
-#
-# ELF-only: Mach-O (macOS/iOS) uses automatic chained fixups and PE (Windows)
-# has no RELR, so those platforms must NOT call this. Env opt-out: MPV_SIZE_LD=0.
 # ── SONAME of the bundled library (linux + android) ──────────────────────────
 # mpv's meson names the library libmpv.so.2 on Linux and libmpv.so on Android,
 # the same SONAME media_kit ships. Two libraries with one SONAME cannot live
@@ -988,17 +954,67 @@ assert_no_needed() {
 }
 
 # assert_no_relr <elf> <readelf> — die if <elf> packs its relative relocs as
-# DT_RELR (tag 0x24). Linux keeps plain RELA: RELR needs glibc 2.36, which
-# leaves Ubuntu 22.04 and RHEL 9 out, for about 1 MB saved. Android has its
-# own guard in the consumer (check_android_relocs.sh).
+# DT_RELR (tag 0x24, or Android's OS-private 0x6fffe000). Linux keeps plain
+# RELA: RELR needs glibc 2.36, which leaves Ubuntu 22.04 and RHEL 9 out, for
+# about 1 MB saved. Android uses APS2: bionic below API 30 skips DT_RELR
+# silently and the library crashes at load (see mpv_elf_size_ldflags).
 assert_no_relr() {
-  local elf="$1" readelf="${2:-readelf}"
-  if LC_ALL=C "$readelf" -dW "$elf" 2>/dev/null | grep -qE '^ *0x0*24 '; then
-    die "DT_RELR present, the loader floor would be glibc 2.36: $elf"
+  local elf="$1" readelf="${2:-readelf}" dyn
+  dyn="$(LC_ALL=C "$readelf" -dW "$elf" 2>/dev/null)"
+  [[ -n "$dyn" ]] || die "readelf -d read nothing from $elf"
+  if grep -qE '^ *0x0*(24|6fffe000) ' <<<"$dyn"; then
+    die "DT_RELR present (glibc < 2.36 refuses it, Android < 11 skips it): $elf"
   fi
   ok "no DT_RELR"
 }
 
+# assert_load_align <elf> <min> <readelf> — die if a LOAD segment of <elf> is
+# aligned below <min> bytes. Android 15+ devices with 16 KB pages refuse a
+# 64-bit library whose segments are only 4 KB aligned.
+assert_load_align() {
+  local elf="$1" min="$2" readelf="${3:-readelf}" aligns a
+  aligns="$(LC_ALL=C "$readelf" -lW "$elf" 2>/dev/null | awk '$1 == "LOAD" {print $NF}')"
+  [[ -n "$aligns" ]] || die "no LOAD segments read from $elf"
+  for a in $aligns; do
+    (( a >= min )) || die "LOAD segment aligned to $a, below $min: $elf"
+  done
+  ok "LOAD alignment >= $min"
+}
+
+# ── Extra ELF size flags for the final libmpv link (linux + android) ─────────
+# Returned as a COMMA SUFFIX to append inside an existing `-Wl,...` group, e.g.
+#   ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags relr)"
+#   -Bsymbolic            bind libmpv's internal global refs at link time (no
+#                         interposition; only mpv_* is exported) — cuts PLT/GOT.
+# libmpv carries ~44k relative dynrelocs, ~1MB as plain .rela.dyn, so they get
+# packed — but WHICH packing is safe depends on the loader, so the caller picks:
+#   relr     -z pack-relative-relocs → bit-packed .relr.dyn, ~3% of .rela.dyn.
+#            Needs glibc>=2.36 / musl>=2022 / bionic API 30+. On glibc lld also
+#            emits a GLIBC_ABI_DT_RELR version dep, so an older loader refuses
+#            the library outright instead of misbehaving.
+#   android  --pack-dyn-relocs=android → APS2 (DT_ANDROID_RELA, or
+#            DT_ANDROID_REL on 32-bit arm), understood by bionic since API 23.
+#            Bulkier than RELR, because a RELA group carries an addend per
+#            reloc: on libmpv's ~44k relative relocs that is ~166K against
+#            RELR's ~16K, still far under the ~1MB of unpacked .rela.dyn. The
+#            32-bit arm REL form has no addend and costs only ~41K.
+#   none     -Bsymbolic only, plain .rela.dyn. What Linux ships since r15: RELR
+#            there needs glibc 2.36 (Ubuntu 22.04 has 2.35, RHEL 9 has 2.34)
+#            and the ~1 MB it saves is not worth that floor on a desktop.
+# Android MUST NOT use relr while minSdk is 24. Bionic learned the official
+# DT_RELR tags only in API 30 (it had them under OS-private tags since API 28);
+# below that it SKIPS them silently, so every relative reloc stays unapplied,
+# .init_array[0] keeps its link-time value and dlopen() segfaults before any app
+# code runs. Android has no GLIBC_ABI_DT_RELR equivalent to turn that into a
+# clean load error. See mpv_audio_kit issue #16.
+#
+# Emit exactly one packing flag: lld selects the format with an if/else, not a
+# merge, so appending an override does NOT undo an earlier flag — `-z
+# pack-relative-relocs` beats `--pack-dyn-relocs=none`, and
+# `--pack-dyn-relocs=relr` beats `-z nopack-relative-relocs`.
+#
+# ELF-only: Mach-O (macOS/iOS) uses automatic chained fixups and PE (Windows)
+# has no RELR, so those platforms must NOT call this. Env opt-out: MPV_SIZE_LD=0.
 mpv_elf_size_ldflags() {
   [[ "${MPV_SIZE_LD:-1}" == "0" ]] && return
   # ${1-relr}, not ${1:-relr}: an omitted argument defaults, an empty one is a

@@ -141,9 +141,11 @@ download() {
 
 # ── Source pinning ───────────────────────────────────────────────────────────
 # Every tarball is checked against scripts/shared/_sources.sha256, lines of
-# "<sha256>  <url>". A mismatch deletes the file and stops the build. A URL
-# with no entry stops it too under STRICT_SOURCES=1 (what CI runs); locally
-# it only warns, and RECORD_SOURCES=<file> appends the line to pin it.
+# "<sha256>  <url>", and every git tag clone against "<commit>  <url>#<tag>".
+# A mismatch stops the build (and deletes a bad tarball). A source with no
+# entry stops it too under STRICT_SOURCES=1 (what CI runs); locally it only
+# warns. RECORD_SOURCES=<file> appends the line to pin it, also right before
+# a strict build stops, so CI can publish it.
 SOURCES_SHA256_FILE="$LIBMPV_SCRIPTS_ROOT/scripts/shared/_sources.sha256"
 
 sha256_of() {
@@ -154,15 +156,30 @@ sha256_of() {
   fi
 }
 
+# pinned_source <key> — the pinned hash of <key> in _sources.sha256, or "".
+pinned_source() {
+  awk -v u="$1" '!/^#/ && $2 == u { print $1 }' "$SOURCES_SHA256_FILE" 2>/dev/null
+}
+
+# unpinned_source <hash> <key> — record, then stop (strict) or warn.
+unpinned_source() {
+  local got="$1" key="$2"
+  if [[ -n "${RECORD_SOURCES:-}" ]]; then
+    mkdir -p "$(dirname "$RECORD_SOURCES")"
+    printf '%s  %s\n' "$got" "$key" >> "$RECORD_SOURCES"
+  fi
+  [[ "${STRICT_SOURCES:-0}" == "1" ]] && \
+    die "Unpinned source, add to _sources.sha256: $got  $key"
+  warn "Unpinned source: $got  $key"
+  return 0
+}
+
 verify_source() {
   local url="$1" file="$2" want got
   got="$(sha256_of "$file")"
-  want="$(awk -v u="$url" '!/^#/ && $2 == u { print $1 }' "$SOURCES_SHA256_FILE" 2>/dev/null)"
+  want="$(pinned_source "$url")"
   if [[ -z "$want" ]]; then
-    [[ "${STRICT_SOURCES:-0}" == "1" ]] && \
-      die "Unpinned source, add to _sources.sha256: $got  $url"
-    warn "Unpinned source: $got  $url"
-    [[ -n "${RECORD_SOURCES:-}" ]] && printf '%s  %s\n' "$got" "$url" >> "$RECORD_SOURCES"
+    unpinned_source "$got" "$url"
     return 0
   fi
   if [[ "$got" != "$want" ]]; then
@@ -171,17 +188,33 @@ verify_source() {
   fi
 }
 
+# verify_git_source <url> <tag> <dir> — the clone's HEAD must be the commit
+# pinned for <url>#<tag>, so a moved tag cannot change what gets built.
+verify_git_source() {
+  local url="$1" tag="$2" dir="$3" want got
+  # safe.directory: a clone made as root in Docker may be read by another user.
+  got="$(git -c safe.directory='*' -C "$dir" rev-parse HEAD)" || die "Not a git clone: $dir"
+  want="$(pinned_source "$url#$tag")"
+  if [[ -z "$want" ]]; then
+    unpinned_source "$got" "$url#$tag"
+    return 0
+  fi
+  [[ "$got" == "$want" ]] || \
+    die "Commit mismatch for $url at $tag: got $got, expected $want (FORCE_DOWNLOAD=1 reclones)"
+}
+
 # ── Git clone with cache ─────────────────────────────────────────────────────
 # Usage: download_git <repo_url> <dest_dir> [tag_or_branch]
 # Smart default: an existing clone is always reused. Pass FORCE_DOWNLOAD=1
 # to wipe and reclone. A requested tag that does not exist stops the build:
 # falling back to the default branch would silently build whatever is on it
-# today.
+# today. A tag clone, fresh or cached, is checked by verify_git_source.
 download_git() {
   local url="$1" dest="$2" tag="${3:-}"
   if [[ -d "$dest/.git" && "${FORCE_DOWNLOAD:-0}" != "1" ]]; then
     ok "Cached clone: $(basename "$dest")"
-    return
+    [[ -n "$tag" ]] && verify_git_source "$url" "$tag" "$dest"
+    return 0
   fi
   [[ "${FORCE_DOWNLOAD:-0}" == "1" ]] && rm -rf "$dest"
   log "Git clone: $(basename "$dest")"
@@ -190,6 +223,7 @@ download_git() {
     git clone --depth=1 --branch "$tag" "$url" "$dest" \
       || { rm -rf "$dest"; die "git clone failed, or no tag $tag: $url"; }
     ok "$(basename "$dest") $tag at $(git -C "$dest" rev-parse HEAD)"
+    verify_git_source "$url" "$tag" "$dest"
   else
     git clone --depth=1 "$url" "$dest" || die "git clone failed: $url"
   fi

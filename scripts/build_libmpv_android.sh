@@ -384,7 +384,13 @@ build_abi() {
   cp "$prefix/lib/libmpv.so" "$release_dir/$final_name"
 
   "$(ndk_strip)" --strip-unneeded "$release_dir/$final_name" 2>/dev/null || true
-  assert_soname "$release_dir/$final_name" "$(dirname "$(ndk_strip)")/llvm-readelf"
+  local readelf; readelf="$(dirname "$(ndk_strip)")/llvm-readelf"
+  assert_soname "$release_dir/$final_name" "$readelf"
+  assert_no_relr "$release_dir/$final_name" "$readelf"
+  # 16 KB pages exist only on 64-bit devices.
+  case "$abi" in
+    arm64-v8a|x86_64) assert_load_align "$release_dir/$final_name" 16384 "$readelf" ;;
+  esac
   ok "Output: $release_dir/$final_name"
 }
 

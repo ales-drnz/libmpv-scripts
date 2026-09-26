@@ -1,14 +1,28 @@
-# SHA-256 of every source tarball the build scripts download: "<sha256>  <url>".
-# Checked by verify_source in _helpers.sh. Add a line with the hash a local
-# build prints for an unpinned URL (or run with RECORD_SOURCES=<file>).
+# SHA-256 of every source tarball the build scripts download: "<sha256>  <url>",
+# and the commit of every git tag they clone: "<commit>  <url>#<tag>".
+# Checked by verify_source and verify_git_source in _helpers.sh. Add the line
+# a local build prints for an unpinned source (or run with RECORD_SOURCES=<file>).
 af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9  https://breakfastquay.com/files/releases/rubberband-4.0.0.tar.bz2
 7ce458a0affeb83f0b55f1f4f9e0e55735dbfc1a9de124ee86fb4a66b597203a  https://download.gnome.org/sources/libxml2/2.14/libxml2-2.14.6.tar.xz
+36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f  https://downloads.sourceforge.net/freetype/freetype-2.14.3.tar.xz
+28eb403f51f0f7405249132cecfe82ea5c0ef97f1b32c5a65828814ae0d34775  https://downloads.sourceforge.net/libpng/libpng-1.6.58.tar.xz
 8c777343e4a6399569c72abc38a95b24db56882c83dbdb6c6424a5f4aeb54d3d  https://downloads.xiph.org/releases/speex/speexdsp-1.2.1.tar.gz
 1b856f26a07082b6879f3e5300d81e8c7ce3b410ade5898b14382d90c2904634  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz
+b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz
 3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8  https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz
+1b1cde5b235d40479e91be2f0e88a309e3214c8ab470ec8a2744d82a5a9ea05c  https://github.com/fribidi/fribidi/releases/download/v1.0.16/fribidi-1.0.16.tar.xz
+c652d5d94971031654ab3989891a490a895d3e3f2b71171c62692b28e94b1b93  https://github.com/harfbuzz/harfbuzz/archive/refs/tags/14.2.0.tar.gz
+a886b3b80867f437bc55cff3280a652bfa0d37b43d2aff39ddf3c4f288b8c5a8  https://github.com/libass/libass/releases/download/0.17.4/libass-0.17.4.tar.gz
+f5833dd2e1cd7739ec9182804a1a29c4f0cc7c2f26b633d3a2188b7766a88ecb  https://github.com/libexpat/libexpat/releases/download/R_2_8_1/expat-2.8.1.tar.bz2
 bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16  https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz
 ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209  https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
 deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz
 3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0  https://github.com/tukaani-project/xz/releases/download/v5.8.3/xz-5.8.3.tar.gz
 d17ca363654556a4ff1d02cc13d9eb1fc5a8642c90b40bd54ce266c3807b91a7  https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-1.2.1.tar.gz
 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269  https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
+3d3a1b973af218114f4f889bbaa2f4c037deaae0c8e815eec381c3d546b974a0  https://tukaani.org/xz/xz-5.8.3.tar.gz
+6a33dc555cc9ba8b10caf7695878ef134eeb36d0af366041f639b1da9b6ed220  https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.16.0.tar.xz
+49f1c2038fb7b5249affa56709b117a2a8603b52  https://gitlab.freedesktop.org/pipewire/pipewire.git#0.3.57
+64c1954570f1cd57f8570a57e51fb0249b57bb90  https://code.videolan.org/videolan/libplacebo.git#v6.338.2
+1fd3c7bde7b943fe8985c893310b5269a09b46c5  https://code.videolan.org/videolan/libplacebo.git#v7.349.0
+b9444620ba7f26ed216a663bf2282a9427e36c36  https://github.com/sahlberg/libsmb2.git#v6.0.0

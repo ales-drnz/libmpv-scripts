@@ -13,7 +13,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
-# Every source tarball must be pinned in scripts/shared/_sources.sha256.
+# Every source tarball must be pinned in scripts/shared/_sources.sha256. A
+# build that meets an unpinned one stops, and its unpinned-sources-<job>
+# artifact holds the line to add.
 env:
   STRICT_SOURCES: '1'
 
@@ -44,8 +46,14 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: |
             builds/release/libmpv_linux-${{ matrix.arch }}.so
-            builds/sources-*.txt
           if-no-files-found: error
+      # A build stopped by an unpinned source leaves the hash to pin here.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unpinned-sources-linux-${{ matrix.arch }}
+          path: builds/sources-*.txt
+          if-no-files-found: ignore
 
   android:
     name: Android
@@ -65,8 +73,14 @@ jobs:
           name: android
           path: |
             builds/release/libmpv_android-*.so
-            builds/sources-*.txt
           if-no-files-found: error
+      # A build stopped by an unpinned source leaves the hash to pin here.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unpinned-sources-android
+          path: builds/sources-*.txt
+          if-no-files-found: ignore
 
   windows:
     name: Windows ${{ matrix.arch }}
@@ -89,8 +103,14 @@ jobs:
           name: windows-${{ matrix.arch }}
           path: |
             builds/release/libmpv_windows-*.dll
-            builds/sources-*.txt
           if-no-files-found: error
+      # A build stopped by an unpinned source leaves the hash to pin here.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unpinned-sources-windows-${{ matrix.arch }}
+          path: builds/sources-*.txt
+          if-no-files-found: ignore
 
   apple:
     name: ${{ matrix.name }}
@@ -115,10 +135,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
-          path: |
-            ${{ matrix.output }}
-            builds/sources-*.txt
+          path: ${{ matrix.output }}
           if-no-files-found: error
+      # A build stopped by an unpinned source leaves the hash to pin here.
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unpinned-sources-${{ matrix.name }}
+          path: builds/sources-*.txt
+          if-no-files-found: ignore
 
   release:
     name: Collect release
@@ -132,10 +157,7 @@ jobs:
       - name: Assemble builds/release
         run: |
           mkdir -p builds/release
-          find artifacts -path '*/release/*' -type f -exec cp {} builds/release/ \;
-          # Hashes of every source the builds downloaded unpinned, for
-          # scripts/shared/_sources.sha256.
-          find artifacts -name 'sources-*.txt' -exec cat {} + | sort -u -k2 > builds/release/unpinned-sources.txt
+          find artifacts -type f -name 'libmpv_*' -exec cp {} builds/release/ \;
           scripts/write_manifest.sh
           ls -la builds/release
       - uses: actions/upload-artifact@v4
@@ -165,3 +187,37 @@ jobs:
             -v "$PWD:/scripts" -w /scripts \
             -v "$sysroot:/ndk-sysroot:ro" \
             mpv-build-verify bash scripts/verify_binaries.sh
+
+  # The Linux x86_64 library on a system without PipeWire and PulseAudio:
+  # debian:11 (glibc 2.31, the floor) with only libasound2 added. Initializes
+  # a core, lists the audio devices and plays a tone with
+  # ao=pipewire,pulse,alsa,null; a stub reaching a missing library aborts.
+  # The harness is compiled in a throwaway container, so the test one gets
+  # no compiler either.
+  linux-runtime:
+    name: Linux runtime without PipeWire and PulseAudio
+    needs: linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-x86_64
+          path: builds/release
+      - name: Build the harness
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w debian:11 bash -c '
+            set -e
+            apt-get update
+            apt-get install -y --no-install-recommends gcc libc6-dev
+            gcc -O0 -o builds/audio_fallback_test verify/audio_fallback_test.c -ldl -lm'
+      - name: Run
+        run: |
+          docker run --rm -v "$PWD:/w:ro" -w /w debian:11 bash -c '
+            set -e
+            apt-get update
+            apt-get install -y --no-install-recommends libasound2
+            if ldconfig -p | grep -E "libpipewire|libpulse"; then
+              echo "PipeWire or PulseAudio present in the image" >&2; exit 1
+            fi
+            builds/audio_fallback_test builds/release/libmpv_linux-x86_64.so /tmp/tone.wav'
