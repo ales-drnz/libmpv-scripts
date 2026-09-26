@@ -476,10 +476,16 @@ build_ffmpeg() {
 # point at the stub archives and, for PipeWire, at headers of the pinned
 # PIPEWIRE_VERSION built here (focal's libpipewire is too old for mpv).
 STUBS_DIR="$BUILD_DIR/stubs"
+# -DNDEBUG: the Implib.so asserts have no side effects (CHECK still aborts),
+# and without them no build path (__FILE__) ends up in the library.
+STUB_CFLAGS="-O2 -fPIC -DNDEBUG"
 
 build_audio_stubs() {
+  # Cache key: a change of PipeWire version or stub flags rebuilds the stubs.
+  local key="pipewire $PIPEWIRE_VERSION, $STUB_CFLAGS"
   [[ -f "$STUBS_DIR/pkgconfig/libpipewire-0.3.pc" && \
-     -f "$STUBS_DIR/pkgconfig/libpulse.pc" ]] && return
+     -f "$STUBS_DIR/pkgconfig/libpulse.pc" && \
+     "$(cat "$STUBS_DIR/.key" 2>/dev/null)" == "$key" ]] && return
   log "Building PipeWire $PIPEWIRE_VERSION (headers and stub source)..."
   local sdk="$BUILD_DIR/pipewire-sdk"
   local dir="$BUILD_DIR/src/pipewire-$PIPEWIRE_VERSION"
@@ -527,6 +533,7 @@ Version: $(PKG_CONFIG_LIBDIR="/usr/lib/$CROSS_TRIPLE/pkgconfig:/usr/share/pkgcon
 Cflags: -D_REENTRANT
 Libs: $STUBS_DIR/libpulse-stub.a -ldl -lpthread
 EOF
+  printf '%s\n' "$key" > "$STUBS_DIR/.key"
   ok "Audio library stubs ✓"
 }
 
@@ -540,7 +547,7 @@ make_stub() {
     --outdir "$out" "$lib"
   local f objs=()
   for f in "$out"/*.tramp.S "$out"/*.init.c; do
-    "$CC" -O2 -fPIC -c "$f" -o "$f.o"
+    "$CC" $STUB_CFLAGS -c "$f" -o "$f.o"
     objs+=("$f.o")
   done
   rm -f "$STUBS_DIR/lib${name}-stub.a"

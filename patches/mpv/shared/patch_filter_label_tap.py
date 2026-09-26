@@ -81,6 +81,7 @@ Composes with `patch_pcm_tap.py`, `patch_bulk_analysis.py`, and the
 other shared patches — disjoint anchors.
 """
 import os
+import re
 import sys
 
 SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -92,10 +93,15 @@ def read_src(name):
         return f.read()
 
 
-MARKER = 'MAK_TAP_PATCH_V3'
+# V4 keys the taps on chain labels (V3 keyed them on filter names). A tree
+# patched by an older version fails in check_stale_marker instead of being
+# skipped as already patched.
+MARKER = 'MAK_TAP_PATCH_V4'
+MARKER_RE = re.compile(r'MAK_TAP_PATCH_V\d+')
 
 # Wire-protocol limits. Keep in sync with the Dart parser.
-MAX_TAPS = 8         # max distinct filter names that can be active
+MAX_TAPS = 8         # max distinct chain labels tapped at once; labels of
+                     # 64 chars or more are ignored (mak_tap.c slot name)
 MAX_SAMPLES = 4096   # samples per channel returned by a single read
 
 
@@ -250,10 +256,11 @@ COMMAND_GETTER_ANCHOR = (
 
 COMMAND_GETTER_INSERT = (
     '/* ' + MARKER + ' ─── read-write property: comma-separated list\n'
-    ' * of user-filter names whose pre / post audio frames should be\n'
-    ' * captured into the audio-tap-frames map. Setting it to "" or\n'
-    ' * NULL clears every tap. The wrapper sets this on pro-window\n'
-    ' * open / close and polls audio-tap-frames at its own rate. */\n'
+    ' * of chain labels whose pre / post audio frames should be\n'
+    ' * captured into the audio-tap-frames map (at most MAK_TAP_MAX,\n'
+    ' * each under 64 chars). Setting it to "" or NULL clears every\n'
+    ' * tap. The wrapper sets this on pro-window open / close and\n'
+    ' * polls audio-tap-frames at its own rate. */\n'
     'static int mp_property_analyzer_taps(void *ctx, struct m_property *prop,\n'
     '                                     int action, void *arg)\n'
     '{\n'
@@ -276,7 +283,7 @@ COMMAND_GETTER_INSERT = (
     '    return M_PROPERTY_NOT_IMPLEMENTED;\n'
     '}\n'
     '\n'
-    '/* ' + MARKER + ' ─── read-only NODE_MAP keyed by filter name,\n'
+    '/* ' + MARKER + ' ─── read-only NODE_MAP keyed by chain label,\n'
     ' * each entry mapping to { pre, post } sub-maps with sample data\n'
     ' * (sample_rate, channels, pts_ns, samples). Empty MAP when no\n'
     ' * tap is active.\n'
@@ -459,11 +466,33 @@ def write_new_file(path, content):
     print(f'Created:  {path}')
 
 
+def check_stale_marker(paths):
+    for path in paths:
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            found = set(MARKER_RE.findall(f.read()))
+        stale = found - {MARKER}
+        if stale:
+            raise RuntimeError(
+                f'{path} carries {", ".join(sorted(stale))}, an older version '
+                f'of this patch. Delete the extracted mpv source so it is '
+                f'extracted and patched again.'
+            )
+
+
 def main():
     if len(sys.argv) < 2:
         print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
         sys.exit(1)
     src = sys.argv[1]
+    check_stale_marker([
+        os.path.join(src, 'audio', 'mak_tap.h'),
+        os.path.join(src, 'audio', 'mak_tap.c'),
+        os.path.join(src, 'filters', 'f_output_chain.c'),
+        os.path.join(src, 'player', 'command.c'),
+        os.path.join(src, 'meson.build'),
+    ])
     write_new_file(os.path.join(src, 'audio', 'mak_tap.h'), TAP_H)
     write_new_file(os.path.join(src, 'audio', 'mak_tap.c'), TAP_C)
     patch_output_chain(os.path.join(src, 'filters', 'f_output_chain.c'))

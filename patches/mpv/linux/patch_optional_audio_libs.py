@@ -12,7 +12,7 @@ Implib.so stubs (tools/implib) instead of the real libraries, and this
 patch adds the other half:
 
   audio/out/mak_dl.{h,c}   mak_pipewire_load / mak_pulse_load open the
-                           library once (dlopen, never closed) and report
+                           library once (dlopen, RTLD_NODELETE) and report
                            whether it is usable. PipeWire must also be at
                            least 0.3.57, the version mpv's AO is written
                            against: Ubuntu 22.04 ships 0.3.48, and a stub
@@ -74,6 +74,12 @@ MAK_DL_C = '''/* ''' + MARKER + '''
 #define MAK_PIPEWIRE_MIN_MINOR 3
 #define MAK_PIPEWIRE_MIN_MICRO 57
 
+/* RTLD_NODELETE: the Implib.so stubs dlclose the handle they were given from
+ * an exit-time destructor. It is the only reference, so without this an app
+ * exiting without mpv_terminate_destroy would unmap the library under the
+ * PipeWire or PulseAudio thread that is still running. */
+#define MAK_DL_FLAGS (RTLD_LAZY | RTLD_GLOBAL | RTLD_NODELETE)
+
 static mp_once pipewire_once = MP_STATIC_ONCE_INITIALIZER;
 static void *pipewire_handle;
 static char pipewire_error[256];
@@ -84,7 +90,9 @@ static char pulse_error[256];
 
 static void open_pipewire(void)
 {
-    void *h = dlopen("libpipewire-0.3.so.0", RTLD_LAZY | RTLD_GLOBAL);
+    /* Opened local and deletable for the version check, so a library refused
+     * here is unloaded again instead of staying in the global scope. */
+    void *h = dlopen("libpipewire-0.3.so.0", RTLD_LAZY | RTLD_LOCAL);
     if (!h) {
         snprintf(pipewire_error, sizeof(pipewire_error), "%s", dlerror());
         return;
@@ -97,6 +105,7 @@ static void open_pipewire(void)
     {
         snprintf(pipewire_error, sizeof(pipewire_error),
                  "cannot read the library version");
+        dlclose(h);
         return;
     }
     if (major != MAK_PIPEWIRE_MIN_MAJOR ? major < MAK_PIPEWIRE_MIN_MAJOR :
@@ -107,14 +116,20 @@ static void open_pipewire(void)
                  "version %d.%d.%d is older than %d.%d.%d", major, minor,
                  micro, MAK_PIPEWIRE_MIN_MAJOR, MAK_PIPEWIRE_MIN_MINOR,
                  MAK_PIPEWIRE_MIN_MICRO);
+        dlclose(h);
         return;
     }
-    pipewire_handle = h;
+    /* Accepted: reopening the loaded library promotes it to global and
+     * NODELETE, then the check handle is dropped. */
+    pipewire_handle = dlopen("libpipewire-0.3.so.0", MAK_DL_FLAGS);
+    if (!pipewire_handle)
+        snprintf(pipewire_error, sizeof(pipewire_error), "%s", dlerror());
+    dlclose(h);
 }
 
 static void open_pulse(void)
 {
-    pulse_handle = dlopen("libpulse.so.0", RTLD_LAZY | RTLD_GLOBAL);
+    pulse_handle = dlopen("libpulse.so.0", MAK_DL_FLAGS);
     if (!pulse_handle)
         snprintf(pulse_error, sizeof(pulse_error), "%s", dlerror());
 }

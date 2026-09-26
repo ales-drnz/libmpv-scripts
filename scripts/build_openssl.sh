@@ -73,6 +73,10 @@ build_openssl() {
     # extra_config (4th arg, optional): extra Configure tokens — e.g.
     # Android passes `-D__ANDROID_API__=N` so OpenSSL targets the same
     # API level as the rest of the build instead of the NDK's max.
+    #
+    # no-atexit: OpenSSL would register atexit(OPENSSL_cleanup) at first TLS
+    # use, after mpv's analysis drain (mak_scan.c) registered its own, so it
+    # would run first and free TLS state under a scan still running.
     ./Configure "$openssl_target" \
         --prefix="$prefix" \
         --openssldir="$prefix/ssl" \
@@ -99,6 +103,7 @@ build_openssl() {
         no-afalgeng no-capieng no-padlockeng \
         no-async no-http no-nextprotoneg no-ocb no-ssl-trace \
         no-thread-pool no-uplink no-filenames no-cmac no-siv \
+        no-atexit \
         threads \
         -Os -DOPENSSL_SMALL_FOOTPRINT \
         ${extra_config}
