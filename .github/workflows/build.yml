@@ -208,14 +208,14 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/w" -w /w debian:11 bash -c '
             set -e
-            apt-get update
+            . verify/debian11_apt.sh
             apt-get install -y --no-install-recommends gcc libc6-dev
             gcc -O0 -o builds/audio_fallback_test verify/audio_fallback_test.c -ldl -lm'
       - name: Run
         run: |
           docker run --rm -v "$PWD:/w:ro" -w /w debian:11 bash -c '
             set -e
-            apt-get update
+            . verify/debian11_apt.sh
             apt-get install -y --no-install-recommends libasound2
             if ldconfig -p | grep -E "libpipewire|libpulse"; then
               echo "PipeWire or PulseAudio present in the image" >&2; exit 1

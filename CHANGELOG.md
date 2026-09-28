@@ -21,7 +21,7 @@
 - A missing git tag stops the build instead of falling back to the default branch.
 - CI runs `scripts/verify_binaries.sh` on the nine libraries once they are built, and the verify image can load the foreign Linux arch.
 - Verify also checks the SONAME, the absence of `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries, the glibc 2.31 floor and every audio filter, and counts a failing tool as a failure.
-- CI plays a tone with the Linux x86_64 library in a Debian 11 container without PipeWire and PulseAudio.
+- CI loads the Linux x86_64 library in a Debian 11 container without PipeWire and PulseAudio, lists the audio devices and plays a tone, falling through to ALSA and then the null output.
 - The Android build stops on `DT_RELR` or on 64 bit libraries not aligned for 16 KB pages.
 - The PipeWire and PulseAudio stubs come from Implib.so, vendored in `tools/implib`. They build without asserts, so no build path ends up in the library, and rebuild when `PIPEWIRE_VERSION` changes.
 
