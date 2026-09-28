@@ -7,6 +7,7 @@
 
 ### Fixed
 - OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
+- PipeWire and PulseAudio stay loaded until the process exits: the stubs unloaded them from an exit handler, under the audio thread of an app that exits without destroying the player.
 - When an analysis worker fails to start, the ones already running are stopped before the join instead of decoding their whole region.
 
 ### Changed

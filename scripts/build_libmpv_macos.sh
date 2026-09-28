@@ -90,8 +90,8 @@ PREFIX=""
 
 # Staging dir for the assembled xcframework — in the build tree, never in the
 # consumer repo. assemble_xcframework builds libmpv.xcframework here and zips
-# it into builds/release/; `./build checksums` installs it into the consumer's
-# macos/Frameworks/. The build never writes outside libmpv-scripts.
+# it into builds/release/, where the manifest and the release pick it up.
+# The build never writes outside libmpv-scripts.
 OUTPUT_DIR="$BUILD_ROOT/xcframework-stage"
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
@@ -1050,7 +1050,7 @@ main() {
   echo "║  Next steps:                                                 ║"
   echo "║  1. builds/release/libmpv_macos.xcframework.zip (final)      ║"
   echo "║  2. Upload xcframework.zip to GitHub releases                ║"
-  echo "║  3. Run \`./build checksums\` to update SHA in podspec+Package ║"
+  echo "║  3. Run mpv_audio_kit's scripts/update_libmpv.sh             ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
   echo ""
 }

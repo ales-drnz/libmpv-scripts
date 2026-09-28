@@ -67,6 +67,15 @@ var hostOS = runtime.GOOS
 // of the native Docker images. A package var so tests can simulate other hosts.
 var hostArch = map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
 
+// linuxHostMembers is the Linux target the host can build: none on a CPU
+// arch without a Linux build, rather than an unknown "linux-" target.
+func linuxHostMembers() []string {
+	if hostArch == "" {
+		return nil
+	}
+	return []string{"linux-" + hostArch}
+}
+
 // Available reports whether this target can run on the current host:
 //
 //   - Apple targets (macOS / iOS) need macOS + Xcode — there is no legal,
@@ -151,7 +160,7 @@ func allTargets() []Target {
 		//    arch builds on a host of that arch, as CI does) ──
 		{Key: "linux-x86_64", Label: "x86_64", Group: "Linux", InMenu: true, kind: kDocker, script: sLinux, image: "linux", hostArch: "x86_64", args: []string{"--arch=x86_64"}},
 		{Key: "linux-aarch64", Label: "aarch64", Group: "Linux", InMenu: true, kind: kDocker, script: sLinux, image: "linux", hostArch: "aarch64", args: []string{"--arch=aarch64"}},
-		{Key: "linux", Label: "all (host arch)", Group: "Linux", InMenu: true, kind: kAggregate, members: []string{"linux-" + hostArch}},
+		{Key: "linux", Label: "all (host arch)", Group: "Linux", InMenu: true, kind: kAggregate, members: linuxHostMembers()},
 
 		// ── Android (Docker — NDK fetched at runtime; runs on the base image) ──
 		{Key: "android-arm64-v8a", Label: "arm64-v8a", Group: "Android", InMenu: true, kind: kDocker, script: sAndroid, image: "android", dockerPlatform: "linux/amd64", nativeOnDarwin: true, env: []string{"ABIS=arm64-v8a"}},

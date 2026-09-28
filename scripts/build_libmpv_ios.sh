@@ -80,8 +80,8 @@ PREFIX_BASE="$BUILD_DIR/prefix"
 
 # Staging dir for the assembled xcframework — in the build tree, never in the
 # consumer repo. assemble_xcframework builds libmpv.xcframework here and zips
-# it into builds/release/; `./build checksums` installs it into the consumer's
-# ios/Frameworks/. The build never writes outside libmpv-scripts.
+# it into builds/release/, where the manifest and the release pick it up.
+# The build never writes outside libmpv-scripts.
 OUTPUT_DIR="$BUILD_DIR/xcframework-stage"
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────

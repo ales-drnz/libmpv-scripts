@@ -5,7 +5,7 @@
  */
 
 /* audio_fallback_test.c — run-time check of the Linux library on a system
- * without PipeWire and PulseAudio (the verify-linux-runtime CI job runs it in
+ * without PipeWire and PulseAudio (the linux-runtime CI job runs it in
  * a bare debian:11 container with only libasound2).
  *
  * libmpv links both AOs through lazily bound Implib.so stubs, and a stub
