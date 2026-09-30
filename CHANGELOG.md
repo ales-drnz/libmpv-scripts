@@ -6,6 +6,7 @@
 - The Checksums, libs and Clean actions are gone, since mpv_audio_kit 0.5.0 takes libmpv through its build hook. The new Manifest action writes `manifest.json`.
 
 ### Fixed
+- Removing or rebuilding a filter that holds the end of the file, such as `rubberband` in the last few hundred milliseconds, no longer stops playback there for good: mpv re-seeks to decode the end again (`patch_chain_eof.py`).
 - OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
 - PipeWire and PulseAudio stay loaded until the process exits: the stubs unloaded them from an exit handler, under the audio thread of an app that exits without destroying the player.
 - When an analysis worker fails to start, the ones already running are stopped before the join instead of decoding their whole region.
