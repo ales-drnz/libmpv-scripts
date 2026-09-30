@@ -689,6 +689,7 @@ apply_mpv_patches_common() {
     warn "Skipping loudness_scan: it requires bulk_analysis (disabled)"
   fi
   _mpv_patch filter_label_tap   patch_filter_label_tap.py   "$mpv_dir"
+  _mpv_patch chain_eof          patch_chain_eof.py          "$mpv_dir"
   # NOTE: the `timer_resolution` patch is Windows-only (it edits the
   # win32-only osdep/timer-win32.c), so it lives in patches/mpv/windows/ and
   # is applied — still toggleable via `patch_on timer_resolution` — inline in
