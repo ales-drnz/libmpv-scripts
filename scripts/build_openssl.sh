@@ -48,7 +48,13 @@ source "$SCRIPT_DIR/shared/_versions.sh"
 #   Android x86_64    android-x86_64
 build_openssl() {
     local prefix="$1" b="$2" openssl_target="${3:-}" extra_config="${4:-}"
-    [[ -f "$prefix/lib/libssl.a" ]] && { ok "openssl already built"; return; }
+    # The key names what the cached build was configured with: a build
+    # kept from before a Configure change (no-atexit) is rebuilt, not reused.
+    local key="$OPENSSL_VERSION $openssl_target ${extra_config} no-atexit"
+    if [[ -f "$prefix/lib/libssl.a" &&
+          "$(cat "$prefix/lib/.openssl-key" 2>/dev/null)" == "$key" ]]; then
+        ok "openssl already built"; return
+    fi
     [[ -n "$openssl_target" ]] || die "build_openssl: third arg (openssl_target) is required"
     log "Build openssl $OPENSSL_VERSION (target=$openssl_target)..."
 
@@ -109,6 +115,7 @@ build_openssl() {
         ${extra_config}
     make -j"${JOBS:-$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)}"
     make install_sw       # install_sw = libs + headers, skip docs/man
+    printf '%s\n' "$key" > "$prefix/lib/.openssl-key"
     popd >/dev/null
 
     [[ -f "$prefix/lib/libssl.a"    ]] || die "openssl install missing libssl.a"
