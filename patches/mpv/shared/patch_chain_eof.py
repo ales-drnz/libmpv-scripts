@@ -20,6 +20,8 @@ decoder produces the tail and its EOF again.
 
 Usage: patch_chain_eof.py <mpv source dir>
 """
+from __future__ import annotations
+
 import sys
 from pathlib import Path
 
