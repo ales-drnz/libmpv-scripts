@@ -1,3 +1,8 @@
+## [0.1.7] - unreleased
+
+### Fixed
+- OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
+
 ## [0.1.6] - 24-09-2026
 
 ### Fixed
