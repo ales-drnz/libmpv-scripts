@@ -3,6 +3,7 @@
 ### Fixed
 - Removing or rebuilding a filter that holds the end of the file, such as `rubberband` in the last few hundred milliseconds, no longer stops playback there for good: mpv re-seeks to decode the end again (`patch_chain_eof.py`).
 - OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
+- When an analysis worker fails to start, the ones already running are stopped before the join instead of decoding their whole region.
 
 ## [0.1.6] - 24-09-2026
 
