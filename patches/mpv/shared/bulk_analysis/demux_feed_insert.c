@@ -22,7 +22,28 @@ struct mak_demux_feed *mak_demux_feed_attach(struct demuxer *demuxer,
     struct demux_stream *ds = sh->ds;
 
     mp_mutex_lock(&in->lock);
-    if (!in->seekable_cache || !ds->selected) {
+    /* Only where the feed can cover the whole file: a seekable cache in
+     * memory (a disk cache would be read back here under the lock), a file
+     * the forward cache can hold (beyond it the demuxer only reads at the
+     * playback pace), and a plain demuxer (a timeline's packets carry their
+     * own codec and segment bounds). */
+    bool usable = in->seekable_cache && ds->selected &&
+                  !in->d_user->opts->disk_cache &&
+                  in->d_thread->desc != &demuxer_desc_timeline &&
+                  (in->stream_size <= 0 ||
+                   (uint64_t)in->stream_size <= (uint64_t)in->max_bytes);
+    /* The cache must hold the start of the file, or be about to read it:
+     * right after the open, the first read marks the queue as the start
+     * (after_seek_to_start) only when it happens. */
+    bool has_bof = false;
+    for (int n = 0; usable && n < in->num_ranges; n++) {
+        struct demux_queue *q = in->ranges[n]->streams[ds->index];
+        bool current = in->ranges[n] == in->current_range;
+        if ((q->is_bof && (q->head || current)) ||
+            (current && !q->head && in->after_seek_to_start))
+            has_bof = true;
+    }
+    if (!usable || !has_bof) {
         mp_mutex_unlock(&in->lock);
         return NULL;
     }
@@ -44,8 +65,8 @@ struct mak_demux_feed *mak_demux_feed_attach(struct demuxer *demuxer,
     for (int n = 0; n < num_ranges; n++) {
         struct demux_queue *queue = ranges[n]->streams[ds->index];
         for (struct demux_packet *dp = queue->head; dp; dp = dp->next) {
-            mak_demux_feed_push_owned(f, read_packet_from_cache(in, dp), queue,
-                                      queue->is_bof);
+            mak_demux_feed_push_replay(f, read_packet_from_cache(in, dp), queue,
+                                       queue->is_bof && dp == queue->head);
         }
         if (queue->is_eof && queue->head)
             mak_demux_feed_mark(f, MAK_FEED_EOF);

@@ -118,6 +118,11 @@ bool mak_waveform_arm_fed(int gen, double duration_secs, int rate);
  * stale or not cache-fed. */
 bool mak_waveform_fed_complete(int gen);
 
+/* The cache-fed pass of [gen] cannot cover the file: drop its envelope and
+ * go back to the state a fresh generation starts from, for the re-open to
+ * take over. Returns false when [gen] is stale or not cache-fed. */
+bool mak_waveform_fed_abandon(int gen);
+
 /* Publish a PARTIAL bulk envelope mid-decode: copy each worker region's sealed
  * prefix [bin_start[w], bin_start[w]+cnt[w]) from the engine's source arrays
  * into a g_wave-owned buffer under the lock (allocated on first call), set

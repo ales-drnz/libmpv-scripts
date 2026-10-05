@@ -1,7 +1,7 @@
 ## [0.1.7] - unreleased
 
 ### Changed
-- The waveform and loudness scan of a seekable network file decode it from mpv's demuxer cache instead of opening it again, so the file is downloaded once (mpv_audio_kit [#22](https://github.com/ales-drnz/mpv_audio_kit/issues/22)). The envelope fills as mpv downloads, and a seek past the cache leaves a gap and makes the loudness scan unavailable. With `cache=no` the analysis opens the file again as before.
+- The waveform and loudness scan of an HTTP file that plays from its start decode it from mpv's demuxer cache instead of opening it again, so the file is downloaded once (mpv_audio_kit [#22](https://github.com/ales-drnz/mpv_audio_kit/issues/22)). When one pass from the start to the end is not possible (playback starting further in, a seek past the cache, a cut download, the cache off or on disk, a file larger than the cache), the analysis opens the file again as before.
 
 ### Fixed
 - Removing or rebuilding a filter that holds the end of the file, such as `rubberband` in the last few hundred milliseconds, no longer stops playback there for good: mpv re-seeks to decode the end again (`patch_chain_eof.py`).

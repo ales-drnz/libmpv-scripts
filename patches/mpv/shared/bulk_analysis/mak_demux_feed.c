@@ -96,9 +96,8 @@ int mak_demux_feed_stream(const struct mak_demux_feed *f)
     return f->stream_index;
 }
 
-bool mak_demux_feed_push_owned(struct mak_demux_feed *f,
-                               struct demux_packet *dp,
-                               const void *queue_id, bool bof)
+static bool push_owned(struct mak_demux_feed *f, struct demux_packet *dp,
+                       const void *queue_id, bool bof, bool bounded)
 {
     mp_mutex_lock(&f->lock);
     if (f->consumer_closed) {
@@ -107,7 +106,7 @@ bool mak_demux_feed_push_owned(struct mak_demux_feed *f,
             free_demux_packet(dp);
         return false;
     }
-    if (!dp || f->bytes + dp->len > MAK_FEED_MAX_BYTES) {
+    if (!dp || (bounded && f->bytes + dp->len > MAK_FEED_MAX_BYTES)) {
         /* Out of memory or over budget: the packet is lost, so whatever
          * comes next no longer continues what came before. */
         if (dp)
@@ -135,8 +134,19 @@ bool mak_demux_feed_push(struct mak_demux_feed *f, struct demux_packet *dp,
 {
     /* A new reference to the packet's data: no copy for an in-memory
      * packet, and the reference outlives the cache pruning it. */
-    return mak_demux_feed_push_owned(f, demux_copy_packet(NULL, dp),
-                                     queue_id, bof);
+    struct demux_packet *copy = demux_copy_packet(NULL, dp);
+    /* add_packet_locked() gives an audio packet without pts its dts only
+     * after this point; the cached copies the replay reads already have it. */
+    if (copy && copy->pts == MP_NOPTS_VALUE)
+        copy->pts = copy->dts;
+    return push_owned(f, copy, queue_id, bof, true);
+}
+
+void mak_demux_feed_push_replay(struct mak_demux_feed *f,
+                                struct demux_packet *dp,
+                                const void *queue_id, bool bof)
+{
+    push_owned(f, dp, queue_id, bof, false);
 }
 
 void mak_demux_feed_mark(struct mak_demux_feed *f, enum mak_feed_item item)

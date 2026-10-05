@@ -89,16 +89,17 @@ has to care which path produced the envelope:
     re-opening a signed / connection-capped URL N times can throttle or
     desync, so a single sequential reader is the safe choice.
 
-  * **Seekable network file with mpv's cache on** (the default): no
-    re-open at all. `mak_feed.c` attaches a packet feed to the demuxer
-    (`demux/mak_demux_feed.h`, a side consumer like `dump-cache`): the
-    cached audio packets are replayed, then every new one is queued as mpv
-    downloads it, and a thread of its own decodes them into the same bins
-    (state `progressive` while it fills, af-tap fold off, `ready` after a
-    gapless pass from the start to the end). The file is downloaded once.
-    A seek past the cache leaves a gap that fills if mpv later downloads
-    that part; the loudness scan is then `unavailable`. Without a seekable
-    cache (`cache=no`) the single-worker re-open above applies.
+  * **HTTP file played from its start, with mpv's cache in memory** (the
+    default): no re-open. `mak_feed.c` attaches a packet feed to the
+    demuxer (`demux/mak_demux_feed.h`, a side consumer like `dump-cache`):
+    the cached audio packets are replayed, then every new one is queued as
+    mpv downloads it, and a thread of its own decodes them into the same
+    bins (state `progressive` while it fills, af-tap fold off, `ready`
+    after the pass reaches the end). The file is downloaded once. When one
+    clean pass is not possible (playback starting further in, a seek past
+    the cache, a cut download, the cache off or on disk, a file larger than
+    the forward cache, a timeline), the generation goes to the single-worker
+    re-open above, so the result is never partial.
 
   * **Adaptive / live source** (DASH/HLS — a Plex/Jellyfin transcode —
     or any non-seekable stream): PROGRESSIVE. The bulk path is invalid
@@ -395,7 +396,8 @@ DEMUX_EDITS = [
      '\n'
      '    /* ' + MARKER + ' ─── queue a reference for the analysis. */\n'
      '    if (in->mak_feed && dp->stream == mak_demux_feed_stream(in->mak_feed) &&\n'
-     '        !mak_demux_feed_push(in->mak_feed, dp, queue, queue->is_bof))\n'
+     '        !mak_demux_feed_push(in->mak_feed, dp, queue,\n'
+     '                             queue->is_bof && !queue->head))\n'
      '    {\n'
      '        mak_demux_feed_owner_release(in->mak_feed);\n'
      '        in->mak_feed = NULL;\n'
@@ -409,8 +411,9 @@ DEMUX_EDITS = [
      '{\n'
      '    if (!ds->eof) {\n'
      '        ds->eof = true;\n'
-     '        /* ' + MARKER + ' */\n'
-     '        if (ds->in->mak_feed &&\n'
+     '        /* ' + MARKER + ' ─── a cancelled read also ends here: not an\n'
+     '         * end of file for the analysis. */\n'
+     '        if (ds->in->mak_feed && !demux_cancel_test(ds->in->d_thread) &&\n'
      '            ds->index == mak_demux_feed_stream(ds->in->mak_feed))\n'
      '            mak_demux_feed_mark(ds->in->mak_feed, MAK_FEED_EOF);\n'),
     ('demux_dealloc',

@@ -301,6 +301,22 @@ bool mak_waveform_fed_complete(int gen)
     return done;
 }
 
+bool mak_waveform_fed_abandon(int gen)
+{
+    bool done = false;
+    mp_mutex_lock(&g_wave_lock);
+    if (atomic_load(&g_wave.current_gen) == gen && g_wave.fed &&
+        g_wave.state == MAK_WAVE_PROGRESSIVE) {
+        /* Back to the state a fresh generation starts from, so the re-open
+         * builds its envelope as if the feed had never run. */
+        reset_g_wave_locked();
+        g_wave.state = MAK_WAVE_DECODING;
+        done = true;
+    }
+    mp_mutex_unlock(&g_wave_lock);
+    return done;
+}
+
 void mak_waveform_arm_rolling(int my_gen)
 {
     mp_mutex_lock(&g_wave_lock);

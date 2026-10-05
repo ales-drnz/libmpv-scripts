@@ -32,6 +32,9 @@
 #include "stream/stream.h"
 
 #include "audio/mak_feed.h"
+#if __has_include("audio/mak_loudness.h")
+#include "audio/mak_loudness.h"
+#endif
 #include "audio/mak_scan.h"
 #include "audio/mak_wave_fold.h"
 #include "audio/mak_waveform.h"
@@ -773,6 +776,47 @@ cleanup:
     MP_THREAD_RETURN();
 }
 
+/* The loudness patch weaves its include in after this point; the re-open's
+ * own failure paths must settle the scan too, with or without it. */
+static void reopen_failed(int gen)
+{
+    mak_waveform_mark_failed(gen);
+#if __has_include("audio/mak_loudness.h")
+    mak_loudness_mark_failed(gen);
+#endif
+}
+
+void mak_scan_reopen(int gen, const char *url, double duration_secs,
+                     const AVDictionary *net_opts)
+{
+    if (mak_waveform_current_gen() != gen)
+        return;
+    struct coord_args *args = calloc(1, sizeof(*args));
+    if (!args)
+        return;
+    args->url           = strdup(url);
+    args->my_gen        = gen;
+    args->duration_secs = duration_secs;
+    if (!args->url || (net_opts && av_dict_copy(&args->net_opts, net_opts, 0) < 0)) {
+        av_dict_free(&args->net_opts);
+        free(args->url);
+        free(args);
+        reopen_failed(gen);
+        return;
+    }
+    mp_thread t;
+    atomic_fetch_add(&g_live_coordinators, 1);
+    if (mp_thread_create(&t, coordinator_main, args) != 0) {
+        atomic_fetch_sub(&g_live_coordinators, 1);
+        av_dict_free(&args->net_opts);
+        free(args->url);
+        free(args);
+        reopen_failed(gen);
+        return;
+    }
+    mp_thread_detach(t);
+}
+
 /* ─── public entry point ─────────────────────────────────────────── */
 
 void mak_scan_start(const char *url, double duration_secs,
@@ -812,10 +856,15 @@ void mak_scan_start(const char *url, double duration_secs,
         return;
     }
 
-    /* Seekable network file (an HTTP direct-play original): decode it from
-     * mpv's own demuxer cache instead of downloading it a second time. Falls
-     * through to the re-open when the demuxer keeps no seekable cache. */
-    if (is_network && mak_feed_start(new_gen, demuxer, audio, duration_secs))
+    /* Seekable HTTP file (a direct-play original): decode it from mpv's own
+     * demuxer cache instead of downloading it a second time. Falls through
+     * to the re-open when the cache cannot cover the whole file (see
+     * mak_demux_feed_attach). SMB and other file-like schemes keep the
+     * parallel decode, which is faster than their download. */
+    const char *sep = strstr(url, "://");
+    if (is_network && sep && (mak_url_scheme_is(url, sep, "http") ||
+                              mak_url_scheme_is(url, sep, "https")) &&
+        mak_feed_start(new_gen, demuxer, audio, duration_secs, url, global, log))
         return;
 
     /* Local file, or a seekable HTTP byte-range part (direct-play): hand to the

@@ -84,4 +84,11 @@ void mak_scan_core_release(void);
 void mak_scan_thread_enter(void);
 void mak_scan_thread_leave(void);
 
+/* Re-open [url] for generation [gen] with the coordinator, as mak_scan_start
+ * does for a source it does not feed from the cache. For the cache-fed engine
+ * when its pass cannot cover the file. Copies [url] and [net_opts]. */
+struct AVDictionary;
+void mak_scan_reopen(int gen, const char *url, double duration_secs,
+                     const struct AVDictionary *net_opts);
+
 #endif

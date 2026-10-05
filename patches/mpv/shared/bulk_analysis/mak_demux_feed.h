@@ -41,10 +41,12 @@ enum mak_feed_item {
 };
 
 /* Attach a feed of [sh]'s packets to [demuxer] (implemented in demux.c, so
- * it can walk the cache). Call on the core thread. Returns NULL when the
- * demuxer keeps no seekable cache, since there would be nothing to replay
- * and the live packets alone would only arrive at the readahead pace. A feed
- * already attached to the demuxer is closed first. Packet timestamps are the
+ * it can walk the cache). Call on the core thread. Returns NULL, and the
+ * caller re-opens the file instead, when the feed could not cover it whole:
+ * no seekable cache, the cache on disk, a file larger than the forward cache,
+ * a timeline (EDL, ordered chapters), or no cached range of the stream that
+ * starts the file. A feed already attached to the demuxer is closed first.
+ * Packet timestamps are the
  * demuxer's own, before playback's start time offset, like the ones the bulk
  * decode reads from the file. */
 struct mak_demux_feed *mak_demux_feed_attach(struct demuxer *demuxer,
@@ -66,19 +68,21 @@ struct mak_demux_feed *mak_demux_feed_new(int stream_index);
 /* The demuxer's stream index this feed carries. */
 int mak_demux_feed_stream(const struct mak_demux_feed *f);
 
-/* Queue a new reference to [dp]. [queue_id] identifies the cache queue the
- * packet went to: a change of queue queues a GAP first. [bof] is set when the
- * packet is the first of a queue that starts the file. Returns false when the
- * consumer has closed the feed: the caller then detaches it with
- * mak_demux_feed_owner_release. */
+/* Queue a new reference to a packet the demuxer just read. [queue_id]
+ * identifies the cache queue the packet went to: a change of queue queues a
+ * GAP first. [bof] is set only when the packet is the first one of a queue
+ * that starts the file. Over MAK_FEED_MAX_BYTES the packet is dropped and a
+ * GAP queued. Returns false when the consumer has closed the feed: the caller
+ * then detaches it with mak_demux_feed_owner_release. */
 bool mak_demux_feed_push(struct mak_demux_feed *f, struct demux_packet *dp,
                          const void *queue_id, bool bof);
 
-/* Queue a packet the caller already copied (the cache replay), taking
- * ownership of it. */
-bool mak_demux_feed_push_owned(struct mak_demux_feed *f,
-                               struct demux_packet *dp,
-                               const void *queue_id, bool bof);
+/* Queue a packet of the cache replay, already copied, taking ownership of it.
+ * Not bounded: the copies share their data with the cache. NULL (a failed
+ * copy) queues a GAP. */
+void mak_demux_feed_push_replay(struct mak_demux_feed *f,
+                                struct demux_packet *dp,
+                                const void *queue_id, bool bof);
 
 /* Queue a marker. */
 void mak_demux_feed_mark(struct mak_demux_feed *f, enum mak_feed_item item);
