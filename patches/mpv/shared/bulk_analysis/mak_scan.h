@@ -56,13 +56,21 @@
  * tls-ca-file, http-header-fields incl. file-local ones, user-agent, cookies,
  * proxy, stream-lavf-o). They are snapshotted here, on the core thread, so
  * the detached coordinator never reads the core's config and a file-local
- * header set for this track is the one that rides the re-open. */
+ * header set for this track is the one that rides the re-open.
+ *
+ * A seekable network file whose [demuxer] keeps a seekable cache is not
+ * re-opened at all: the analysis decodes [audio]'s packets from that cache
+ * (mak_feed.h), so the file is downloaded once. [demuxer] and [audio] may be
+ * NULL; the re-open then applies as before. */
 struct mpv_global;
 struct mp_log;
+struct demuxer;
+struct sh_stream;
 void mak_scan_start(const char *url, double duration_secs,
                     const char *format_name, bool is_network,
                     bool seekable, struct mpv_global *global,
-                    struct mp_log *log);
+                    struct mp_log *log, struct demuxer *demuxer,
+                    struct sh_stream *audio);
 
 /* Core lifetime bracket, called from mp_create / mp_destroy. When the last
  * core goes away, the in-flight analysis is cancelled and its detached
@@ -70,5 +78,10 @@ void mak_scan_start(const char *url, double duration_secs,
  * that process teardown frees. */
 void mak_scan_core_acquire(void);
 void mak_scan_core_release(void);
+
+/* Count an analysis thread started outside this file (the cache-fed engine)
+ * in the drain above. Leave is its last touch of shared state. */
+void mak_scan_thread_enter(void);
+void mak_scan_thread_leave(void);
 
 #endif

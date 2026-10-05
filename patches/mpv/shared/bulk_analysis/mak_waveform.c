@@ -77,6 +77,9 @@ struct mak_wave {
      * it as each region's bins seal; PROGRESSIVE grows it as the af-tap folds
      * frames. */
     bool     progressive;
+    /* PROGRESSIVE grown by the cache-fed engine (mak_feed.c) instead of the
+     * af-tap: the af-tap fold stays off, and a gapless pass turns it READY. */
+    bool     fed;
     uint8_t *bins_filled;
     double   duration_secs;
     /* ROLLING (true live, unknown duration): a cache-aligned sliding window.
@@ -134,6 +137,7 @@ static void reset_g_wave_locked(void)
     g_wave.coverage_bins = 0;
     g_wave.duration_us   = 0;
     g_wave.progressive   = false;
+    g_wave.fed           = false;
     g_wave.duration_secs = 0;
     g_wave.rolling        = false;
     g_wave.roll_base_bin  = 0;
@@ -236,6 +240,67 @@ void mak_waveform_arm_progressive(int my_gen, double duration_secs)
  * sliding window of ABSOLUTE media-time bins, retained in lockstep with the
  * demuxer's seekable cache (mak_waveform_update_cache_range). The af-tap
  * grows it via mak_waveform_fold_samples, exactly as progressive does. */
+bool mak_waveform_arm_fed(int my_gen, double duration_secs, int rate)
+{
+    /* The whole file is decoded, so the bulk resolution applies: one bin per
+     * sample at most for a very short track. */
+    int64_t total = duration_secs > 0 && rate > 0
+                  ? (int64_t)(duration_secs * rate) : 0;
+    int fbins = total > MAK_WAVEFORM_BINS ? MAK_WAVEFORM_BINS : (int)total;
+    if (fbins < 1)
+        return false;
+    float    *fmin = av_calloc(fbins, sizeof(float));
+    float    *fmax = av_calloc(fbins, sizeof(float));
+    double   *fsq  = av_calloc(fbins, sizeof(double));
+    uint32_t *fn   = av_calloc(fbins, sizeof(uint32_t));
+    uint8_t  *ffil = av_calloc(fbins, sizeof(uint8_t));
+    bool armed = false;
+    mp_mutex_lock(&g_wave_lock);
+    if (fmin && fmax && fsq && fn && ffil &&
+        atomic_load(&g_wave.current_gen) == my_gen) {
+        reset_g_wave_locked();
+        g_wave.bins          = fbins;
+        g_wave.bins_min      = fmin;
+        g_wave.bins_max      = fmax;
+        g_wave.bins_sq       = fsq;
+        g_wave.bins_n        = fn;
+        g_wave.bins_filled   = ffil;
+        g_wave.duration_secs = duration_secs;
+        g_wave.duration_us   = (int64_t)(duration_secs * 1e6);
+        g_wave.progressive   = true;
+        g_wave.fed           = true;
+        g_wave.state         = MAK_WAVE_PROGRESSIVE;
+        armed = true;
+    }
+    mp_mutex_unlock(&g_wave_lock);
+    if (!armed) {
+        av_free(fmin);
+        av_free(fmax);
+        av_free(fsq);
+        av_free(fn);
+        av_free(ffil);
+    }
+    return armed;
+}
+
+bool mak_waveform_fed_complete(int gen)
+{
+    bool done = false;
+    mp_mutex_lock(&g_wave_lock);
+    if (atomic_load(&g_wave.current_gen) == gen && g_wave.fed &&
+        g_wave.state == MAK_WAVE_PROGRESSIVE) {
+        /* The full axis stays: valid_bins 0 makes the reader emit every bin,
+         * and a tail the duration overshot reads filled == 0. */
+        g_wave.progressive = false;
+        g_wave.fed         = false;
+        g_wave.valid_bins  = 0;
+        g_wave.state       = MAK_WAVE_READY;
+        done = true;
+    }
+    mp_mutex_unlock(&g_wave_lock);
+    return done;
+}
+
 void mak_waveform_arm_rolling(int my_gen)
 {
     mp_mutex_lock(&g_wave_lock);
@@ -478,7 +543,7 @@ bool mak_waveform_wants_frames(void)
 {
     if (!atomic_load(&g_enabled)) return false;
     mp_mutex_lock(&g_wave_lock);
-    bool want = g_wave.progressive &&
+    bool want = g_wave.progressive && !g_wave.fed &&
                 (g_wave.state == MAK_WAVE_PROGRESSIVE ||
                  g_wave.state == MAK_WAVE_ROLLING);
     mp_mutex_unlock(&g_wave_lock);
@@ -500,7 +565,9 @@ bool mak_waveform_wants_frames(void)
 bool mak_waveform_is_progressive_live(void)
 {
     mp_mutex_lock(&g_wave_lock);
-    bool live = g_wave.progressive &&
+    /* A cache-fed envelope is not playback-grown: a restart replays the
+     * cache, so the loudness scan may supersede it. */
+    bool live = g_wave.progressive && !g_wave.fed &&
                 (g_wave.state == MAK_WAVE_PROGRESSIVE ||
                  g_wave.state == MAK_WAVE_ROLLING);
     mp_mutex_unlock(&g_wave_lock);
@@ -526,6 +593,9 @@ double mak_waveform_decode_fraction(void)
     mp_mutex_lock(&g_wave_lock);
     if (g_wave.state == MAK_WAVE_DECODING && g_wave.bins > 0)
         f = (double)g_wave.coverage_bins / (double)g_wave.bins;
+    else if (g_wave.fed && g_wave.state == MAK_WAVE_PROGRESSIVE &&
+             g_wave.bins > 0)
+        f = (double)g_wave.valid_bins / (double)g_wave.bins;
     else if (g_wave.state == MAK_WAVE_READY)
         f = 1.0;
     mp_mutex_unlock(&g_wave_lock);

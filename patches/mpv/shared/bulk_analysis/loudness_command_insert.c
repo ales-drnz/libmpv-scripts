@@ -72,7 +72,9 @@ static int mp_property_loudness_scan_enabled(void *ctx,
                                    mpctx->demuxer ? mpctx->demuxer->filetype : NULL,
                                    mpctx->demuxer ? mpctx->demuxer->is_network : false,
                                    mpctx->demuxer ? mpctx->demuxer->seekable : false,
-                               mpctx->global, mpctx->log);
+                               mpctx->global, mpctx->log, mpctx->demuxer,
+                               mpctx->current_track[0][STREAM_AUDIO]
+                                   ? mpctx->current_track[0][STREAM_AUDIO]->stream : NULL);
                 }
             }
             return M_PROPERTY_OK;

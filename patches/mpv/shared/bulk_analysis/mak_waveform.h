@@ -107,6 +107,17 @@ void mak_waveform_mark_failed(int gen);
 void mak_waveform_arm_progressive(int gen, double duration_secs);
 void mak_waveform_arm_rolling(int gen);
 
+/* Arm a PROGRESSIVE envelope that the cache-fed engine (mak_feed.c) grows
+ * through mak_waveform_fold_samples, at the bulk resolution, with the af-tap
+ * fold off. [rate] is the source sample rate. Returns false when [gen] is
+ * stale or on allocation failure, leaving the state untouched. */
+bool mak_waveform_arm_fed(int gen, double duration_secs, int rate);
+
+/* The cache-fed decode of [gen] ran from the start of the file to its end
+ * without a gap: the envelope becomes READY. Returns false when [gen] is
+ * stale or not cache-fed. */
+bool mak_waveform_fed_complete(int gen);
+
 /* Publish a PARTIAL bulk envelope mid-decode: copy each worker region's sealed
  * prefix [bin_start[w], bin_start[w]+cnt[w]) from the engine's source arrays
  * into a g_wave-owned buffer under the lock (allocated on first call), set

@@ -31,6 +31,7 @@
 #include "osdep/timer.h"
 #include "stream/stream.h"
 
+#include "audio/mak_feed.h"
 #include "audio/mak_scan.h"
 #include "audio/mak_wave_fold.h"
 #include "audio/mak_waveform.h"
@@ -442,6 +443,16 @@ void mak_scan_core_release(void)
         drain_coordinators();
 }
 
+void mak_scan_thread_enter(void)
+{
+    atomic_fetch_add(&g_live_coordinators, 1);
+}
+
+void mak_scan_thread_leave(void)
+{
+    atomic_fetch_sub(&g_live_coordinators, 1);
+}
+
 static MP_THREAD_VOID coordinator_main(void *p)
 {
     struct coord_args *args = p;
@@ -767,7 +778,8 @@ cleanup:
 void mak_scan_start(const char *url, double duration_secs,
                     const char *format_name, bool is_network,
                     bool seekable, struct mpv_global *global,
-                    struct mp_log *log)
+                    struct mp_log *log, struct demuxer *demuxer,
+                    struct sh_stream *audio)
 {
     if (!mak_waveform_is_enabled()) return;
     if (!url || !*url) return;
@@ -799,6 +811,12 @@ void mak_scan_start(const char *url, double duration_secs,
             mak_waveform_arm_rolling(new_gen);   /* unknown duration → roll */
         return;
     }
+
+    /* Seekable network file (an HTTP direct-play original): decode it from
+     * mpv's own demuxer cache instead of downloading it a second time. Falls
+     * through to the re-open when the demuxer keeps no seekable cache. */
+    if (is_network && mak_feed_start(new_gen, demuxer, audio, duration_secs))
+        return;
 
     /* Local file, or a seekable HTTP byte-range part (direct-play): hand to the
      * coordinator. It probes [url] with libav and BULK-decodes a complete
