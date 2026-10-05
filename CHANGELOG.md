@@ -2,6 +2,7 @@
 
 ### Fixed
 - OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
+- When an analysis worker fails to start, the ones already running are stopped before the join instead of decoding their whole region.
 
 ## [0.1.6] - 24-09-2026
 

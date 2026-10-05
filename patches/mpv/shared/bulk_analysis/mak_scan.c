@@ -73,6 +73,9 @@ _Static_assert(sizeof(struct mak_wave_hw) == 64,
 
 struct worker_chunk {
     int      my_gen;
+    /* The coordinator's fail flag: stops the worker like a new generation,
+     * without superseding the current one. Outlives the worker (joined). */
+    const atomic_bool *abort;
     /* Points at the coordinator's per-worker high-water slot (NULL ⇒ the
      * worker does not publish live, e.g. a future caller that omits it). */
     struct mak_wave_hw *hwslot;
@@ -249,7 +252,9 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
     int     stream_pos_initialized = 0;
 
     while (1) {
-        if (mak_waveform_current_gen() != a->my_gen) goto cleanup;
+        if (mak_waveform_current_gen() != a->my_gen ||
+            atomic_load_explicit(a->abort, memory_order_relaxed))
+            goto cleanup;
 
         ret = av_read_frame(fmt, pkt);
         if (ret == AVERROR_EOF) break;
@@ -318,7 +323,8 @@ static MP_THREAD_VOID worker_chunk_thread(void *p)
             samples_since_check += converted;
             if (samples_since_check >= MAK_WAVE_CANCEL_CHECK_INTERVAL) {
                 samples_since_check = 0;
-                if (mak_waveform_current_gen() != a->my_gen)
+                if (mak_waveform_current_gen() != a->my_gen ||
+                    atomic_load_explicit(a->abort, memory_order_relaxed))
                     goto cleanup;
             }
             if (emitted_samples >= a->sample_end) goto done_decode;
@@ -457,6 +463,9 @@ static MP_THREAD_VOID coordinator_main(void *p)
      * rest: a second join of a finished thread reads its freed descriptor
      * and crashes, which a single cancelled worker used to trigger. */
     int                joined = 0;
+    /* Set by the fail path so the spawned workers stop within one check
+     * budget instead of decoding their whole region before the join. */
+    atomic_bool        abort_workers = false;
     int                bins = 0;
     float             *bins_min = NULL;
     float             *bins_max = NULL;
@@ -591,6 +600,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
 
         chunks[w] = (struct worker_chunk){
             .my_gen        = my_gen,
+            .abort         = &abort_workers,
             .hwslot        = &hw[w],
             .url           = url,
             .net_opts      = net_opts,
@@ -724,6 +734,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
 fail:
     /* Tear down any workers already spawned before declaring failure
      * (otherwise we'd leak threads and their open AVFormatContexts). */
+    atomic_store_explicit(&abort_workers, true, memory_order_relaxed);
     for (int w = joined; w < spawned; w++) mp_thread_join(threads[w]);
     spawned = 0;
     /* Drop any partial envelope the live publish loop attached, then mark
