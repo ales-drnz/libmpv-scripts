@@ -240,7 +240,7 @@ fi
 # ── libiconv ──────────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/libiconv.a" ]]; then
   log "Building libiconv $LIBICONV_VERSION..."
-  IC=$(fetch libiconv "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-${LIBICONV_VERSION}.tar.gz")
+  IC=$(fetch libiconv "https://mirrors.kernel.org/gnu/libiconv/libiconv-${LIBICONV_VERSION}.tar.gz")
   tar -xf "$IC" -C "$SRC"
   pushd "$SRC/libiconv-$LIBICONV_VERSION"
     CFLAGS="$CFLAGS_COMMON" ./configure "${AUTOCONF_COMMON[@]}" \

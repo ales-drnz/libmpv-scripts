@@ -409,7 +409,7 @@ android_iconv() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libiconv.a" ]] && return
   local src="$BUILD_DIR/src/libiconv-$LIBICONV_VERSION.tar.gz"
-  download "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-$LIBICONV_VERSION.tar.gz" "$src"
+  download "https://mirrors.kernel.org/gnu/libiconv/libiconv-$LIBICONV_VERSION.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make distclean 2>/dev/null || true
