@@ -55,6 +55,7 @@ func patchesCatalog() []PatchItem {
 		{ID: "bulk_analysis", Title: "Bulk waveform analysis", Desc: "Whole-file min/max waveform envelope on load", Category: "mpv runtime", DefaultOn: true},
 		{ID: "loudness_scan", Title: "Offline loudness scan", Desc: "EBU R128 integrated/LRA/true-peak on load (ReplayGain for untagged files). Rides Bulk waveform analysis — disabled with it.", Category: "mpv runtime", DefaultOn: true},
 		{ID: "filter_label_tap", Title: "Per-filter audio tap", Desc: "Pre/post tap per filter for plug-in–style meters", Category: "mpv runtime", DefaultOn: true},
+		{ID: "hotplug_core_thread", Title: "Audio device hotplug on the core thread", Desc: "Destroy the audio device watcher on the thread that created it, so a libmpv destroyed from another thread does not crash on Windows (WASAPI is COM)", Category: "mpv runtime", DefaultOn: true},
 		{ID: "timer_resolution", Title: "Windows timer-resolution fix", Desc: "Stop mpv pinning the system-wide 1 ms timer at init (it fights DWM frame-pacing → host UI micro-stutter). No-op on non-Windows targets.", Category: "mpv runtime", DefaultOn: true},
 
 		// ── FFmpeg (applied via apply_ffmpeg_patches) ───────────────────────

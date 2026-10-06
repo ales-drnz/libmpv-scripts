@@ -1,6 +1,7 @@
 ## [0.1.7] - unreleased
 
 ### Fixed
+- Windows: destroying a libmpv core that had read `audio-device-list` no longer crashes the process or corrupts its heap. The device watcher (WASAPI, which is COM) was torn down on the thread destroying the core instead of the core thread that created it (`patch_hotplug_core_thread.py`).
 - OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
 - When an analysis worker fails to start, the ones already running are stopped before the join instead of decoding their whole region.
 
