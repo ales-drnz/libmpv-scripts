@@ -4,6 +4,7 @@
 - The waveform and loudness scan of an HTTP file that plays from its start decode it from mpv's demuxer cache instead of opening it again, so the file is downloaded once (mpv_audio_kit [#22](https://github.com/ales-drnz/mpv_audio_kit/issues/22)). When one pass from the start to the end is not possible (playback starting further in, a seek past the cache, a cut download, the cache off or on disk, a file larger than the cache), the analysis opens the file again as before.
 
 ### Fixed
+- Windows: `playlist-prev-playlist` across two playlist files no longer aborts on the ta canary assertion. It appended a separator to a string that the previous append had moved (`patch_playlist_prev_dos_path.py`).
 - Windows: destroying a libmpv core that had read `audio-device-list` no longer crashes the process or corrupts its heap. The device watcher (WASAPI, which is COM) was torn down on the thread destroying the core instead of the core thread that created it (`patch_hotplug_core_thread.py`).
 - Removing or rebuilding a filter that holds the end of the file, such as `rubberband` in the last few hundred milliseconds, no longer stops playback there for good: mpv re-seeks to decode the end again (`patch_chain_eof.py`).
 - OpenSSL no longer cleans up from an exit handler, which ran before the analysis drain and freed TLS state under a running scan.
