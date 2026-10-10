@@ -1,4 +1,4 @@
-## [0.1.7] - unreleased
+## [0.1.7] - 10-10-2026
 
 ### Fixed
 - Windows: `playlist-prev-playlist` across two playlist files no longer aborts on the ta canary assertion. It appended a separator to a string that the previous append had moved (`patch_playlist_prev_dos_path.py`).
