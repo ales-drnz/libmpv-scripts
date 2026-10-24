@@ -12,8 +12,10 @@
  * - native: run_native.sh builds it against a released libmpv, for the
  *   decode times to compare with.
  *
- *   mak_spike [-n loops] [-l long_file]... file...
+ *   mak_spike [-n loops] [-x step]... [-l long_file]... file...
  *
+ * -x skips a step: af, analysis or pcm (to see what a number comes from).
+ * -a replaces the af chain (default AF_CHAIN below).
  * Every loop creates a core, runs the checks and destroys it. The long files
  * are timed in the first loop only: plain, then through a three filter lavfi
  * chain. Each check prints "ok <name> ..." or "FAIL <name> ...", each measure
@@ -34,6 +36,8 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/heap.h>
+#else
+#include <sys/resource.h>
 #endif
 
 /* The live PCM API of patch_pcm_stream.py (mak_pcm.h is not installed). */
@@ -43,6 +47,7 @@ int mak_pcm_finish(int64_t id);
 int mak_pcm_release(int64_t id);
 
 #define AF_CHAIN "lavfi=[equalizer=f=1000:t=q:w=1:g=3],lavfi=[afftdn],lavfi=[loudnorm]"
+static const char *g_af = AF_CHAIN;
 
 static int g_pass, g_fail;
 
@@ -93,6 +98,19 @@ static double heap_size(void)
     return (double)emscripten_get_heap_size();
 #else
     return 0;
+#endif
+}
+
+/* The most memory the process held: dlmalloc's max footprint on the web
+ * (thread stacks included, they come from malloc), the peak RSS natively. */
+static double peak_memory(void)
+{
+#ifdef __EMSCRIPTEN__
+    return (double)mallinfo().usmblks;
+#else
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    return ru.ru_maxrss * 1024.0;
 #endif
 }
 
@@ -403,10 +421,18 @@ int main(int argc, char **argv)
     int nlong = 0;
     const char *files[32];
     int nfiles = 0;
+    int skip_af = 0, skip_analysis = 0, skip_pcm = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0 && i + 1 < argc)
             loops = atoi(argv[++i]);
-        else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc && nlong < 8)
+        else if (strcmp(argv[i], "-x") == 0 && i + 1 < argc) {
+            const char *x = argv[++i];
+            skip_af |= strcmp(x, "af") == 0;
+            skip_analysis |= strcmp(x, "analysis") == 0;
+            skip_pcm |= strcmp(x, "pcm") == 0;
+        } else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
+            g_af = argv[++i];
+        } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc && nlong < 8)
             longs[nlong++] = argv[++i];
         else if (nfiles < 32)
             files[nfiles++] = argv[i];
@@ -442,19 +468,21 @@ int main(int argc, char **argv)
               "%d property changes, last duration %.3f", r.prop_changes, r.duration_seen);
 
         /* The af chain on the first file, read back from the property. */
-        if (nfiles > 0) {
-            mpv_set_property_string(r.h, "af", AF_CHAIN);
+        if (nfiles > 0 && !skip_af) {
+            mpv_set_property_string(r.h, "af", g_af);
             char *af = mpv_get_property_string(r.h, "af");
             double ms = decode_file(&r, files[0], "af", 0);
             char *af_after = mpv_get_property_string(r.h, "af");
-            check(ms > 0 && af && strstr(af, "afftdn") && af_after && strstr(af_after, "loudnorm"),
+            check(ms > 0 && af && af[0] && af_after && strcmp(af, af_after) == 0,
                   "af-chain", "%s", af_after ? af_after : "?");
             mpv_free(af);
             mpv_free(af_after);
             mpv_set_property_string(r.h, "af", "");
-            check_analysis(&r, files[0]);
         }
-        check_pcm(&r);
+        if (nfiles > 0 && !skip_analysis)
+            check_analysis(&r, files[0]);
+        if (!skip_pcm)
+            check_pcm(&r);
 
         if (loop == 0) {
             for (int i = 0; i < nlong; i++) {
@@ -471,7 +499,9 @@ int main(int argc, char **argv)
                 snprintf(key, sizeof(key), "realtime_x.%s", b);
                 measure(key, ms > 0 ? dur * 1e3 / ms : 0);
 
-                mpv_set_property_string(r.h, "af", AF_CHAIN);
+                if (skip_af)
+                    continue;
+                mpv_set_property_string(r.h, "af", g_af);
                 double fms = decode_file(&r, longs[i], "long-af", 0);
                 mpv_set_property_string(r.h, "af", "");
                 snprintf(key, sizeof(key), "decode_af_ms.%s", b);
@@ -493,12 +523,19 @@ int main(int argc, char **argv)
     }
     if (loops >= 3) {
         /* Loop 0 warms caches and pools; compare the second loop with the
-         * last one. */
+         * last one. Natively glibc's mallinfo2 sees the main arena only, so
+         * there it is a number, not a check. */
         double a = in_use_after[1], b = in_use_after[loops - 1];
+#ifdef __EMSCRIPTEN__
         check(b <= a * 1.10, "memory", "in use after loop 1 %.0f, after loop %d %.0f (%+.1f%%)",
               a, loops - 1, b, a > 0 ? (b - a) * 100 / a : 0);
+#else
+        printf("memory (main arena only) in use after loop 1 %.0f, after loop %d %.0f\n",
+               a, loops - 1, b);
+#endif
     }
     measure("heap_size_end", heap_size());
+    measure("peak_memory_bytes", peak_memory());
     printf("RESULT pass=%d fail=%d\n", g_pass, g_fail);
     fflush(stdout);
     return g_fail ? 1 : 0;
