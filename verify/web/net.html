@@ -38,6 +38,7 @@ try {
     blobUrl: async (name) => URL.createObjectURL(new Blob([await fixture(name)])),
     cases: q.get('cases') ? q.get('cases').split(',') : null,
     repeat: Number(q.get('repeat') || 3),
+    verbose: q.get('verbose') === '1',
   }, log);
   await post({ code: r.fail ? 1 : 0 });
 } catch (e) {

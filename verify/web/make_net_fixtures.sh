@@ -4,8 +4,9 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 # The media of the webio harness: the W1 fixtures (make_fixtures.sh), a
-# 300 s WAV for the read speed, and 30 s of the 60 s file as HLS (AAC in
-# MPEG-TS, 5 s segments) and as DASH (AAC in fragmented MP4).
+# radio-like MP3 for the live stream, a 300 s WAV for the read speed, and
+# 30 s of the 60 s file as HLS (AAC in MPEG-TS, 5 s segments) and as DASH
+# (AAC in fragmented MP4).
 #
 #   make_net_fixtures.sh <mpv_audio_kit checkout> <out dir>
 set -euo pipefail
@@ -14,6 +15,11 @@ kit="${1:?mpv_audio_kit checkout}"
 out="${2:?out dir}"
 "$HERE/make_fixtures.sh" "$kit" "$out" >/dev/null
 ff=(ffmpeg -hide_banner -loglevel error -y)
+# A radio-like MP3 for the live stream: no ID3, no Xing header (a looped file
+# with one makes the demuxer guess a duration).
+[[ -s "$out/live.mp3" ]] || \
+  "${ff[@]}" -i "$out/long_60s.mp3" -t 30 -c:a libmp3lame -b:a 128k -id3v2_version 0 \
+    -write_xing 0 "$out/live.mp3"
 [[ -s "$out/long_300s.wav" ]] || \
   "${ff[@]}" -f lavfi -i "anoisesrc=color=pink:amplitude=0.3:sample_rate=48000:duration=300" \
     -ac 2 -c:a pcm_s16le "$out/long_300s.wav"

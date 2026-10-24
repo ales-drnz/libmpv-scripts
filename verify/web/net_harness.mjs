@@ -10,7 +10,8 @@
 //   const r = await runNetHarness(factory, env, log);
 // env: { base, cross (the other origin), browser (CORS applies),
 //        fixture(name) -> Uint8Array, blobUrl(name) -> blob: URL (browser),
-//        cases (names, or null for all), repeat (timing cases, default 3) }
+//        cases (names, or null for all), repeat (timing cases, default 3),
+//        verbose (every log line of mpv) }
 
 import { openModule, FMT, EV, END } from './mpv_client.mjs';
 
@@ -20,7 +21,7 @@ const CORE = {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => performance.now();
-const DECODE_ERRORS = /Header missing|invalid|Error while decoding|Failed to decode|mp3float.*error/i;
+const DECODE_ERRORS = /Header missing|Error while decoding|Failed to decode|overread|Invalid data found|invalid frame/i;
 
 export async function runNetHarness(factory, env, log) {
   const res = { checks: [], measures: {} };
@@ -90,6 +91,10 @@ export async function runNetHarness(factory, env, log) {
     return { ok: r.error >= 0 && !!ev, pos: pos.value };
   };
   const logs = (core, re) => core.logs.filter((l) => re.test(l));
+  // The seek cases load paused (ao-null-untimed would reach the end before
+  // the seek), seek, then play to the end.
+  const PAUSED = { cache: 'no', pause: 'yes' };
+  const resume = (core) => core.command(['set', 'pause', 'no']);
 
   // One case: a fresh core, a time limit, the leftovers checked.
   const run = async (name, fn, { extra = {}, limit = 120000, group = null } = {}) => {
@@ -116,7 +121,8 @@ export async function runNetHarness(factory, env, log) {
     measure(`${name}.main_thread_max_gap_ms`, maxGap);
     measure(`${name}.case_ms`, now() - t0);
     maxGap = Math.max(maxGap, gap0);
-    for (const l of core.logs.filter((x) => /webio|ffmpeg|error/i.test(x)).slice(0, 12)) log(`  log ${l}`);
+    const shown = env.verbose ? core.logs : core.logs.filter((x) => /webio|ffmpeg|error/i.test(x)).slice(0, 12);
+    for (const l of shown) log(`  log ${l}`);
   };
 
   await serverLog(true);
@@ -141,11 +147,12 @@ export async function runNetHarness(factory, env, log) {
     check(fwd.ok && Math.abs(fwd.pos - 50) < 1.5, 'range_seek.forward', `time-pos ${fwd.pos}`);
     const back = await seekTo(core, 5);
     check(back.ok && Math.abs(back.pos - 5) < 1.5, 'range_seek.backward', `time-pos ${back.pos}`);
+    await resume(core);
     const e = await l.ended;
     check(e && e.reason === END.EOF, 'range_seek.eof', String(e && e.reason));
     const starts = (await tagged('rseek')).map(rangeStart);
     check(starts.some((s) => s > 1500000 && s < 3900000), 'range_seek.range_request', `Range starts ${starts.join(',')}`);
-  }, { extra: { cache: 'no' } });
+  }, { extra: PAUSED });
 
   // ── server without Range ─────────────────────────────────────────────
   await run('norange', async (core) => {
@@ -164,12 +171,12 @@ export async function runNetHarness(factory, env, log) {
 
   // ── live stream without length ────────────────────────────────────────
   await run('live', async (core) => {
-    const l = await load(core, `${env.base}/media/live/long_60s.mp3?rate=48000&tag=live`);
+    const l = await load(core, `${env.base}/media/live/live.mp3?rate=48000&tag=live`);
     check(l.ok, 'live.loaded', `${l.ms.toFixed(1)} ms`);
     const sk = await core.get('seekable', FMT.FLAG);
     check(sk.value === false, 'live.not_seekable', String(sk.value));
-    const dur = await core.get('duration', FMT.DOUBLE);
-    check(dur.error < 0 || !(dur.value > 0), 'live.no_duration', `${dur.error} ${dur.value}`);
+    // The demuxer guesses a duration from the bitrate; the stream has no size.
+    check(logs(core, /webio: .*size -1, not seekable/).length === 1, 'live.no_size', logs(core, /webio: .*HTTP/).join(' | '));
     await sleep(3000);
     const pos = await core.get('time-pos', FMT.DOUBLE);
     check(pos.value > 1, 'live.plays', `time-pos ${pos.value}`);
@@ -214,19 +221,19 @@ export async function runNetHarness(factory, env, log) {
       await l.ended;
     }, { extra });
   };
-  await icyCase('icy_same', `${env.base}/media/live/long_60s.mp3?icy=1&rate=48000&tag=icy1`, {
+  await icyCase('icy_same', `${env.base}/media/live/live.mp3?icy=1&rate=48000&tag=icy1`, {
     expectTitles: true, expectIcyHeader: (g) => g.length === 1 && g[0].icy === '1' && g[0].icy_sent,
   });
   if (env.browser) {
-    await icyCase('icy_cross_exposed', `${env.cross}/media/live/long_60s.mp3?icy=1&cors=expose&rate=48000&tag=icy2`, {
+    await icyCase('icy_cross_exposed', `${env.cross}/media/live/live.mp3?icy=1&cors=expose&rate=48000&tag=icy2`, {
       expectTitles: true, extra: { 'stream-lavf-o': 'icy_cross_origin=1' },
       expectIcyHeader: (g) => g.length === 1 && g[0].icy === '1' && g[0].icy_sent,
     });
-    await icyCase('icy_cross_hidden', `${env.cross}/media/live/long_60s.mp3?icy=1&cors=1&rate=48000&tag=icy3`, {
+    await icyCase('icy_cross_hidden', `${env.cross}/media/live/live.mp3?icy=1&cors=1&rate=48000&tag=icy3`, {
       expectTitles: false, extra: { 'stream-lavf-o': 'icy_cross_origin=1' },
       expectIcyHeader: (g) => g.length === 2 && g[0].icy === '1' && g[1].icy === null,
     });
-    await icyCase('icy_cross_default', `${env.cross}/media/live/long_60s.mp3?icy=1&rate=48000&tag=icy4`, {
+    await icyCase('icy_cross_default', `${env.cross}/media/live/live.mp3?icy=1&rate=48000&tag=icy4`, {
       expectTitles: false, expectIcyHeader: (g) => g.length === 1 && g[0].icy === null,
     });
   }
@@ -238,13 +245,14 @@ export async function runNetHarness(factory, env, log) {
     check(l.ok, 'redirect.loaded');
     const s = await seekTo(core, 50);
     check(s.ok && Math.abs(s.pos - 50) < 1.5, 'redirect.seek', `time-pos ${s.pos}`);
+    await resume(core);
     const e = await l.ended;
     check(e && e.reason === END.EOF, 'redirect.eof');
     const hops = await tagged('redir');
     const finals = (await tagged('redir2')).map(rangeStart);
     check(hops.length === 1 && finals.some((x) => x > 1500000), 'redirect.seek_on_final_url',
       `redirects ${hops.length}, final Range starts ${finals.join(',')}`);
-  }, { extra: { cache: 'no' } });
+  }, { extra: PAUSED });
   if (env.browser) {
     await run('redirect_cross', async (core) => {
       const to = encodeURIComponent(`${env.cross}/media/range/mp3_44100_stereo.mp3?tag=redirx2`);
@@ -263,9 +271,10 @@ export async function runNetHarness(factory, env, log) {
     check(Math.abs((dur.value ?? 0) - 30) < 1.5, 'hls.duration', String(dur.value));
     const s = await seekTo(core, 20);
     check(s.ok && Math.abs(s.pos - 20) < 2.5, 'hls.seek', `time-pos ${s.pos}`);
+    await resume(core);
     const e = await l.ended;
     check(e && e.reason === END.EOF, 'hls.eof', String(e && e.reason));
-  }, { extra: { cache: 'no' } });
+  }, { extra: PAUSED });
   await run('dash', async (core) => {
     const l = await load(core, `${env.base}/media/range/dash/manifest.mpd`);
     check(l.ok, 'dash.loaded', `${l.ms.toFixed(1)} ms`);
@@ -294,9 +303,10 @@ export async function runNetHarness(factory, env, log) {
       check(sk.value === true, 'cross_cors.seekable', String(sk.value));
       const s = await seekTo(core, 50);
       check(s.ok && Math.abs(s.pos - 50) < 1.5, 'cross_cors.seek', `time-pos ${s.pos}`);
+      await resume(core);
       const e = await l.ended;
       check(e && e.reason === END.EOF, 'cross_cors.eof');
-    }, { extra: { cache: 'no' } });
+    }, { extra: PAUSED });
   }
 
   // ── request headers ───────────────────────────────────────────────────
@@ -388,10 +398,11 @@ export async function runNetHarness(factory, env, log) {
       check(sk.value === true, 'blob.seekable', String(sk.value));
       const s = await seekTo(core, 50);
       check(s.ok && Math.abs(s.pos - 50) < 1.5, 'blob.seek', `time-pos ${s.pos}`);
+      await resume(core);
       const e = await l.ended;
       check(e && e.reason === END.EOF, 'blob.eof');
       measure('blob.answer', JSON.stringify(logs(core, /webio: blob/).map((x) => /HTTP \d+/.exec(x)?.[0])));
-    }, { extra: { cache: 'no' } });
+    }, { extra: PAUSED });
   }
 
   // ── open and close cycles ─────────────────────────────────────────────

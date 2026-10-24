@@ -25,6 +25,7 @@ const r = await runNetHarness(factory, {
   fixture: async (name) => readFileSync(join(fixtures, name)),
   cases: cases ? cases.split(',') : null,
   repeat: repeat ? Number(repeat) : 3,
+  verbose: process.env.MAK_NET_VERBOSE === '1',
 }, (s) => console.log(s));
 console.log(`measure node_rss_bytes ${process.memoryUsage().rss}`);
 // The pthread workers keep the event loop alive.
