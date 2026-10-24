@@ -8,8 +8,8 @@
 # A file already there is kept.
 #
 # prefetch/ (prefetch_*, ao_close_test)
-#   a.flac, b.flac 60 s, c.flac 30 s, each with its own title tag;
-#   a_notag.flac is a.flac without tags.
+#   a.flac, b.flac 60 s, c.flac 30 s, a2.flac 2 s, each with its own title
+#   tag.
 # analysis/ (analysis_*)
 #   x16.opus  16 channels (mapping family 255), 10 s sine
 #   sm.mp3    10 s stereo MP3 then 10 s mono MP3, joined with cat
@@ -44,7 +44,7 @@ tone() { [[ -f "$d/$1" ]] || ff -f lavfi -i "sine=frequency=$2:sample_rate=44100
 tone a.flac 440 60 "Track A"
 tone b.flac 660 60 "Track B"
 tone c.flac 880 30 "Track C"
-[[ -f "$d/a_notag.flac" ]] || ff -i "$d/a.flac" -map_metadata -1 -c copy "$d/a_notag.flac"
+tone a2.flac 550 2 "Track A2"
 
 d="$D/analysis"; mkdir -p "$d"
 if [[ ! -f "$d/x16.opus" ]]; then

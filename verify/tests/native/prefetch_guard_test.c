@@ -2,12 +2,13 @@
 // All rights reserved.
 // Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-// prefetch_guard_test <mode> <fixtures> <tmpdir>: the prefetch re-entry
-// guard is per player (F58). Two players in one process, each with a.flac
-// then b.flac and prefetch on. The client holds the prefetch on_load hook of
-// player A for up to 4 s and starts player B meanwhile. B must reach its own
-// prefetch hook while A's is held: with r17 the re-entry guard is one static
-// for the whole process, so B skips its prefetch until A's hook returns.
+// prefetch_guard_test <mode> <fixtures> <tmpdir>: the prefetch of one player
+// does not wait on another's (F58). Two players in one process, each with
+// a.flac then b.flac and prefetch on. The client holds the on_prefetch hook
+// of player A for up to 4 s and starts player B meanwhile. B must reach its
+// own on_prefetch while A's is held: r17 kept the prefetch guard in one
+// static for the whole process, so B skipped its prefetch until A's hook
+// returned. The hook state is per player now.
 // mode: "two" (the only one).
 #include "mpv_test.h"
 
@@ -26,7 +27,7 @@ int main(int argc, char **argv)
     for (int n = 0; n < 2; n++) {
         h[n] = mt_create();
         mpv_initialize(h[n]);
-        mpv_hook_add(h[n], 0, "on_load", 0);
+        mpv_hook_add(h[n], 0, "on_prefetch", 0);
     }
     mt_cmd(h[0], "loadfile", a, NULL, NULL);
     mt_cmd(h[0], "loadfile", b, "append", NULL);
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
             mpv_event_hook *hk = e->data;
             hooks[n]++;
             printf("player %c hook #%d at %.3f\n", 'A' + n, hooks[n], mt_now() - t0);
-            if (n == 0 && hooks[0] == 2) {
+            if (n == 0 && hooks[0] == 1) {
                 // A's prefetch hook: hold it, then start B.
                 held_id = hk->id;
                 held_at = mt_now();
@@ -50,7 +51,7 @@ int main(int argc, char **argv)
                 mt_cmd(h[1], "loadfile", b, "append", NULL);
                 continue;
             }
-            if (n == 1 && hooks[1] == 2 && !b_prefetch_at)
+            if (n == 1 && hooks[1] == 1 && !b_prefetch_at)
                 b_prefetch_at = mt_now();
             mpv_hook_continue(h[n], hk->id);
         }

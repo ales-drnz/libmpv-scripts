@@ -65,10 +65,10 @@ DISABLED_PATCHES="$WANT_DISABLED"
 #   audiotrack: includes pristine ao_audiotrack.c with its patch.
 #   fixtures: a dir of fixtures.sh, "-" for none; HTTP "-": no server.
 CASES=(
-  "lib prefetch_hook_test prefetch - dump props tracks resume title clear"
+  "lib prefetch_hook_test prefetch - stall transition rewrite props clear stop destroy noclient repeat"
   "lib prefetch_guard_test prefetch - two"
   "lib prefetch_params_test prefetch - differ only-b same none"
-  "lib prefetch_state_test prefetch - fail stop failstop"
+  "lib prefetch_state_test prefetch - fail stop failstop hookfail"
   "lib prefetch_state_test prefetch 2000 httpstop"
   "lib analysis_channels_test analysis - opus16 opus16wave opus16loud sm smloud ms"
   "lib analysis_channels_test analysis 4000000 opus16http opus16httpwave"
@@ -94,7 +94,7 @@ CASES=(
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
 PATCH_TESTS=(
-  "prefetch_state_patch_test {mpv}"
+  "prefetch_patch_test {mpv}"
   "ios_audio_stubs_patch_test {mpv}"
   "audiotrack_patch_test {mpv} {src} {build}"
   "apply_order_test {mpv}"
@@ -163,7 +163,7 @@ fetch "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.g
   "${MPV_TARBALL:-}" "$WORK/mpv"
 if (( NEED_FFMPEG )); then
   fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "${FFMPEG_TARBALL:-}" \
-    "$WORK/ffmpeg" configure libavformat libavfilter
+    "$WORK/ffmpeg" configure libavcodec libavformat libavfilter
 fi
 
 echo "mpv $MPV_VERSION, libavcodec $(pkg-config --modversion libavcodec 2>/dev/null || echo '?')," \
@@ -174,10 +174,13 @@ if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   log "Patching and building mpv $MPV_VERSION with AddressSanitizer"
   rm -rf "$SRC" "$BLD"
   cp -a "$WORK/mpv" "$SRC"
+  # Not on the left of ||: bash ignores set -e there, also inside the
+  # subshell, and a failed patch would let the build go on without it.
   ( set -e
     apply_mpv_patches_common "$SRC"
     python3 "$ROOT/patches/mpv/linux/patch_optional_audio_libs.py" "$SRC"
-  ) > "$WORK/logs/apply.log" 2>&1 || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
+  ) > "$WORK/logs/apply.log" 2>&1
+  (( $? == 0 )) || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
   ( cd "$SRC" && meson setup "$BLD" -Dbuildtype=debug -Doptimization=1 -Dauto_features=disabled \
       -Dgpl=true -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
       -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Db_sanitize=address -Db_lundef=false

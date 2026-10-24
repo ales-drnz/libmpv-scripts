@@ -7,7 +7,8 @@
 // own per-file options. The prefetch opens the next entry with the options
 // of the playing one, so it must skip an entry whose per-file options differ.
 //   differ  a has http-header-fields X-Token: A, b has X-Token: B. No
-//           prefetch of b while a plays; b then plays with X-Token: B.
+//           prefetch of b while a plays, so no on_prefetch hook; b then
+//           plays with X-Token: B.
 //   only-b  a has no per-file options, b has X-Token: B. No prefetch.
 //   same    both have X-Token: A. The prefetch runs and is used.
 //   none    no per-file options. The prefetch runs and is used.
@@ -36,19 +37,24 @@ int main(int argc, char **argv)
 
     mpv_handle *h = mt_create();
     mpv_initialize(h);
+    mpv_hook_add(h, 0, "on_prefetch", 0);
     mpv_hook_add(h, 0, "on_load", 0);
     const char *l1[] = {"loadfile", a, "replace", "-1", opt_a, NULL};
     const char *l2[] = {"loadfile", b, "append", "-1", opt_b, NULL};
     mpv_command(h, l1);
     mpv_command(h, l2);
 
-    int hooks = 0, loaded = 0, checked = 0;
+    int prefetch_hooks = 0, load_hooks = 0, loaded = 0, checked = 0;
     double t_loaded = 0, t0 = mt_now();
     while (mt_now() - t0 < 30) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == MPV_EVENT_HOOK) {
-            hooks++;
-            mpv_hook_continue(h, ((mpv_event_hook *)e->data)->id);
+            mpv_event_hook *hk = e->data;
+            if (strcmp(hk->name, "on_prefetch") == 0)
+                prefetch_hooks++;
+            else
+                load_hooks++;
+            mpv_hook_continue(h, hk->id);
         }
         if (e->event_id == MPV_EVENT_FILE_LOADED) {
             loaded++;
@@ -73,11 +79,13 @@ int main(int argc, char **argv)
             char *st = mt_str(h, "prefetch-state");
             int idle = st && strcmp(st, "idle") == 0;
             if (expect_prefetch)
-                mt_check(!idle && hooks == 2, "b prefetched while a plays (prefetch-state %s, hooks %d)",
-                         st ? st : "?", hooks);
+                mt_check(!idle && prefetch_hooks == 1 && load_hooks == 1,
+                         "b prefetched while a plays (prefetch-state %s, on_prefetch %d, on_load %d)",
+                         st ? st : "?", prefetch_hooks, load_hooks);
             else
-                mt_check(idle && hooks == 1, "b not prefetched while a plays (prefetch-state %s, hooks %d)",
-                         st ? st : "?", hooks);
+                mt_check(idle && prefetch_hooks == 0 && load_hooks == 1,
+                         "b not prefetched while a plays (prefetch-state %s, on_prefetch %d, on_load %d)",
+                         st ? st : "?", prefetch_hooks, load_hooks);
             mpv_free(st);
             double d = -1;
             mt_double(h, "duration", &d);

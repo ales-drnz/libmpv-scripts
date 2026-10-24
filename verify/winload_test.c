@@ -42,7 +42,7 @@ typedef void  (__cdecl *fn_terminate_destroy)(mpv_handle *);
 
 static const char *kPatchedProps[][2] = {
     {"audio-output-state", "closed"}, /* patch_audio_output_state */
-    {"prefetch-state",     "idle"},   /* patch_prefetch_state     */
+    {"prefetch-state",     "idle"},   /* patch_prefetch           */
 };
 
 int main(int argc, char **argv) {

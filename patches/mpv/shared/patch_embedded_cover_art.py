@@ -45,7 +45,7 @@ This patch adds two read-only client API properties:
 
 Both properties query the current track list at read time — no MPContext
 state is added, so the patch composes cleanly with
-`patch_prefetch_state.py` and `patch_audio_output_state.py` (each
+`patch_prefetch.py` and `patch_audio_output_state.py` (each
 patches a disjoint slice of the source).
 
 Files patched
