@@ -34,9 +34,13 @@ NULL_IF_CONFIG_SMALL(x) already yields), and idempotent: after the first run the
 `.long_name` lines no longer mention NULL_IF_CONFIG_SMALL, so a re-run matches
 nothing. Usage: patch_ffmpeg_codec_longnames.py <ffmpeg_source_dir>
 """
-import os
 import re
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_lib"))
+import anchor  # noqa: E402
 
 MARKER = "/* MAK_CODEC_LONGNAMES_KEPT */"
 
@@ -64,49 +68,23 @@ PAT = re.compile(
 CI_OLD = "#define CODEC_LONG_NAME(str) .p.long_name = NULL"
 CI_NEW = "#define CODEC_LONG_NAME(str) .p.long_name = str  " + MARKER
 
-
-def patch_codec_internal(path):
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    if MARKER in text:
-        print("Already patched: codec_internal.h (per-decoder long-names)")
-        return
-    if CI_OLD not in text:
-        raise SystemExit(
-            "patch_ffmpeg_codec_longnames: CODEC_LONG_NAME CONFIG_SMALL macro not "
-            "found in codec_internal.h — ffmpeg source layout changed.")
-    text = text.replace(CI_OLD, CI_NEW, 1)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
-    print("Patched: codec_internal.h (per-decoder long-names kept under --enable-small)")
+DESC = "libavcodec/codec_desc.c"
+INTERNAL = "libavcodec/codec_internal.h"
 
 
-def patch_codec_desc(path):
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    if MARKER in text:
+def apply(p):
+    if p.marked(DESC):
         print("Already patched: codec_desc.c (long-names kept under --enable-small)")
-        return
-    new_text, n = PAT.subn(r"\1\2,", text)
-    if n == 0:
-        raise SystemExit(
-            "patch_ffmpeg_codec_longnames: no `.long_name = NULL_IF_CONFIG_SMALL(...)` "
-            "rows found in codec_desc.c — ffmpeg source layout changed.")
-    # Drop a marker comment right after the license header's closing */ so
-    # re-runs short-circuit even though the matched lines are already rewritten.
-    new_text = new_text.replace(" */\n", " */\n" + MARKER + "\n", 1)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_text)
-    print(f"Patched: codec_desc.c ({n} codec long-names kept under --enable-small)")
+    else:
+        p.regex(DESC, PAT, r"\1\2,",
+                ".long_name = NULL_IF_CONFIG_SMALL(...) rows", times=anchor.ALL)
+        # A marker comment right after the license header's closing */, so
+        # re-runs short-circuit even though the matched lines are already
+        # rewritten.
+        p.edit(DESC, " */\n", " */\n" + MARKER + "\n", "license header end",
+               times=anchor.FIRST)
+    p.edits(INTERNAL, [("CODEC_LONG_NAME CONFIG_SMALL macro", CI_OLD, CI_NEW)])
 
 
-def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: patch_ffmpeg_codec_longnames.py <ffmpeg_source_dir>")
-    root = sys.argv[1]
-    patch_codec_desc(os.path.join(root, "libavcodec", "codec_desc.c"))
-    patch_codec_internal(os.path.join(root, "libavcodec", "codec_internal.h"))
-
-
-if __name__ == "__main__":
-    main()
+anchor.main(apply, "patch_ffmpeg_codec_longnames", marker=MARKER,
+            usage="<ffmpeg_source_dir>")

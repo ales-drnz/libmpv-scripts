@@ -106,6 +106,14 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(p.edit('a.c', 'int ', 'long ', times=ANY))
         self.assertEqual(p.text('a.c'), 'long a;\nlong b;\n')
 
+    def test_find_replaces_nothing(self):
+        p = self.patch()
+        self.assertTrue(p.find('a.c', 'int b;\n'))
+        self.assertFalse(p.find('a.c', 'int '))
+        self.assertEqual(p.text('a.c'), 'int a;\nint b;\n')
+        self.assertEqual(len(p.errors), 1)
+        self.assertEqual([a['label'] for a in p.anchors], ['int b;', 'int'])
+
     def test_edits_skip_a_marked_file(self):
         edits = [('int a;\n', f'int a; // {MARKER}\n'),
                  ('b label', 'int b;\n', 'int bb;\n')]

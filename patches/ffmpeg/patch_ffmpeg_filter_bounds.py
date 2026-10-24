@@ -49,8 +49,12 @@ a changed FFmpeg layout stops the build with the tree as it was.
 Usage:
     python3 patch_ffmpeg_filter_bounds.py <ffmpeg_src_dir>
 """
-import os
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_lib'))
+import anchor  # noqa: E402
 
 
 MARKER = 'MAK_FILTER_BOUNDS_V1'
@@ -276,43 +280,12 @@ EDITS = {
 }
 
 
-def patch_file(path, edits):
-    """Returns the patched text, or None when the file has MARKER. Raises
-    when an anchor is missing or repeated: the FFmpeg layout changed, and
-    a partial patch would leave the filter as unsafe as before."""
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return None
-    for anchor, new in edits:
-        count = text.count(anchor)
-        if count != 1:
-            raise RuntimeError(
-                'Expected exactly 1 %r in %s, found %d (ffmpeg layout changed?)'
-                % (anchor.splitlines()[0], path, count))
-        text = text.replace(anchor, new)
-    return text
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <ffmpeg_src_dir>')
-        sys.exit(1)
-
-    ffmpeg_dir = sys.argv[1]
-    writes = []
+def apply(p):
+    # A missing or repeated anchor means the FFmpeg layout changed: a partial
+    # patch would leave the filter as unsafe as before, so no file is written.
     for rel, edits in EDITS.items():
-        path = os.path.join(ffmpeg_dir, rel)
-        text = patch_file(path, edits)
-        if text is not None:
-            writes.append((path, text))
-
-    for path, text in writes:
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'Patched: {path}')
+        p.edits(rel, edits)
 
 
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_ffmpeg_filter_bounds', marker=MARKER,
+            usage='<ffmpeg_src_dir>')

@@ -150,6 +150,20 @@ class Patch:
             self.write(rel, text.replace(anchor, new, count))
         return True
 
+    def find(self, rel, anchor, label=None, times=1) -> bool:
+        """Checks that anchor is found in rel as edit() would, without
+        replacing it: for an edit placed relative to it by the script."""
+        text = self.text(rel)
+        label = label or _label(anchor)
+        self.anchors.append({'file': rel, 'label': label, 'kind': 'edit',
+                             'anchor': anchor})
+        n = text.count(anchor)
+        if not self._count_ok(n, times):
+            self.fail(f'{rel}: anchor ({label}) found {n} times, '
+                      f'expected {times}')
+            return False
+        return True
+
     def edits(self, rel, edits, marker=None) -> bool:
         """Applies each edit, (anchor, new) or (label, anchor, new), unless
         rel already carries the marker. Returns whether it edited."""

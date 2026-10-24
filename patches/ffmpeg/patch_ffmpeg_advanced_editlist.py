@@ -43,76 +43,56 @@ Notes on the upstream form we match:
 Usage:
     python3 patch_ffmpeg_advanced_editlist.py <ffmpeg_source_dir>
 """
-import sys
-import os
 import re
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_lib'))
+import anchor  # noqa: E402
 
 
 MARKER = 'MAK_ADVANCED_EDITLIST_PATCH_V1'
 
+# Match the exact 7.1.1 block. Tolerate incidental whitespace, but
+# anchor on the characteristic C-literal split ("fragmented " +
+# "MP4. disabling.") so we don't accidentally rewrite unrelated
+# advanced_editlist references elsewhere in mov.c.
+PATTERN = re.compile(
+    r'if \(!sc->stts_count && c->advanced_editlist\) \{\s*\n'
+    r'\s*\n'
+    r'\s*av_log\(c->fc, AV_LOG_VERBOSE,\s*'
+    r'"advanced_editlist does not work with fragmented "\s*\n'
+    r'\s*"MP4\. disabling\.\\n"\);\s*\n'
+    r'\s*c->advanced_editlist = 0;\s*\n'
+    r'\s*c->advanced_editlist_autodisabled = 1;\s*\n'
+    r'\s*\}',
+    re.MULTILINE,
+)
 
-def patch_mov_c(path: str) -> None:
-    with open(path) as f:
-        text = f.read()
+REPLACEMENT = (
+    'if (!sc->stts_count && c->advanced_editlist) {\n'
+    '        /* ' + MARKER + ' ─── do NOT autodisable advanced_editlist\n'
+    '         * on fragmented MP4. Plex\'s DASH segmenter emits per-segment\n'
+    '         * edit lists declaring AAC encoder priming; dropping them\n'
+    '         * causes a click at every ~2s segment boundary. Honoring\n'
+    '         * the edit list is safe as long as the encoder produces a\n'
+    '         * valid elst — which Plex does. */\n'
+    '        (void)c;\n'
+    '    }'
+)
 
-    if MARKER in text:
-        print(f'Already patched: {path}')
+
+def apply(p):
+    # A missing block: the ffmpeg source structure may have changed, review
+    # the patch against the current upstream mov.c around the
+    # "advanced_editlist does not work with fragmented MP4" warning.
+    if p.marked('libavformat/mov.c'):
+        print('Already patched: libavformat/mov.c')
         return
-
-    # Match the exact 7.1.1 block. Tolerate incidental whitespace, but
-    # anchor on the characteristic C-literal split ("fragmented " +
-    # "MP4. disabling.") so we don't accidentally rewrite unrelated
-    # advanced_editlist references elsewhere in mov.c.
-    pattern = re.compile(
-        r'if \(!sc->stts_count && c->advanced_editlist\) \{\s*\n'
-        r'\s*\n'
-        r'\s*av_log\(c->fc, AV_LOG_VERBOSE,\s*'
-        r'"advanced_editlist does not work with fragmented "\s*\n'
-        r'\s*"MP4\. disabling\.\\n"\);\s*\n'
-        r'\s*c->advanced_editlist = 0;\s*\n'
-        r'\s*c->advanced_editlist_autodisabled = 1;\s*\n'
-        r'\s*\}',
-        re.MULTILINE,
-    )
-
-    replacement = (
-        'if (!sc->stts_count && c->advanced_editlist) {\n'
-        '        /* ' + MARKER + ' ─── do NOT autodisable advanced_editlist\n'
-        '         * on fragmented MP4. Plex\'s DASH segmenter emits per-segment\n'
-        '         * edit lists declaring AAC encoder priming; dropping them\n'
-        '         * causes a click at every ~2s segment boundary. Honoring\n'
-        '         * the edit list is safe as long as the encoder produces a\n'
-        '         * valid elst — which Plex does. */\n'
-        '        (void)c;\n'
-        '    }'
-    )
-
-    new_text, count = pattern.subn(replacement, text)
-    if count == 0:
-        raise RuntimeError(
-            f'Pristine advanced_editlist autodisable block not found in {path}.\n'
-            'The ffmpeg source structure may have changed — review the patch\n'
-            'against the current upstream mov.c around the\n'
-            '"advanced_editlist does not work with fragmented MP4" warning.'
-        )
-    if count > 1:
-        raise RuntimeError(
-            f'Pattern matched {count} times in {path}; expected exactly 1.'
-        )
-
-    with open(path, 'w') as f:
-        f.write(new_text)
-    print(f'Patched: {path}')
+    p.regex('libavformat/mov.c', PATTERN, REPLACEMENT,
+            'advanced_editlist autodisable block')
 
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <ffmpeg_src_dir>')
-        sys.exit(1)
-
-    ffmpeg_dir = sys.argv[1]
-    patch_mov_c(os.path.join(ffmpeg_dir, 'libavformat', 'mov.c'))
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_ffmpeg_advanced_editlist', marker=MARKER,
+            usage='<ffmpeg_src_dir>')

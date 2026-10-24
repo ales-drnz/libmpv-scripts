@@ -61,23 +61,24 @@ if the marker is already present.
 Usage:
     python3 patch_ffmpeg_dash_keepalive.py <ffmpeg_src_dir>
 """
-import sys
-import os
 import re
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_lib'))
+import anchor  # noqa: E402
 
 
 MARKER = 'MAK_DASH_KEEPALIVE_V1'
 
+DASHDEC = 'libavformat/dashdec.c'
 
-def patch_dashdec_c(path: str) -> None:
-    with open(path) as f:
-        text = f.read()
 
-    if MARKER in text:
-        print(f'Already patched: {path}')
+def apply(p):
+    if p.marked(DASHDEC):
+        print(f'Already patched: {DASHDEC}')
         return
-
-    original_len = len(text)
 
     # ─── Edit 1 ──────────────────────────────────────────────────────
     # Add three includes right after #include "url.h":
@@ -100,9 +101,8 @@ def patch_dashdec_c(path: str) -> None:
         '#include "libavutil/avassert.h"  /* ' + MARKER + ' — av_assert0 */\n'
         '#include "http.h"  /* ' + MARKER + ' — ff_http_do_new_request2 */\n'
     )
-    text, n = pattern_include.subn(replacement_include, text, count=1)
-    if n != 1:
-        raise RuntimeError('Edit 1 failed: #include "url.h" not found')
+    p.regex(DASHDEC, pattern_include, replacement_include,
+            'Edit 1: #include "url.h"')
 
     # ─── Edit 2 ──────────────────────────────────────────────────────
     # Add input_read_done field to struct representation. Placed next
@@ -117,11 +117,8 @@ def patch_dashdec_c(path: str) -> None:
         ' TCP kept open for next GET */\n'
         r'\2'
     )
-    text, n = pattern_rep.subn(replacement_rep, text, count=1)
-    if n != 1:
-        raise RuntimeError(
-            'Edit 2 failed: struct representation tail not matched'
-        )
+    p.regex(DASHDEC, pattern_rep, replacement_rep,
+            'Edit 2: struct representation tail')
 
     # ─── Edit 3 ──────────────────────────────────────────────────────
     # Add http_persistent option field to DASHContext.
@@ -135,11 +132,8 @@ def patch_dashdec_c(path: str) -> None:
         '    int http_persistent;\n'
         r'\2'
     )
-    text, n = pattern_ctx.subn(replacement_ctx, text, count=1)
-    if n != 1:
-        raise RuntimeError(
-            'Edit 3 failed: DASHContext tail not matched'
-        )
+    p.regex(DASHDEC, pattern_ctx, replacement_ctx,
+            'Edit 3: DASHContext tail')
 
     # ─── Edit 4 ──────────────────────────────────────────────────────
     # Insert open_url_keepalive() static helper right before open_url.
@@ -173,15 +167,8 @@ def patch_dashdec_c(path: str) -> None:
         '}\n'
         '\n'
     )
-    if pattern_helper_anchor not in text:
-        raise RuntimeError(
-            'Edit 4 failed: open_url signature anchor not found'
-        )
-    text = text.replace(
-        pattern_helper_anchor,
-        helper_code + pattern_helper_anchor,
-        1,
-    )
+    p.edit(DASHDEC, pattern_helper_anchor,
+           helper_code + pattern_helper_anchor, 'Edit 4: open_url signature')
 
     # ─── Edit 5 ──────────────────────────────────────────────────────
     # Rewrite the open block inside open_url to try keepalive first.
@@ -241,13 +228,8 @@ def patch_dashdec_c(path: str) -> None:
     # for the newline escape inside the warning message) would be
     # re-interpreted by re.sub as a newline *character* and break the
     # string literal across two physical lines in the emitted C.
-    text, n = pattern_open.subn(
-        lambda _m: replacement_open, text, count=1
-    )
-    if n != 1:
-        raise RuntimeError(
-            'Edit 5 failed: open_url body pattern not matched'
-        )
+    p.regex(DASHDEC, pattern_open, lambda _m: replacement_open,
+            'Edit 5: open_url body')
 
     # ─── Edit 6 ──────────────────────────────────────────────────────
     # read_data: treat input_read_done like !v->input (trigger reopen),
@@ -264,11 +246,8 @@ def patch_dashdec_c(path: str) -> None:
         '        v->input_read_done = 0;\n'
         '        free_fragment(&v->cur_seg);\n'
     )
-    text, n = pattern_read_data.subn(replacement_read_data, text, count=1)
-    if n != 1:
-        raise RuntimeError(
-            'Edit 6 failed: read_data entry pattern not matched'
-        )
+    p.regex(DASHDEC, pattern_read_data, replacement_read_data,
+            'Edit 6: read_data entry')
 
     # ─── Edit 7 ──────────────────────────────────────────────────────
     # Segment-end close in dash_read_packet: keep socket alive when
@@ -305,11 +284,8 @@ def patch_dashdec_c(path: str) -> None:
         '                }\n'
         '            }\n'
     )
-    text, n = pattern_seg_close.subn(replacement_seg_close, text, count=1)
-    if n != 1:
-        raise RuntimeError(
-            'Edit 7 failed: segment-end close pattern not matched'
-        )
+    p.regex(DASHDEC, pattern_seg_close, replacement_seg_close,
+            'Edit 7: segment-end close')
 
     # ─── Edit 8 ──────────────────────────────────────────────────────
     # Register http_persistent in dash_options. Default 1 to match HLS.
@@ -330,28 +306,9 @@ def patch_dashdec_c(path: str) -> None:
         ' FLAGS },\n'
         r'\2'
     )
-    text, n = pattern_options.subn(replacement_options, text, count=1)
-    if n != 1:
-        raise RuntimeError(
-            'Edit 8 failed: dash_options terminator not matched'
-        )
-
-    # ─── Write back ──────────────────────────────────────────────────
-    with open(path, 'w') as f:
-        f.write(text)
-
-    added = len(text) - original_len
-    print(f'Patched: {path} (+{added} bytes across 8 edits)')
+    p.regex(DASHDEC, pattern_options, replacement_options,
+            'Edit 8: dash_options terminator')
 
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <ffmpeg_src_dir>')
-        sys.exit(1)
-
-    ffmpeg_dir = sys.argv[1]
-    patch_dashdec_c(os.path.join(ffmpeg_dir, 'libavformat', 'dashdec.c'))
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_ffmpeg_dash_keepalive', marker=MARKER,
+            usage='<ffmpeg_src_dir>')
