@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
+     All rights reserved.
+     Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+
+     The W1 browser harness, served by serve_coi.py (run_browser.sh stages
+     the files). Query:
+       mode=spike   the C harness (spike/spike.mjs), main on a pthread
+       mode=lib     lib_harness.mjs on the module (lib/libmpv.mjs), from the
+                    main thread
+       files=a,b    fixtures/ names; longs=c,d the timed files (spike only)
+       loops=N      core create and destroy cycles (spike only)
+       busy=1       keeps the main thread busy 50 ms every 100 ms
+     The result goes to POST /result as JSON. -->
+<meta charset="utf-8">
+<title>mak spike</title>
+<pre id="out"></pre>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') || 'spike';
+const list = (k) => (q.get(k) || '').split(',').filter(Boolean);
+const files = list('files'), longs = list('longs');
+const lines = [];
+const out = document.getElementById('out');
+const log = (s) => { lines.push(String(s)); out.textContent += s + '\n'; };
+let posted = false;
+const post = async (extra) => {
+  if (posted) return;
+  posted = true;
+  await fetch('/result', { method: 'POST', body: JSON.stringify({ mode, userAgent: navigator.userAgent,
+    crossOriginIsolated, hardwareConcurrency: navigator.hardwareConcurrency, lines, ...extra }) });
+};
+window.addEventListener('error', (e) => { log(`page error: ${e.message}`); post({ code: -1 }); });
+window.addEventListener('unhandledrejection', (e) => { log(`page rejection: ${e.reason}`); post({ code: -1 }); });
+setTimeout(() => { log('page timeout'); post({ code: -2 }); }, Number(q.get('timeout') || 240) * 1000);
+
+log(`crossOriginIsolated ${crossOriginIsolated}, hardwareConcurrency ${navigator.hardwareConcurrency}`);
+let busyTicks = 0;
+if (q.get('busy') === '1') {
+  setInterval(() => { const t = performance.now(); while (performance.now() - t < 50) {} busyTicks++; }, 100);
+}
+const fetchBytes = async (name) => new Uint8Array(await (await fetch(`fixtures/${name}`)).arrayBuffer());
+
+try {
+  if (mode === 'lib') {
+    const { runLibHarness } = await import('./lib_harness.mjs');
+    const { default: factory } = await import('./lib/libmpv.mjs');
+    const inputs = [];
+    for (const f of files) inputs.push({ name: f, bytes: await fetchBytes(f) });
+    const r = await runLibHarness(factory, inputs, log);
+    await post({ code: r.fail ? 1 : 0, busyTicks });
+  } else {
+    const t0 = performance.now();
+    const { default: factory } = await import('./spike/spike.mjs');
+    const mod = await factory({
+      print: log, printErr: log,
+      onExit: (code) => { log(`page: harness exit ${code}`); post({ code, busyTicks }); },
+    });
+    log(`measure instantiate_ms ${(performance.now() - t0).toFixed(3)}`);
+    mod.FS.mkdir('/in');
+    for (const f of [...files, ...longs]) mod.FS.writeFile(`/in/${f}`, await fetchBytes(f));
+    const args = [];
+    if (q.get('loops')) args.push('-n', q.get('loops'));
+    for (const l of longs) args.push('-l', `/in/${l}`);
+    for (const f of files) args.push(`/in/${f}`);
+    mod.callMain(args);
+  }
+} catch (e) {
+  log(`page exception: ${e && e.stack || e}`);
+  post({ code: -1 });
+}
+</script>
