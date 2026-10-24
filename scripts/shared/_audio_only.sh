@@ -469,24 +469,33 @@ verify_ffmpeg_config() {
   # libxml2 — required by the DASH demuxer's manifest parser (Plex etc).
   assert_define "$cfg" "CONFIG_LIBXML2"   "1"
 
-  # TLS backend: OpenSSL on every platform. We deliberately avoid
-  # SecureTransport on Apple — Apple deprecated it (no TLS 1.3, on its
-  # way out of upstream curl/ffmpeg). Assert it is OFF too, to catch a
-  # future regression that would silently re-enable both backends.
-  assert_define "$cfg" "CONFIG_OPENSSL"         "1"
-  case "$platform" in
-    macos|ios) assert_define "$cfg" "CONFIG_SECURETRANSPORT" "0" ;;
-  esac
-
   # The spdif muxer behind audio-spdif. Without it ad_spdif drops every
   # packet with no log, so a passthrough file plays nothing.
   assert_define "$cmp" "CONFIG_SPDIF_MUXER" "1"
-  # An https source opens https over tls, and through http-proxy (or the
-  # http_proxy variable) tls opens an httpproxy:// URL: without httpproxy
-  # every https source fails with "Protocol not found" behind a proxy.
-  assert_define "$cmp" "CONFIG_HTTPS_PROTOCOL"     "1"
-  assert_define "$cmp" "CONFIG_TLS_PROTOCOL"       "1"
-  assert_define "$cmp" "CONFIG_HTTPPROXY_PROTOCOL" "1"
+
+  if [[ "$platform" == "web" ]]; then
+    # The browser does the transport and TLS: no sockets, no OpenSSL, and
+    # the protocols that read memory and WasmFS.
+    assert_define "$cfg" "CONFIG_OPENSSL"         "0"
+    assert_define "$cfg" "CONFIG_NETWORK"         "0"
+    assert_define "$cmp" "CONFIG_FILE_PROTOCOL"   "1"
+    assert_define "$cmp" "CONFIG_DATA_PROTOCOL"   "1"
+  else
+    # TLS backend: OpenSSL on every platform. We deliberately avoid
+    # SecureTransport on Apple — Apple deprecated it (no TLS 1.3, on its
+    # way out of upstream curl/ffmpeg). Assert it is OFF too, to catch a
+    # future regression that would silently re-enable both backends.
+    assert_define "$cfg" "CONFIG_OPENSSL"         "1"
+    case "$platform" in
+      macos|ios) assert_define "$cfg" "CONFIG_SECURETRANSPORT" "0" ;;
+    esac
+    # An https source opens https over tls, and through http-proxy (or the
+    # http_proxy variable) tls opens an httpproxy:// URL: without httpproxy
+    # every https source fails with "Protocol not found" behind a proxy.
+    assert_define "$cmp" "CONFIG_HTTPS_PROTOCOL"     "1"
+    assert_define "$cmp" "CONFIG_TLS_PROTOCOL"       "1"
+    assert_define "$cmp" "CONFIG_HTTPPROXY_PROTOCOL" "1"
+  fi
 
   # Full 1:1 audit: EVERY selected decoder and filter must have actually
   # compiled (CONFIG_X=1). This catches a flag that passed ./configure but
