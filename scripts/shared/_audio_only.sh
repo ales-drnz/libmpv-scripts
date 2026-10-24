@@ -474,12 +474,19 @@ verify_ffmpeg_config() {
   assert_define "$cmp" "CONFIG_SPDIF_MUXER" "1"
 
   if [[ "$platform" == "web" ]]; then
-    # The browser does the transport and TLS: no sockets, no OpenSSL, and
-    # the protocols that read memory and WasmFS.
+    # The browser does the transport and TLS: no sockets, no OpenSSL, the
+    # protocols that read memory and WasmFS, and http, https and blob: URLs
+    # through fetch (webio), which the HLS and DASH demuxers open too.
     assert_define "$cfg" "CONFIG_OPENSSL"         "0"
     assert_define "$cfg" "CONFIG_NETWORK"         "0"
     assert_define "$cmp" "CONFIG_FILE_PROTOCOL"   "1"
     assert_define "$cmp" "CONFIG_DATA_PROTOCOL"   "1"
+    assert_define "$cmp" "CONFIG_HTTP_PROTOCOL"   "0"
+    assert_define "$cmp" "CONFIG_WEBIO_HTTP_PROTOCOL"    "1"
+    assert_define "$cmp" "CONFIG_WEBIO_HTTPS_PROTOCOL"   "1"
+    assert_define "$cmp" "CONFIG_WEBIO_MAKBLOB_PROTOCOL" "1"
+    assert_define "$cmp" "CONFIG_HLS_DEMUXER"     "1"
+    assert_define "$cmp" "CONFIG_DASH_DEMUXER"    "1"
   else
     # TLS backend: OpenSSL on every platform. We deliberately avoid
     # SecureTransport on Apple — Apple deprecated it (no TLS 1.3, on its
