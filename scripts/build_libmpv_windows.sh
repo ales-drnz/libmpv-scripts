@@ -598,6 +598,7 @@ if [[ ! -f "$DIST/lib/libavcodec.a" ]]; then
   # an unpatched tree.
   rm -rf "$SRC/ffmpeg-$FFMPEG_VERSION"
   tar -xf "$FF" -C "$SRC"
+  patch_record_start ffmpeg "$DIST"
   apply_ffmpeg_patches "$SRC/ffmpeg-$FFMPEG_VERSION"
   pushd "$SRC/ffmpeg-$FFMPEG_VERSION"
     ./configure \
@@ -620,6 +621,7 @@ MPV_ARCHIVE=$(fetch mpv "https://github.com/mpv-player/mpv/archive/refs/tags/v${
 tar -xf "$MPV_ARCHIVE" -C "$SRC"
 
 pushd "$SRC/mpv-$MPV_VERSION"
+  patch_record_start mpv "$DIST"
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/windows/patch_windows_deps.py" "$SRC/mpv-$MPV_VERSION/meson.build"
   # timer_resolution (toggleable): stop mpv pinning the system-wide timer
   # resolution to 1 ms at init (it fights DWM frame-pacing → host-app UI
@@ -628,6 +630,7 @@ pushd "$SRC/mpv-$MPV_VERSION"
   # gated on the same `patch_on` mechanism as the shared toggleable patches.
   if patch_on timer_resolution; then
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/windows/patch_timer_resolution.py" "$SRC/mpv-$MPV_VERSION"
+    record_patch timer_resolution
   else
     warn "Skipping disabled patch: timer_resolution"
   fi
@@ -741,6 +744,7 @@ cp "$DIST/bin/libmpv-2.dll" "$OUT_FILE"
 # PE export table (.edata), NOT the COFF symbol table, so --strip-all keeps the
 # full public API. (Linux/Android already strip; Windows/macOS/iOS did not.)
 "$STRIP" --strip-all "$OUT_FILE"
+write_build_record "windows-$OUT_ARCH" "$DIST"
 
 log "=== Build libmpv for Windows COMPLETED! ==="
 log "Artifact: $OUT_FILE"

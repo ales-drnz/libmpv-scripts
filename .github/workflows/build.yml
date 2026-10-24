@@ -64,6 +64,7 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: |
             builds/release/libmpv_linux-${{ matrix.arch }}.so
+            builds/release/build_linux-${{ matrix.arch }}.json
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -102,6 +103,7 @@ jobs:
           name: android
           path: |
             builds/release/libmpv_android-*.so
+            builds/release/build_android-*.json
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -142,6 +144,7 @@ jobs:
           name: windows-${{ matrix.arch }}
           path: |
             builds/release/libmpv_windows-*.dll
+            builds/release/build_windows-*.json
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -165,9 +168,11 @@ jobs:
           - name: macOS
             script: scripts/build_libmpv_macos.sh
             output: builds/release/libmpv_macos.xcframework.zip
+            record: builds/release/build_macos.json
           - name: iOS
             script: scripts/build_libmpv_ios.sh
             output: builds/release/libmpv_ios.xcframework.zip
+            record: builds/release/build_ios.json
     steps:
       - uses: actions/checkout@v7
       - run: brew install meson ninja nasm cmake pkg-config autoconf automake libtool
@@ -191,7 +196,9 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
-          path: ${{ matrix.output }}
+          path: |
+            ${{ matrix.output }}
+            ${{ matrix.record }}
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -212,10 +219,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
+      # Each build leaves a record of its patches and filters next to its
+      # binary, which write_manifest.sh lists with this commit and run.
       - name: Assemble builds/release
         run: |
           mkdir -p builds/release
-          find artifacts -type f -name 'libmpv_*' -exec cp {} builds/release/ \;
+          find artifacts -type f \( -name 'libmpv_*' -o -name 'build_*.json' \) -exec cp {} builds/release/ \;
           scripts/write_manifest.sh
           ls -la builds/release
       - uses: actions/upload-artifact@v7
@@ -291,9 +300,9 @@ jobs:
             builds/audio_fallback_test builds/release/libmpv_linux-x86_64.so /tmp/tone.wav'
 
   # The TUI's go vet and go test, and the bash checks of the L13 exit code
-  # classification and of the FFmpeg component markers. Not in the needs of
-  # release: a red test here does not hold back the binaries, it only shows
-  # next to them.
+  # classification, of the FFmpeg component markers and of the manifest
+  # written from the build records. Not in the needs of release: a red test
+  # here does not hold back the binaries, it only shows next to them.
   tui:
     name: TUI and verify tests
     runs-on: ubuntu-24.04
@@ -313,6 +322,8 @@ jobs:
         run: bash verify/tests/l13_windows_test.sh
       - name: FFmpeg muxer and protocol markers
         run: bash verify/tests/components_test.sh
+      - name: Manifest and build records
+        run: bash verify/tests/manifest_test.sh
 
   # The native tests of the patches, with AddressSanitizer: a debug libmpv
   # with every mpv patch, built against Ubuntu's FFmpeg 6.1, runs the C and

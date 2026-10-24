@@ -449,6 +449,7 @@ build_ffmpeg() {
   # reused tree would keep the result of older patches.
   rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
+  patch_record_start ffmpeg "$PREFIX"
   apply_ffmpeg_patches "$dir"
 
   local bdir="$BUILD_DIR/build/ffmpeg"; mkdir -p "$bdir"
@@ -566,6 +567,7 @@ build_mpv() {
   rm -rf "$BUILD_DIR/src/mpv-$MPV_VERSION"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/mpv"; mkdir -p "$bdir"
+  patch_record_start mpv "$PREFIX"
   apply_mpv_patches_common "$dir"
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/linux/patch_optional_audio_libs.py" "$dir"
 
@@ -656,6 +658,7 @@ finalize() {
   assert_no_relr "$out"
   assert_no_needed "$out" 'libpipewire|libpulse'
   assert_glibc_floor "$out" "$LINUX_GLIBC_FLOOR"
+  write_build_record "linux-$ARCH" "$PREFIX"
 
   # Dynsym hygiene check. readelf -W --dyn-syms columns:
   #   Num Value Size Type Bind Vis Ndx Name

@@ -186,6 +186,75 @@ patch_on() {
   esac
 }
 
+# ── Patch record ─────────────────────────────────────────────────────────────
+# Each build records the toggleable patches it applied (the ids of the TUI
+# catalog; the required ones always are) and the filters FFmpeg was
+# configured with, so the manifest states what the binaries contain and not
+# what the settings say when it runs (F211). The record lives in the prefix
+# of the stage, under share/libmpv-scripts: a cached stage keeps its prefix,
+# and with it its record.
+#
+# patch_record_start <tree> <prefix> — the stage patches a fresh <tree>
+# (ffmpeg or mpv) and installs into <prefix>: start its record afresh. The
+# FFmpeg one also keeps the AUDIO_FILTERS its configure compiles in.
+patch_record_start() {
+  local tree="$1" dir="$2/share/libmpv-scripts"
+  mkdir -p "$dir"
+  PATCH_RECORD="$dir/$tree.patches"
+  : > "$PATCH_RECORD"
+  if [[ "$tree" == ffmpeg ]]; then
+    printf '%s\n' "$AUDIO_FILTERS" > "$dir/audio_filters"
+  fi
+}
+
+# record_patch <id> — note <id> in the record of the tree being patched.
+record_patch() {
+  if [[ -n "${PATCH_RECORD:-}" ]]; then
+    printf '%s\n' "$1" >> "$PATCH_RECORD"
+  fi
+}
+
+# write_build_record <target> <prefix>... — write builds/release/
+# build_<target>.json, the record of libmpv_<target>.*: its release, its
+# patches and its filters, from the prefixes it was linked from (one per
+# architecture or slice, which must agree). write_manifest.sh reads it.
+# RELEASE_DIR overrides the directory.
+write_build_record() {
+  local target="$1"; shift
+  local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
+  mkdir -p "$out"
+  python3 - "$out/build_$target.json" "$target" "$LIBMPV_RELEASE" "$@" <<'PY'
+import json, pathlib, sys
+
+out, target, release, *prefixes = sys.argv[1:]
+records = []
+for prefix in prefixes:
+    d = pathlib.Path(prefix, "share", "libmpv-scripts")
+    try:
+        patches = set()
+        for tree in ("ffmpeg", "mpv"):
+            patches.update((d / f"{tree}.patches").read_text().split())
+        filters = (d / "audio_filters").read_text().strip().split(",")
+    except FileNotFoundError as e:
+        sys.exit(f"No patch record {e.filename}: a stage built before the "
+                 "record existed, clean the build directory and build again")
+    records.append((sorted(patches), sorted(t for t in filters if t)))
+if not records:
+    sys.exit("write_build_record: no prefix")
+if any(r != records[0] for r in records[1:]):
+    sys.exit(f"The prefixes of {target} differ in patches or filters: "
+             f"{dict(zip(prefixes, records))}")
+patches, filters = records[0]
+pathlib.Path(out).write_text(json.dumps({
+    "release": release,
+    "target": target,
+    "patches": patches,
+    "audioFilters": filters,
+}, indent=2) + "\n")
+print(f"Wrote {out} ({len(patches)} patches, {len(filters)} filters)")
+PY
+}
+
 # swscale_stripped — true only when libswscale can actually be dropped. That
 # needs BOTH reduction patches on:
 #   - strip_swscale   severs mpv's own libswscale link (stubs mp_sws_*) and
@@ -591,6 +660,7 @@ apply_ffmpeg_patches() {
     log "Patching FFmpeg for libsmb2 support..."
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" \
       "$ffmpeg_dir" "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/libsmb2.c"
+    record_patch libsmb2
   else
     warn "Skipping disabled patch: libsmb2"
   fi
@@ -599,6 +669,7 @@ apply_ffmpeg_patches() {
   if patch_on advanced_editlist; then
     log "Patching FFmpeg mov demuxer to honor edit list on fragmented MP4..."
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_advanced_editlist.py" "$ffmpeg_dir"
+    record_patch advanced_editlist
   else
     warn "Skipping disabled patch: advanced_editlist"
   fi
@@ -607,6 +678,7 @@ apply_ffmpeg_patches() {
   if patch_on dash_keepalive; then
     log "Patching FFmpeg DASH demuxer for HTTP keep-alive..."
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_dash_keepalive.py" "$ffmpeg_dir"
+    record_patch dash_keepalive
   else
     warn "Skipping disabled patch: dash_keepalive"
   fi
@@ -618,6 +690,7 @@ apply_ffmpeg_patches() {
   if patch_on embed_cacert; then
     log "Patching FFmpeg to embed the CA root bundle into OpenSSL..."
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$ffmpeg_dir"
+    record_patch embed_cacert
   else
     warn "Skipping disabled patch: embed_cacert"
   fi
@@ -628,12 +701,13 @@ apply_ffmpeg_patches() {
 # Platform-specific mpv patches (patch_utils_mac, patch_ios_*,
 # patch_windows_deps) stay inline in the per-platform script.
 # _mpv_patch <id> <script.py> <args...> — apply a shared mpv patch unless the
-# user disabled <id> in Settings ▸ Patches. Required patches don't go through
-# this gate (they're applied unconditionally).
+# user disabled <id> in Settings ▸ Patches, and record it. Required patches
+# don't go through this gate (they're applied unconditionally).
 _mpv_patch() {
   local id="$1" script="$2"; shift 2
   if patch_on "$id"; then
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/$script" "$@"
+    record_patch "$id"
   else
     warn "Skipping disabled patch: $id"
   fi
@@ -662,6 +736,7 @@ apply_mpv_patches_common() {
   # video/sws_utils.c).
   if swscale_stripped; then
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_swscale_optional.py" "$mpv_dir"
+    record_patch strip_swscale
   else
     warn "Keeping libswscale (strip_swscale or strip_mpv_dead disabled)"
   fi
@@ -678,6 +753,7 @@ apply_mpv_patches_common() {
       warn "libass still stripped: it needs the subtitle infra (lavc_conv/sd_filter/draw_bmp) that strip_mpv_dead removes — disable strip_mpv_dead too to restore subtitles."
     fi
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_strip_libass.py" "$mpv_dir"
+    record_patch strip_libass
   else
     warn "Skipping disabled patch: strip_libass (libass kept — strip_mpv_dead also disabled)"
   fi

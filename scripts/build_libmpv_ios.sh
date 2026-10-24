@@ -726,6 +726,7 @@ slice_ffmpeg() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
 
   # ── Patch FFmpeg (libsmb2, mov advanced_editlist, DASH keep-alive) ───────
+  patch_record_start ffmpeg "$prefix"
   apply_ffmpeg_patches "$dir"
 
   local bdir="$BUILD_DIR/build/ffmpeg-${sdk}-${arch}"; mkdir -p "$bdir"
@@ -775,6 +776,7 @@ slice_mpv() {
   local dir="$BUILD_DIR/src/mpv-${sdk}_${arch}"
   rm -rf "$dir"; mkdir -p "$dir"
   tar -xzf "$src" --strip-components=1 -C "$dir"
+  patch_record_start mpv "$prefix"
 
   # ── Apply mpv patches ──────────────────────────────────────────────────────
   # iOS-only patches (must run before the shared ones — they touch
@@ -993,6 +995,11 @@ EOF
   zip -r "$out_zip" "libmpv.xcframework" >/dev/null
   popd >/dev/null
   ok "Output: $out_zip"
+  local prefixes=() slice
+  for slice in "${SLICES[@]}"; do
+    prefixes+=("$PREFIX_BASE/${slice%%:*}_${slice##*:}")
+  done
+  write_build_record ios "${prefixes[@]}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────

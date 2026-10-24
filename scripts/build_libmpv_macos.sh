@@ -616,6 +616,7 @@ build_ffmpeg() {
   rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
 
+  patch_record_start ffmpeg "$prefix"
   apply_ffmpeg_patches "$dir"
 
   local bdir="$BUILD_DIR/build/ffmpeg"
@@ -677,6 +678,7 @@ build_mpv() {
   local dir="$BUILD_DIR/src/mpv-$ARCH"
   rm -rf "$dir"; mkdir -p "$dir"
   tar -xzf "$src" --strip-components=1 -C "$dir"
+  patch_record_start mpv "$prefix"
 
   # macOS-only patches: required before the shared ones (touch meson.build).
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/apple/patch_utils_mac.py" "$dir/meson.build"
@@ -996,6 +998,11 @@ EOF
   zip -y -r "$out_zip" "libmpv.xcframework" >/dev/null
   popd >/dev/null
   ok "Output: $out_zip"
+  local prefixes=()
+  for arch in $ARCHS; do
+    prefixes+=("$BUILD_ROOT/$arch/prefix")
+  done
+  write_build_record macos "${prefixes[@]}"
 
   # 5. Verify the universal dylib inside the framework.
   verify_dylib "$fw/libmpv"

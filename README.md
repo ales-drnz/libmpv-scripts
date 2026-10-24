@@ -41,7 +41,7 @@ On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Andr
 
 Each library exports only the `mpv_*` C API, plus the `mak_pcm_*` functions that feed live PCM to the `mak-pcm` protocol, and carries no video decoders. On Linux and Android its SONAME is `libmpv_audio_kit.so`, so it can live next to another plugin's libmpv. The Linux one needs glibc 2.31 or later and ALSA (`libasound.so.2`). It loads PipeWire and PulseAudio only when they are installed, through stubs made with Implib.so (vendored in `tools/implib`), and skips a PipeWire older than 0.3.57 in favour of PulseAudio, then ALSA.
 
-The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and `scripts/shared/_sources.sha256` pins each source tarball by its SHA-256 and each git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. A build also writes `builds/release/manifest.json`, with the versions, the compiled audio filters and the hash of every library.
+The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and `scripts/shared/_sources.sha256` pins each source tarball by its SHA-256 and each git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. Each build leaves next to its library a record of the patches it applied and the audio filters it compiled (`builds/release/build_<target>.json`). The Manifest action turns them into `builds/release/manifest.json`, with the versions, the filters, the patches of every target, the commit and run of the build and the hash of every library. It fails when the libraries disagree on the filters or one has no record.
 
 ---
 
@@ -214,7 +214,7 @@ To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` an
 
 #### 3.5 On GitHub Actions
 
-Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio, and runs the patch tests of [4.3](#43-verifying). A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
+Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries, their build records and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio, and runs the patch tests of [4.3](#43-verifying). A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
 
 ---
 

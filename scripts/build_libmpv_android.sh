@@ -408,6 +408,7 @@ build_abi() {
   case "$abi" in
     arm64-v8a|x86_64) assert_load_align "$release_dir/$final_name" 16384 "$readelf" ;;
   esac
+  write_build_record "android-$abi" "$prefix"
   ok "Output: $release_dir/$final_name"
 }
 
@@ -754,6 +755,7 @@ android_ffmpeg() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
 
   # ── Patch FFmpeg (libsmb2, mov advanced_editlist, DASH keep-alive) ───────
+  patch_record_start ffmpeg "$prefix"
   apply_ffmpeg_patches "$dir"
 
   local bdir="$BUILD_DIR/build/ffmpeg-android-$abi"; mkdir -p "$bdir"
@@ -832,6 +834,7 @@ android_mpv() {
   local bdir="$BUILD_DIR/build/mpv-android-$abi"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
   # ── Apply the shared mpv patches (scripts/shared/_audio_only.sh) ─────────
+  patch_record_start mpv "$prefix"
   apply_mpv_patches_common "$dir"
   # audiotrack (toggleable): fixes of mpv's default Android output, see
   # patches/mpv/android/patch_audiotrack.py. ao_audiotrack.c is compiled on
@@ -839,6 +842,7 @@ android_mpv() {
   # apply_mpv_patches_common.
   if patch_on audiotrack; then
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/android/patch_audiotrack.py" "$dir"
+    record_patch audiotrack
   else
     warn "Skipping disabled patch: audiotrack"
   fi
