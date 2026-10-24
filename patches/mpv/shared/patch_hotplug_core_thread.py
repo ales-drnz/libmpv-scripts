@@ -45,75 +45,55 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+import anchor  # noqa: E402
+
 MARKER = "MAK_HOTPLUG_CORE_THREAD_PATCH_V2"
 
-root = Path(sys.argv[1])
-client = root / "player/client.c"
-command = root / "player/command.c"
-command_h = root / "player/command.h"
 
-# Every anchor is checked before any file is written, so a mismatch leaves
-# the tree as it was instead of half patched.
-pending: list[tuple[Path, str]] = []
+def apply(p):
+    p.edits("player/command.h", [(
+        "void command_uninit(struct MPContext *mpctx);\n",
+        "void command_uninit(struct MPContext *mpctx);\n"
+        f"// {MARKER}: destroy the AO hotplug on the thread that created it.\n"
+        "void command_destroy_hotplug(struct MPContext *mpctx);\n",
+    )])
+
+    p.edits("player/command.c", [(
+        "void command_uninit(struct MPContext *mpctx)\n"
+        "{\n",
+        f"/* {MARKER}: the hotplug is created by a property getter on the core\n"
+        " * thread, and on Windows its WASAPI teardown must run there too (COM is\n"
+        " * per thread). core_thread() calls this once no client is left. */\n"
+        "void command_destroy_hotplug(struct MPContext *mpctx)\n"
+        "{\n"
+        "    struct command_ctx *ctx = mpctx->command_ctx;\n"
+        "    if (!ctx)\n"
+        "        return;\n"
+        "    ao_hotplug_destroy(ctx->hotplug);\n"
+        "    ctx->hotplug = NULL;\n"
+        "}\n"
+        "\n"
+        "void command_uninit(struct MPContext *mpctx)\n"
+        "{\n",
+    )])
+
+    p.edits("player/client.c", [(
+        "    mp_shutdown_clients(mpctx);\n"
+        "\n"
+        "    MP_THREAD_RETURN();\n",
+        "    mp_shutdown_clients(mpctx);\n"
+        "\n"
+        f"    // {MARKER}: no client is left to read the device list or reopen\n"
+        "    // the output, so both go now, on the thread that created them,\n"
+        "    // instead of on the thread that destroys the last mpv_handle. With\n"
+        "    // gapless audio a quit leaves the output open; it goes first.\n"
+        "    uninit_audio_out(mpctx);\n"
+        "    command_destroy_hotplug(mpctx);\n"
+        "\n"
+        "    MP_THREAD_RETURN();\n",
+    )])
 
 
-def patch(path: Path, edits: list[tuple[str, str]]) -> None:
-    text = path.read_text()
-    if MARKER in text:
-        print(f"Already patched: {path.name}")
-        return
-    for old, new in edits:
-        if text.count(old) != 1:
-            sys.exit(
-                f"patch_hotplug_core_thread: anchor not found once in {path}: "
-                f"{old!r}"
-            )
-        text = text.replace(old, new, 1)
-    pending.append((path, text))
-
-
-patch(command_h, [(
-    "void command_uninit(struct MPContext *mpctx);\n",
-    "void command_uninit(struct MPContext *mpctx);\n"
-    f"// {MARKER}: destroy the AO hotplug on the thread that created it.\n"
-    "void command_destroy_hotplug(struct MPContext *mpctx);\n",
-)])
-
-patch(command, [(
-    "void command_uninit(struct MPContext *mpctx)\n"
-    "{\n",
-    f"/* {MARKER}: the hotplug is created by a property getter on the core\n"
-    " * thread, and on Windows its WASAPI teardown must run there too (COM is\n"
-    " * per thread). core_thread() calls this once no client is left. */\n"
-    "void command_destroy_hotplug(struct MPContext *mpctx)\n"
-    "{\n"
-    "    struct command_ctx *ctx = mpctx->command_ctx;\n"
-    "    if (!ctx)\n"
-    "        return;\n"
-    "    ao_hotplug_destroy(ctx->hotplug);\n"
-    "    ctx->hotplug = NULL;\n"
-    "}\n"
-    "\n"
-    "void command_uninit(struct MPContext *mpctx)\n"
-    "{\n",
-)])
-
-patch(client, [(
-    "    mp_shutdown_clients(mpctx);\n"
-    "\n"
-    "    MP_THREAD_RETURN();\n",
-    "    mp_shutdown_clients(mpctx);\n"
-    "\n"
-    f"    // {MARKER}: no client is left to read the device list or reopen\n"
-    "    // the output, so both go now, on the thread that created them,\n"
-    "    // instead of on the thread that destroys the last mpv_handle. With\n"
-    "    // gapless audio a quit leaves the output open; it goes first.\n"
-    "    uninit_audio_out(mpctx);\n"
-    "    command_destroy_hotplug(mpctx);\n"
-    "\n"
-    "    MP_THREAD_RETURN();\n",
-)])
-
-for path, text in pending:
-    path.write_text(text)
-    print(f"Patched: {path}")
+anchor.main(apply, "patch_hotplug_core_thread", marker=MARKER)

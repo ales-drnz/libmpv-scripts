@@ -28,10 +28,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-MARKER = "MAK_LAVFI_EOF_PASSTHROUGH_PATCH_V1"
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+import anchor  # noqa: E402
 
-root = Path(sys.argv[1])
-lavfi = root / "filters/f_lavfi.c"
+MARKER = "MAK_LAVFI_EOF_PASSTHROUGH_PATCH_V1"
 
 EDITS = [
     (
@@ -96,16 +97,9 @@ EDITS = [
     ),
 ]
 
-text = lavfi.read_text()
-if MARKER in text:
-    print(f"Already patched: {lavfi.name}")
-    sys.exit(0)
-# Every anchor is checked before the file is written, so a mismatch leaves
-# the tree as it was instead of half patched.
-for old, new in EDITS:
-    if text.count(old) != 1:
-        sys.exit(f"patch_lavfi_eof_passthrough: anchor not found once in "
-                 f"{lavfi}: {old!r}")
-    text = text.replace(old, new, 1)
-lavfi.write_text(text)
-print(f"Patched: {lavfi}")
+
+def apply(p):
+    p.edits("filters/f_lavfi.c", EDITS)
+
+
+anchor.main(apply, "patch_lavfi_eof_passthrough", marker=MARKER)

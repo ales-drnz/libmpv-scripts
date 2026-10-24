@@ -48,8 +48,11 @@ Usage
     python3 patch_swscale_optional.py <mpv_source_dir>
 """
 import sys
-import os
+from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Idempotency marker — present in the stub TU and used as the meson.build
 # "already patched" sentinel.
@@ -83,40 +86,6 @@ MESON_SRC_OLD = "    'filters/f_swscale.c',\n"
 MESON_SRC_NEW = ""
 
 
-def patch_meson(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-
-    if MESON_DEP_OLD not in text:
-        raise RuntimeError(
-            f'libswscale dependency() call not found in {path} — '
-            f'mpv source layout changed.'
-        )
-    text = text.replace(MESON_DEP_OLD, MESON_DEP_NEW, 1)
-
-    if MESON_ARR_OLD not in text:
-        raise RuntimeError(
-            f'`dependencies = [ ... libswscale]` array tail not found in '
-            f'{path} — mpv source layout changed.'
-        )
-    text = text.replace(MESON_ARR_OLD, MESON_ARR_NEW, 1)
-
-    if MESON_SRC_OLD not in text:
-        raise RuntimeError(
-            f"'filters/f_swscale.c' source entry not found in {path} — "
-            f'mpv source layout changed.'
-        )
-    text = text.replace(MESON_SRC_OLD, MESON_SRC_NEW, 1)
-
-    with open(path, 'w') as f:
-        f.write(text)
-    print(f'Patched: {path} '
-          '(libswscale optional, dropped from link + f_swscale.c source)')
-
-
 # ─── common/av_log.c ───────────────────────────────────────────────────
 
 # Compile out the swscale headers. The two #include lines are contiguous
@@ -142,32 +111,6 @@ AVLOG_ROW_OLD = (
 AVLOG_ROW_NEW = (
     "        /* " + MARKER + " — libswscale row removed */\n"
 )
-
-
-def patch_av_log(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-
-    if AVLOG_INC_OLD not in text:
-        raise RuntimeError(
-            f'libswscale #include block not found in {path} — '
-            f'mpv source layout changed.'
-        )
-    text = text.replace(AVLOG_INC_OLD, AVLOG_INC_NEW, 1)
-
-    if AVLOG_ROW_OLD not in text:
-        raise RuntimeError(
-            f'libswscale version-table row not found in {path} — '
-            f'mpv source layout changed.'
-        )
-    text = text.replace(AVLOG_ROW_OLD, AVLOG_ROW_NEW, 1)
-
-    with open(path, 'w') as f:
-        f.write(text)
-    print(f'Patched: {path} (libswscale version banner entry removed)')
 
 
 # ─── video/sws_utils.c (full overwrite with a no-swscale stub) ─────────
@@ -202,6 +145,8 @@ def patch_av_log(path):
 # gone (ffmpeg built --disable-swscale), so they are defined locally as
 # the stable public FFmpeg enum values rather than #included. No libswscale
 # function is called or referenced, so nothing here forces the link.
+
+SWS_UTILS = 'video/sws_utils.c'
 
 SWS_UTILS_STUB = '''\
 /*
@@ -408,27 +353,22 @@ bool mp_sws_supports_input(int imgfmt)
 '''
 
 
-def patch_sws_utils(path):
-    if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-        if MARKER in existing:
-            print(f'Already patched: {path}')
-            return
-    with open(path, 'w') as f:
-        f.write(SWS_UTILS_STUB)
-    print(f'Patched: {path} (overwritten with no-swscale stub TU)')
+def apply(p):
+    p.edits('meson.build', [
+        ('libswscale dependency() call', MESON_DEP_OLD, MESON_DEP_NEW),
+        ('`dependencies = [ ... libswscale]` array tail', MESON_ARR_OLD,
+         MESON_ARR_NEW),
+        ("'filters/f_swscale.c' source entry", MESON_SRC_OLD, MESON_SRC_NEW),
+    ])
+    p.edits('common/av_log.c', [
+        ('libswscale #include block', AVLOG_INC_OLD, AVLOG_INC_NEW),
+        ('libswscale version-table row', AVLOG_ROW_OLD, AVLOG_ROW_NEW),
+    ])
+    if p.marked(SWS_UTILS):
+        print(f'Already patched: {SWS_UTILS}')
+    else:
+        p.replace_file(SWS_UTILS, SWS_UTILS_STUB)
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    patch_meson(os.path.join(src, 'meson.build'))
-    patch_av_log(os.path.join(src, 'common', 'av_log.c'))
-    patch_sws_utils(os.path.join(src, 'video', 'sws_utils.c'))
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_swscale_optional', marker=MARKER,
+            usage='<mpv_src_dir>')

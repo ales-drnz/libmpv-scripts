@@ -122,10 +122,12 @@ Removals
 Idempotency
 ===========
 
-Every edit is guarded. Overwritten TUs and the new stub file carry the
-MARKER and are only (re)written when missing or stale-but-ours. meson and
-anchor edits check for the post-patch state (token already gone / marker
-present) and are skipped on a re-run. Running the patch twice on a cached,
+Every anchor must be found exactly once, and no file is written until all
+are. Overwritten TUs are rewritten when they differ from the stub; the new
+stub file carries the MARKER and is refreshed when stale-but-ours, never
+written over someone else's file. meson and anchor edits check for the
+post-patch state (stub source listed, tokens already gone, marker present)
+and are skipped on a re-run. Running the patch twice on a cached,
 already-patched tree is a no-op.
 
 Usage
@@ -134,76 +136,13 @@ Usage
     python3 patch_strip_mpv_dead.py <mpv_source_dir>
 """
 import sys
-import os
+from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 MARKER = 'MAK_STRIP_MPV_DEAD_PATCH_V1'
-
-
-# ─── helpers ────────────────────────────────────────────────────────────
-
-def _read(path):
-    with open(path) as f:
-        return f.read()
-
-
-def _write(path, text):
-    with open(path, 'w') as f:
-        f.write(text)
-
-
-def _overwrite_in_place(path, content, what):
-    """Replace an EXISTING upstream TU with our stub, idempotently.
-
-    On the first run `path` is the pristine upstream source, which we replace
-    wholesale (the whole point of the patch). On a re-run the file already
-    equals our stub (carries MARKER) and we skip. We only ever write a file
-    that already exists — never create a new path here.
-    """
-    if not os.path.exists(path):
-        raise RuntimeError(
-            f'{path} does not exist — expected an upstream TU to overwrite '
-            f'({what}); mpv source layout changed.')
-    existing = _read(path)
-    if existing == content:
-        print(f'Already stubbed: {path}')
-        return
-    if MARKER in existing:
-        # An older revision of our own stub — refresh it.
-        _write(path, content)
-        print(f'Refreshed stub: {path} ({what})')
-        return
-    _write(path, content)
-    print(f'Stubbed: {path} ({what})')
-
-
-def _write_new_stub(path, content, what):
-    """Create a brand-new stub file that does not exist upstream.
-
-    Idempotent and protective: if a file is already at `path`, only
-    (re)write it when it is clearly ours (carries MARKER); refuse otherwise
-    so we never clobber an unrelated file that happens to share the name.
-    """
-    if os.path.exists(path):
-        existing = _read(path)
-        if existing == content:
-            print(f'Already present: {path}')
-            return
-        if MARKER not in existing:
-            raise RuntimeError(
-                f'{path} exists but is not a {MARKER} stub — refusing to '
-                f'overwrite ({what}).')
-    _write(path, content)
-    print(f'Wrote: {path} ({what})')
-
-
-def _drop_lines(text, lines, path, label):
-    """Remove each exact line in `lines` from `text` (idempotent: missing
-    lines are tolerated, since a re-run will already have removed them)."""
-    for ln in lines:
-        if ln in text:
-            text = text.replace(ln, '', 1)
-    return text
 
 
 # ─── new stub: video/out/stub_gpu.c ─────────────────────────────────────
@@ -211,7 +150,7 @@ def _drop_lines(text, lines, path, label):
 # Replaces the cross-TU symbols that staying code still references after the
 # whole GPU/shader render stack is removed from the build.
 
-STUB_GPU_FILENAME = os.path.join('video', 'out', 'stub_gpu.c')
+STUB_GPU_FILENAME = 'video/out/stub_gpu.c'
 
 STUB_GPU_SOURCE = r'''/*
  * ''' + MARKER + r'''
@@ -324,14 +263,9 @@ int ra_hwdec_validate_drivers_only_opt(struct mp_log *log,
 '''
 
 
-def write_stub_gpu(src):
-    path = os.path.join(src, STUB_GPU_FILENAME)
-    _write_new_stub(path, STUB_GPU_SOURCE, 'GPU render-stack symbols')
-
-
 # ─── overwrite: player/screenshot.c ─────────────────────────────────────
 
-SCREENSHOT_REL = os.path.join('player', 'screenshot.c')
+SCREENSHOT_REL = 'player/screenshot.c'
 
 SCREENSHOT_STUB = r'''/*
  * ''' + MARKER + r'''
@@ -409,14 +343,9 @@ void cmd_screenshot_raw(void *p)
 '''
 
 
-def write_screenshot_stub(src):
-    _overwrite_in_place(os.path.join(src, SCREENSHOT_REL), SCREENSHOT_STUB,
-                    'screenshot disabled')
-
-
 # ─── overwrite: video/image_writer.c ────────────────────────────────────
 
-IMAGE_WRITER_REL = os.path.join('video', 'image_writer.c')
+IMAGE_WRITER_REL = 'video/image_writer.c'
 
 IMAGE_WRITER_STUB = r'''/*
  * ''' + MARKER + r'''
@@ -549,14 +478,9 @@ void dump_png(struct mp_image *image, const char *filename, struct mp_log *log)
 '''
 
 
-def write_image_writer_stub(src):
-    _overwrite_in_place(os.path.join(src, IMAGE_WRITER_REL), IMAGE_WRITER_STUB,
-                    'image writer disabled')
-
-
 # ─── overwrite: common/encode_lavc.c ────────────────────────────────────
 
-ENCODE_REL = os.path.join('common', 'encode_lavc.c')
+ENCODE_REL = 'common/encode_lavc.c'
 
 ENCODE_STUB = r'''/*
  * ''' + MARKER + r'''
@@ -694,14 +618,9 @@ void encoder_update_log(struct mpv_global *global)
 '''
 
 
-def write_encode_stub(src):
-    _overwrite_in_place(os.path.join(src, ENCODE_REL), ENCODE_STUB,
-                    'encode mode disabled')
-
-
 # ─── overwrite: sub/draw_bmp.c ──────────────────────────────────────────
 
-DRAW_BMP_REL = os.path.join('sub', 'draw_bmp.c')
+DRAW_BMP_REL = 'sub/draw_bmp.c'
 
 DRAW_BMP_STUB = r'''/*
  * ''' + MARKER + r'''
@@ -785,11 +704,6 @@ struct mp_image *mp_draw_sub_overlay(struct mp_draw_sub_cache *cache,
 '''
 
 
-def write_draw_bmp_stub(src):
-    _overwrite_in_place(os.path.join(src, DRAW_BMP_REL), DRAW_BMP_STUB,
-                    'sub bitmap rendering disabled')
-
-
 # ─── meson.build: drop removed sources + add the new gpu stub ───────────
 
 # Sources removed entirely (no surviving reference → no stub needed).
@@ -835,27 +749,6 @@ MESON_STUB_GPU_LINE = "    'video/out/stub_gpu.c',\n"
 MESON_STUB_GPU_ANCHOR = "    'video/out/vo.c',\n"
 
 
-def patch_meson(path):
-    text = _read(path)
-    orig = text
-
-    text = _drop_lines(text, MESON_REMOVE_SRC, path, 'removed sources')
-
-    if MESON_STUB_GPU_LINE not in text:
-        if MESON_STUB_GPU_ANCHOR not in text:
-            raise RuntimeError(
-                f"Anchor `video/out/vo.c` not found in {path}; cannot add "
-                f"the GPU stub source.")
-        text = text.replace(MESON_STUB_GPU_ANCHOR,
-                            MESON_STUB_GPU_ANCHOR + MESON_STUB_GPU_LINE, 1)
-
-    if text == orig:
-        print(f'Already patched: {path}')
-        return
-    _write(path, text)
-    print(f'Patched: {path} (dropped dead sources, added stub_gpu.c)')
-
-
 # ─── video/out/vo.c: cut driver externs + array entries ─────────────────
 
 VO_C_EXTERNS = [
@@ -877,24 +770,6 @@ VO_C_ENTRIES = [
 ]
 
 
-def patch_vo_c(path):
-    text = _read(path)
-    orig = text
-    text = _drop_lines(text, VO_C_EXTERNS, path, 'vo driver externs')
-    text = _drop_lines(text, VO_C_ENTRIES, path, 'vo driver array entries')
-    if text == orig:
-        print(f'Already patched: {path}')
-        return
-    # Sanity: the anchors must actually have been present at least once.
-    if "&video_out_gpu_next" in text or "&video_out_lavc" in text or \
-       "&video_out_image" in text:
-        raise RuntimeError(
-            f"Failed to fully cut removed VO driver entries from {path} — "
-            f"mpv source layout changed.")
-    _write(path, text)
-    print(f'Patched: {path} (cut gpu/gpu_next/image/lavc VO drivers)')
-
-
 # ─── video/out/vo_libmpv.c: cut render_backend_gpu entry ────────────────
 
 VO_LIBMPV_ENTRY_OLD = (
@@ -913,38 +788,10 @@ VO_LIBMPV_ENTRY_NEW = (
 )
 
 
-def patch_vo_libmpv_c(path):
-    text = _read(path)
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if VO_LIBMPV_ENTRY_OLD not in text:
-        raise RuntimeError(
-            f"render_backends[] array not in the expected form in {path} — "
-            f"mpv source layout changed.")
-    text = text.replace(VO_LIBMPV_ENTRY_OLD, VO_LIBMPV_ENTRY_NEW, 1)
-    _write(path, text)
-    print(f'Patched: {path} (cut render_backend_gpu)')
-
-
 # ─── audio/out/ao.c: cut audio_out_lavc entry ───────────────────────────
 
 AO_C_ENTRY = "    &audio_out_lavc,\n"
 AO_C_EXTERN = "extern const struct ao_driver audio_out_lavc;\n"
-
-
-def patch_ao_c(path):
-    text = _read(path)
-    orig = text
-    text = _drop_lines(text, [AO_C_EXTERN, AO_C_ENTRY], path, 'ao lavc')
-    if text == orig:
-        print(f'Already patched: {path}')
-        return
-    if "&audio_out_lavc" in text:
-        raise RuntimeError(
-            f"Failed to cut &audio_out_lavc from {path} — layout changed.")
-    _write(path, text)
-    print(f'Patched: {path} (cut audio_out_lavc driver)')
 
 
 # ─── sub/dec_sub.c: cut sd_lavc from sd_list[] ──────────────────────────
@@ -955,19 +802,6 @@ def patch_ao_c(path):
 # by patch_strip_libass.py.
 
 DEC_SUB_ENTRY = "    &sd_lavc,\n"
-
-
-def patch_dec_sub_c(path):
-    text = _read(path)
-    if DEC_SUB_ENTRY not in text:
-        print(f'Already patched: {path}')
-        return
-    text = text.replace(DEC_SUB_ENTRY, '', 1)
-    if "&sd_lavc," in text:
-        raise RuntimeError(
-            f"Failed to cut &sd_lavc from {path} — layout changed.")
-    _write(path, text)
-    print(f'Patched: {path} (cut sd_lavc from sd_list[])')
 
 
 # ─── input/input.c: empty out builtin_input_conf[] ──────────────────────
@@ -983,47 +817,48 @@ INPUT_CONF_NEW = (
 )
 
 
-def patch_input_c(path):
-    text = _read(path)
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if INPUT_CONF_OLD not in text:
-        raise RuntimeError(
-            f"builtin_input_conf[] definition not in the expected form in "
-            f"{path} — mpv source layout changed.")
-    text = text.replace(INPUT_CONF_OLD, INPUT_CONF_NEW, 1)
-    _write(path, text)
-    print(f'Patched: {path} (emptied builtin_input_conf[])')
-
-
 # ─── driver ─────────────────────────────────────────────────────────────
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
 
-    # New / overwritten stub TUs.
-    write_stub_gpu(src)
-    write_screenshot_stub(src)
-    write_image_writer_stub(src)
-    write_encode_stub(src)
-    write_draw_bmp_stub(src)
+def drop_lines(p, rel, lines, label):
+    """Removes each line of lines from rel, all present once, or none on a
+    file this patch already cut."""
+    if not any(line in p.text(rel) for line in lines):
+        print(f'Already patched: {rel} ({label})')
+        return
+    for line in lines:
+        p.edit(rel, line, '', f'{label}: {line.strip()}')
 
-    # meson source list.
-    patch_meson(os.path.join(src, 'meson.build'))
+
+def apply(p):
+    # New and overwritten stub TUs. The overwritten ones replace an upstream
+    # TU that must exist.
+    p.new_file(STUB_GPU_FILENAME, STUB_GPU_SOURCE)
+    p.replace_file(SCREENSHOT_REL, SCREENSHOT_STUB)
+    p.replace_file(IMAGE_WRITER_REL, IMAGE_WRITER_STUB)
+    p.replace_file(ENCODE_REL, ENCODE_STUB)
+    p.replace_file(DRAW_BMP_REL, DRAW_BMP_STUB)
+
+    # meson source list: the GPU stub source marks a patched list.
+    if MESON_STUB_GPU_LINE in p.text('meson.build'):
+        print('Already patched: meson.build')
+    else:
+        for line in MESON_REMOVE_SRC:
+            p.edit('meson.build', line, '', f'removed source {line.strip()}')
+        p.edit('meson.build', MESON_STUB_GPU_ANCHOR,
+               MESON_STUB_GPU_ANCHOR + MESON_STUB_GPU_LINE, 'video/out/vo.c entry')
 
     # GC-root anchors.
-    patch_vo_c(os.path.join(src, 'video', 'out', 'vo.c'))
-    patch_vo_libmpv_c(os.path.join(src, 'video', 'out', 'vo_libmpv.c'))
-    patch_ao_c(os.path.join(src, 'audio', 'out', 'ao.c'))
-    patch_dec_sub_c(os.path.join(src, 'sub', 'dec_sub.c'))
+    drop_lines(p, 'video/out/vo.c', VO_C_EXTERNS + VO_C_ENTRIES, 'vo drivers')
+    p.edits('video/out/vo_libmpv.c', [('render_backends[] array',
+                                       VO_LIBMPV_ENTRY_OLD, VO_LIBMPV_ENTRY_NEW)])
+    drop_lines(p, 'audio/out/ao.c', [AO_C_EXTERN, AO_C_ENTRY], 'ao lavc')
+    drop_lines(p, 'sub/dec_sub.c', [DEC_SUB_ENTRY], 'sd_list[] sd_lavc')
 
     # Input default-bindings string.
-    patch_input_c(os.path.join(src, 'input', 'input.c'))
+    p.edits('input/input.c', [('builtin_input_conf[] definition',
+                               INPUT_CONF_OLD, INPUT_CONF_NEW)])
 
 
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_strip_mpv_dead', marker=MARKER,
+            usage='<mpv_src_dir>')

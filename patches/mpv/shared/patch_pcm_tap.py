@@ -117,49 +117,16 @@ chain "in" filter (see `patch_filter_label_tap.py` →
 `mak_waveform_tap_in`), so there is no link-time dependency between this
 patch and `patch_bulk_analysis.py`.
 """
-import os
 import sys
+from pathlib import Path
 
-SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'pcm_tap')
-
-
-def read_src(name):
-    with open(os.path.join(SRC_DIR, name)) as f:
-        return f.read()
-
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Idempotency marker — re-running the build pipeline against the same
 # extracted mpv tree is safe.
 MARKER = 'MAK_PCM_TAP_PATCH_V1'
-
-
-# Every file is checked and edited in memory first and written only at the
-# end of main(), so an anchor that does not match leaves the tree as it was
-# instead of half patched.
-PENDING = []
-
-
-def write_pending():
-    for path, text, label in PENDING:
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'{label}{path}')
-
-
-# ─── audio/out/mak_pcm_tap.h ──────────────────────────────────────────
-
-# The real C source lives in pcm_tap/mak_pcm_tap.h next to this
-# script — edit it THERE; this patch only copies it into the tree.
-PCM_TAP_H = read_src('mak_pcm_tap.h')
-
-
-# ─── audio/out/mak_pcm_tap.c ──────────────────────────────────────────
-
-# The real C source lives in pcm_tap/mak_pcm_tap.c next to this
-# script — edit it THERE; this patch only copies it into the tree.
-PCM_TAP_C = read_src('mak_pcm_tap.c')
 
 
 # ─── audio/out/ao.c ───────────────────────────────────────────────────
@@ -201,25 +168,6 @@ AO_INCLUDE_PATCHED = (
     '/* ' + MARKER + ' */\n'
     '#include "audio/out/mak_pcm_tap.h"'
 )
-
-
-def patch_ao_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(AO_INCLUDE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (ao.c includes) not found in {path}.'
-        )
-    if text.count(AO_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (ao_post_process_data body) not found in {path}.'
-        )
-    text = text.replace(AO_INCLUDE_PRISTINE, AO_INCLUDE_PATCHED, 1)
-    text = text.replace(AO_PRISTINE, AO_PATCHED, 1)
-    PENDING.append((path, text, 'Patched: '))
 
 
 # ─── player/command.c ─────────────────────────────────────────────────
@@ -294,37 +242,6 @@ COMMAND_INCLUDE_PATCHED = (
 )
 
 
-def patch_command_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(COMMAND_INCLUDE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (command.c includes) not found in {path}.'
-        )
-    if text.count(COMMAND_TABLE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (audio-bitrate property entry) not found '
-            f'in {path}.'
-        )
-    if text.count(COMMAND_GETTER_ANCHOR) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (mp_property_audio_params getter) not '
-            f'found in {path}.'
-        )
-    # Idempotency: the cover-art and audio-output-state patches use the
-    # same `#include "command.h"` line as one of their anchors, so
-    # other patches may have already inserted lines below it. We only
-    # append our include if our marker isn't already there — guarded
-    # at the top of this function.
-    text = text.replace(COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED, 1)
-    text = text.replace(COMMAND_TABLE_PRISTINE, COMMAND_TABLE_PATCHED, 1)
-    text = text.replace(COMMAND_GETTER_ANCHOR, COMMAND_GETTER_INSERT, 1)
-    PENDING.append((path, text, 'Patched: '))
-
-
 # ─── meson.build ──────────────────────────────────────────────────────
 
 # Anchor on the line that lists `audio/out/ao.c`. The build references
@@ -338,52 +255,27 @@ MESON_PATCHED = (
 )
 
 
-def patch_meson(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(MESON_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (audio/out/ao.c entry) not found in {path}.'
-        )
-    text = text.replace(MESON_PRISTINE, MESON_PATCHED, 1)
-    PENDING.append((path, text, 'Patched: '))
+def apply(p):
+    # The real C sources live in pcm_tap/ next to this script — edit them
+    # THERE; this patch only copies them into the tree.
+    for name in ('mak_pcm_tap.h', 'mak_pcm_tap.c'):
+        p.new_file('audio/out/' + name, p.asset('pcm_tap/' + name))
+    p.edits('audio/out/ao.c', [
+        ('ao.c includes', AO_INCLUDE_PRISTINE, AO_INCLUDE_PATCHED),
+        ('ao_post_process_data body', AO_PRISTINE, AO_PATCHED),
+    ])
+    # The cover-art and audio-output-state patches use the same
+    # `#include "command.h"` line as one of their anchors, so other patches
+    # may have already inserted lines below it; the marker check of edits()
+    # keeps a second run from adding the include again.
+    p.edits('player/command.c', [
+        ('command.c includes', COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED),
+        ('audio-bitrate property entry', COMMAND_TABLE_PRISTINE,
+         COMMAND_TABLE_PATCHED),
+        ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
+         COMMAND_GETTER_INSERT),
+    ])
+    p.edits('meson.build', [('audio/out/ao.c entry', MESON_PRISTINE, MESON_PATCHED)])
 
 
-# ─── new files ────────────────────────────────────────────────────────
-
-def write_new_file(path, content):
-    """Idempotent: refuse to clobber a different file with the same name,
-    but rewrite if the marker is present (i.e. a prior run wrote it)."""
-    if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-        if MARKER in existing:
-            print(f'Already present: {path}')
-            return
-        raise RuntimeError(
-            f'Refusing to overwrite an unrecognised file at {path}'
-        )
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    PENDING.append((path, content, 'Created:  '))
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    write_new_file(os.path.join(src, 'audio', 'out', 'mak_pcm_tap.h'),
-                   PCM_TAP_H)
-    write_new_file(os.path.join(src, 'audio', 'out', 'mak_pcm_tap.c'),
-                   PCM_TAP_C)
-    patch_ao_c(os.path.join(src, 'audio', 'out', 'ao.c'))
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-    patch_meson(os.path.join(src, 'meson.build'))
-    write_pending()
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_pcm_tap', marker=MARKER, usage='<mpv_src_dir>')

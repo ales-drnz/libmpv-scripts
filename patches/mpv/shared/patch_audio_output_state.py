@@ -83,27 +83,16 @@ MPContext field (this patch anchors on `audio_status`; prefetch_state
 anchors on `als_state`).
 """
 import sys
-import os
+from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Shared marker that makes every sub-patch idempotent. If the marker is
 # present in the file, the file is already patched; safe to re-run the
 # build pipeline against the same extracted mpv tree.
 MARKER = 'MAK_AUDIO_OUTPUT_STATE_PATCH_V1'
-
-
-# Every file is checked and edited in memory first and written only at the
-# end of main(), so an anchor that does not match leaves the tree as it was
-# instead of half patched.
-PENDING = []
-
-
-def write_pending():
-    for path, text, label in PENDING:
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'{label}{path}')
 
 
 # ─── core.h ────────────────────────────────────────────────────────────
@@ -129,19 +118,6 @@ CORE_PATCHED = (
     '\n'
     '    bool restart_complete;'
 )
-
-
-def patch_core_h(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(CORE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor not found in {path} — mpv source may have changed.'
-        )
-    PENDING.append((path, text.replace(CORE_PRISTINE, CORE_PATCHED, 1), 'Patched: '))
 
 
 # ─── command.c ─────────────────────────────────────────────────────────
@@ -187,25 +163,6 @@ COMMAND_GETTER_INSERT = (
     '\n'
     + COMMAND_GETTER_ANCHOR
 )
-
-
-def patch_command_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(COMMAND_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (property table) not found in {path}.'
-        )
-    if text.count(COMMAND_GETTER_ANCHOR) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (getter insertion point) not found in {path}.'
-        )
-    text = text.replace(COMMAND_PRISTINE, COMMAND_PATCHED, 1)
-    text = text.replace(COMMAND_GETTER_ANCHOR, COMMAND_GETTER_INSERT, 1)
-    PENDING.append((path, text, 'Patched: '))
 
 
 # ─── audio.c ───────────────────────────────────────────────────────────
@@ -299,36 +256,15 @@ AUDIO_CALL_SITES = [
 ]
 
 
-def patch_audio_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(AUDIO_HELPER_ANCHOR) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (audio.c includes) not found in {path}.'
-        )
-    text = text.replace(AUDIO_HELPER_ANCHOR, AUDIO_HELPER_INSERT, 1)
-    for pristine, patched in AUDIO_CALL_SITES:
-        if text.count(pristine) != 1:
-            raise RuntimeError(
-                f'Pristine anchor not found in {path}:\n{pristine[:120]}'
-            )
-        text = text.replace(pristine, patched, 1)
-    PENDING.append((path, text, 'Patched: '))
+def apply(p):
+    p.edits('player/core.h', [('audio_status field', CORE_PRISTINE, CORE_PATCHED)])
+    p.edits('player/command.c', [
+        ('property table', COMMAND_PRISTINE, COMMAND_PATCHED),
+        ('getter insertion point', COMMAND_GETTER_ANCHOR, COMMAND_GETTER_INSERT),
+    ])
+    p.edits('player/audio.c', [('audio.c includes', AUDIO_HELPER_ANCHOR,
+                                AUDIO_HELPER_INSERT)] + AUDIO_CALL_SITES)
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    patch_core_h(os.path.join(src, 'player', 'core.h'))
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-    patch_audio_c(os.path.join(src, 'player', 'audio.c'))
-    write_pending()
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_audio_output_state', marker=MARKER,
+            usage='<mpv_src_dir>')

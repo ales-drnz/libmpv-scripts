@@ -62,26 +62,15 @@ Usage
     python3 patch_embedded_cover_art.py <mpv_source_dir>
 """
 import sys
-import os
+from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Idempotency marker — re-running the build pipeline against the same
 # extracted mpv tree is safe.
 MARKER = 'MAK_EMBEDDED_COVER_ART_PATCH_V1'
-
-
-# Every file is checked and edited in memory first and written only at the
-# end of main(), so an anchor that does not match leaves the tree as it was
-# instead of half patched.
-PENDING = []
-
-
-def write_pending():
-    for path, text, label in PENDING:
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'{label}{path}')
 
 
 # ─── command.c ─────────────────────────────────────────────────────────
@@ -213,25 +202,6 @@ GETTER_INSERT = (
 )
 
 
-def patch_command_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(TABLE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (property table) not found in {path}.'
-        )
-    if text.count(GETTER_ANCHOR) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (getter insertion point) not found in {path}.'
-        )
-    text = text.replace(TABLE_PRISTINE, TABLE_PATCHED, 1)
-    text = text.replace(GETTER_ANCHOR, GETTER_INSERT, 1)
-    PENDING.append((path, text, 'Patched: '))
-
-
 # ─── loadfile.c ────────────────────────────────────────────────────────
 #
 # Hook the change notifications onto MPV_EVENT_FILE_LOADED. mpv emits
@@ -254,30 +224,15 @@ LOADFILE_PATCHED = (
 )
 
 
-def patch_loadfile_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(LOADFILE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (MPV_EVENT_FILE_LOADED notify) not found in '
-            f'{path}.'
-        )
-    text = text.replace(LOADFILE_PRISTINE, LOADFILE_PATCHED, 1)
-    PENDING.append((path, text, 'Patched: '))
+def apply(p):
+    p.edits('player/command.c', [
+        ('property table', TABLE_PRISTINE, TABLE_PATCHED),
+        ('getter insertion point', GETTER_ANCHOR, GETTER_INSERT),
+    ])
+    p.edits('player/loadfile.c', [
+        ('MPV_EVENT_FILE_LOADED notify', LOADFILE_PRISTINE, LOADFILE_PATCHED),
+    ])
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-    patch_loadfile_c(os.path.join(src, 'player', 'loadfile.c'))
-    write_pending()
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_embedded_cover_art', marker=MARKER,
+            usage='<mpv_src_dir>')
