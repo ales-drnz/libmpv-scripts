@@ -32,9 +32,8 @@
 //   repeat      a, b, c; playlist-next with the hook of b held. b plays,
 //               but its prefetch of c sends no hook until the cancelled one
 //               is continued; then it comes, for c, with the same id.
-// With PREFETCH_HOOK=on_load the client takes the on_load that r19 ran for
-// b while a played as the prefetch hook, to see stall and transition fail
-// on r19.
+// With PREFETCH_HOOK=on_load, stall and transition take the on_load that r19
+// ran for b while a played as the prefetch hook, to see them fail on r19.
 #include "mpv_test.h"
 
 // The prefetch hook is the on_load of r19 (PREFETCH_HOOK=on_load).
@@ -163,7 +162,8 @@ int main(int argc, char **argv)
         return 2;
     }
     const char *mode = argv[1];
-    old_hook = getenv("PREFETCH_HOOK") && strcmp(getenv("PREFETCH_HOOK"), "on_load") == 0;
+    old_hook = getenv("PREFETCH_HOOK") && strcmp(getenv("PREFETCH_HOOK"), "on_load") == 0 &&
+               (strcmp(mode, "stall") == 0 || strcmp(mode, "transition") == 0);
     char a[1024], b[1024], c[1024];
     snprintf(a, sizeof a, "%s/%s", argv[2],
              strcmp(mode, "transition") == 0 ? "a2.flac" : "a.flac");
