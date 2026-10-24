@@ -44,7 +44,9 @@ Changes applied to ``libavformat/dashdec.c``:
      the URL is http, ``http_persistent`` is enabled, and an existing
      ``*pb`` is available. Falls back to a fresh
      ``ffio_open_whitelist`` on any failure (bad host match, stale
-     socket, etc.) so behavior degrades gracefully.
+     socket, etc.) so behavior degrades gracefully. The failure logs a
+     warning, except EINVAL, a segment on another host such as a CDN
+     redirect, where the fresh connection is expected: VERBOSE (F89).
   6. ``read_data()`` treats ``v->input_read_done`` the same way it
      treats ``!v->input``: a trigger to open the next segment. Clears
      the flag on successful open.
@@ -200,8 +202,11 @@ def apply(p):
         '            tried_keepalive = 1;\n'
         '            ret = open_url_keepalive(s, pb, url, &tmp);\n'
         '            if (ret < 0 && ret != AVERROR_EXIT) {\n'
+        '                /* EINVAL: the segment is on another host or\n'
+        '                 * protocol, as every segment redirected to a CDN\n'
+        '                 * is. The new connection is the expected path. */\n'
         '                if (ret != AVERROR_EOF)\n'
-        '                    av_log(s, AV_LOG_WARNING,\n'
+        '                    av_log(s, ret == AVERROR(EINVAL) ? AV_LOG_VERBOSE : AV_LOG_WARNING,\n'
         '                        "DASH keepalive request failed for \'%s\' '
         '(%s); retrying with new connection\\n",\n'
         '                        url, av_err2str(ret));\n'
