@@ -81,30 +81,16 @@ DELAY = "MAK_AUDIOTRACK_PAUSED_DELAY_PATCH_V1"
 
 
 def apply(p):
+    # Two whole functions the fixes add, in C files next to this script.
+    read_chunk = p.asset("audiotrack_read_insert.c")
+    set_pause = p.asset("audiotrack_pause_insert.c")
+
     # ── 1. Idle: wait instead of spinning when there is nothing to write ────
     p.edits(AUDIOTRACK, [
         (
             "static MP_THREAD_VOID ao_thread(void *arg)\n"
             "{\n",
-            f"/* {IDLE}:\n"
-            " * reads the next chunk into p->chunk and returns its size in bytes, 0\n"
-            " * when mpv's buffer has nothing. With audio-stream-silence the chunk is\n"
-            " * padded with silence, and the read waits for the buffer lock, so the\n"
-            " * track is fed silence rather than running dry, and a busy lock is not\n"
-            " * taken for a gap. */\n"
-            "static int mak_read_chunk(struct ao *ao)\n"
-            "{\n"
-            "    struct priv *p = ao->priv;\n"
-            "    int read_samples = p->chunksize / ao->sstride;\n"
-            "    int64_t ts = mp_time_ns();\n"
-            "    ts += MP_TIME_S_TO_NS(read_samples / (double)(ao->samplerate));\n"
-            "    ts += MP_TIME_S_TO_NS(AudioTrack_getLatency(ao));\n"
-            "    bool silence = ao->stream_silence;\n"
-            "    int samples = ao_read_data(ao, &p->chunk, read_samples, ts, NULL,\n"
-            "                               silence, silence);\n"
-            "    return (silence ? read_samples : samples) * ao->sstride;\n"
-            "}\n"
-            "\n"
+            read_chunk + "\n"
             "static MP_THREAD_VOID ao_thread(void *arg)\n"
             "{\n",
         ),
@@ -229,31 +215,7 @@ def apply(p):
         ),
         (
             "#define OPT_BASE_STRUCT struct priv\n",
-            f"/* {PAUSE}:\n"
-            " * pause and resume without a flush. Without set_pause, buffer.c paused\n"
-            " * this pull output with reset (stop), which flushed what the track held.\n"
-            " * No p->lock: the thread holds it while it writes. */\n"
-            "static bool set_pause(struct ao *ao, bool paused)\n"
-            "{\n"
-            "    struct priv *p = ao->priv;\n"
-            "    if (!p->audiotrack)\n"
-            "        return false;\n"
-            "\n"
-            "    JNIEnv *env = MP_JNI_GET_ENV(ao);\n"
-            "    if (paused) {\n"
-            "        MP_JNI_CALL_VOID(p->audiotrack, AudioTrack.pause);\n"
-            "        MP_JNI_EXCEPTION_LOG(ao);\n"
-            "        return true;\n"
-            "    }\n"
-            "    // A timestamp from before the pause would put the head past it.\n"
-            "    p->timestamp_fetched = 0;\n"
-            "    p->timestamp_set = false;\n"
-            "    MP_JNI_CALL_VOID(p->audiotrack, AudioTrack.play);\n"
-            "    MP_JNI_EXCEPTION_LOG(ao);\n"
-            "    mp_cond_signal(&p->wakeup);\n"
-            "    return true;\n"
-            "}\n"
-            "\n"
+            set_pause + "\n"
             "#define OPT_BASE_STRUCT struct priv\n",
         ),
         (
