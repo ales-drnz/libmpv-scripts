@@ -174,10 +174,13 @@ if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   log "Patching and building mpv $MPV_VERSION with AddressSanitizer"
   rm -rf "$SRC" "$BLD"
   cp -a "$WORK/mpv" "$SRC"
+  # Not on the left of ||: bash ignores set -e there, also inside the
+  # subshell, and a failed patch would let the build go on without it.
   ( set -e
     apply_mpv_patches_common "$SRC"
     python3 "$ROOT/patches/mpv/linux/patch_optional_audio_libs.py" "$SRC"
-  ) > "$WORK/logs/apply.log" 2>&1 || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
+  ) > "$WORK/logs/apply.log" 2>&1
+  (( $? == 0 )) || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
   ( cd "$SRC" && meson setup "$BLD" -Dbuildtype=debug -Doptimization=1 -Dauto_features=disabled \
       -Dgpl=true -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
       -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Db_sanitize=address -Db_lundef=false
