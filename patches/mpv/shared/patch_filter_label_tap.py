@@ -80,57 +80,24 @@ Files patched
 Composes with `patch_pcm_tap.py`, `patch_bulk_analysis.py`, and the
 other shared patches — disjoint anchors.
 """
-import os
 import re
 import sys
+from pathlib import Path
 
-SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'filter_label_tap')
-
-
-def read_src(name):
-    with open(os.path.join(SRC_DIR, name)) as f:
-        return f.read()
-
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # V4 keys the taps on chain labels (V3 keyed them on filter names). A tree
 # patched by an older version fails in check_stale_marker instead of being
 # skipped as already patched.
 MARKER = 'MAK_TAP_PATCH_V4'
-
-
-# Every file is checked and edited in memory first and written only at the
-# end of main(), so an anchor that does not match leaves the tree as it was
-# instead of half patched.
-PENDING = []
-
-
-def write_pending():
-    for path, text, label in PENDING:
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'{label}{path}')
 MARKER_RE = re.compile(r'MAK_TAP_PATCH_V\d+')
 
 # Wire-protocol limits. Keep in sync with the Dart parser.
 MAX_TAPS = 8         # max distinct chain labels tapped at once; labels of
                      # 64 chars or more are ignored (mak_tap.c slot name)
 MAX_SAMPLES = 4096   # samples per channel returned by a single read
-
-
-# ─── audio/mak_tap.h ──────────────────────────────────────────────────
-
-# The real C source lives in filter_label_tap/mak_tap.h next to this
-# script — edit it THERE; this patch only copies it into the tree.
-TAP_H = read_src('mak_tap.h')
-
-
-# ─── audio/mak_tap.c ──────────────────────────────────────────────────
-
-# The real C source lives in filter_label_tap/mak_tap.c next to this
-# script — edit it THERE; this patch only copies it into the tree.
-TAP_C = read_src('mak_tap.c')
 
 
 # ─── filters/f_output_chain.c ─────────────────────────────────────────
@@ -213,35 +180,6 @@ USER_WRAPPER_POST_PATCHED = (
     '\n'
     '        mp_pin_in_write(f->ppins[1], frame);'
 )
-
-
-def patch_output_chain(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(OUTPUT_CHAIN_INCLUDE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (user_filters.h include) not found in {path}.'
-        )
-    if text.count(USER_WRAPPER_PRE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (user_wrapper_process PRE block) not found '
-            f'in {path}.'
-        )
-    if text.count(USER_WRAPPER_POST_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (user_wrapper_process POST block) not '
-            f'found in {path}.'
-        )
-    text = text.replace(OUTPUT_CHAIN_INCLUDE_PRISTINE,
-                        OUTPUT_CHAIN_INCLUDE_PATCHED, 1)
-    text = text.replace(USER_WRAPPER_PRE_PRISTINE,
-                        USER_WRAPPER_PRE_PATCHED, 1)
-    text = text.replace(USER_WRAPPER_POST_PRISTINE,
-                        USER_WRAPPER_POST_PATCHED, 1)
-    PENDING.append((path, text, 'Patched: '))
 
 
 # ─── player/command.c ─────────────────────────────────────────────────
@@ -346,32 +284,6 @@ COMMAND_INCLUDE_PATCHED = (
 )
 
 
-def patch_command_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    if text.count(COMMAND_INCLUDE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (command.c includes) not found in {path}.'
-        )
-    if text.count(COMMAND_TABLE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (audio-bitrate property entry) not found '
-            f'in {path}.'
-        )
-    if text.count(COMMAND_GETTER_ANCHOR) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (mp_property_audio_params getter) not '
-            f'found in {path}.'
-        )
-    text = text.replace(COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED, 1)
-    text = text.replace(COMMAND_TABLE_PRISTINE, COMMAND_TABLE_PATCHED, 1)
-    text = text.replace(COMMAND_GETTER_ANCHOR, COMMAND_GETTER_INSERT, 1)
-    PENDING.append((path, text, 'Patched: '))
-
-
 # ─── meson.build ──────────────────────────────────────────────────────
 
 # Compose with patch_pcm_tap.py and patch_bulk_analysis.py — each adds
@@ -432,80 +344,54 @@ MESON_PATCHED = (
 )
 
 
-def patch_meson(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    # Try the most-specific anchors first (both prior patches present).
-    if MESON_AFTER_BULK in text:
-        text = text.replace(MESON_AFTER_BULK, MESON_AFTER_BULK_PATCHED, 1)
-    elif MESON_AFTER_PCM_TAP in text:
-        text = text.replace(MESON_AFTER_PCM_TAP,
-                            MESON_AFTER_PCM_TAP_PATCHED, 1)
-    elif MESON_AFTER_BULK_ONLY in text:
-        text = text.replace(MESON_AFTER_BULK_ONLY,
-                            MESON_AFTER_BULK_ONLY_PATCHED, 1)
-    elif MESON_PRISTINE in text:
-        text = text.replace(MESON_PRISTINE, MESON_PATCHED, 1)
-    else:
-        raise RuntimeError(
-            f'Pristine anchor (audio/out/ao.c entry) not found in {path}.'
-        )
-    PENDING.append((path, text, 'Patched: '))
 
-
-# ─── new files ────────────────────────────────────────────────────────
-
-def write_new_file(path, content):
-    if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-        if MARKER in existing:
-            print(f'Already present: {path}')
-            return
-        raise RuntimeError(
-            f'Refusing to overwrite an unrecognised file at {path}'
-        )
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    PENDING.append((path, content, 'Created:  '))
-
-
-def check_stale_marker(paths):
-    for path in paths:
-        if not os.path.exists(path):
+def check_stale_marker(p, rels):
+    """A file patched by an older version of this patch stops it: delete the
+    extracted mpv source so it is extracted and patched again."""
+    for rel in rels:
+        if not p.exists(rel):
             continue
-        with open(path) as f:
-            found = set(MARKER_RE.findall(f.read()))
-        stale = found - {MARKER}
+        stale = set(MARKER_RE.findall(p.text(rel))) - {MARKER}
         if stale:
-            raise RuntimeError(
-                f'{path} carries {", ".join(sorted(stale))}, an older version '
-                f'of this patch. Delete the extracted mpv source so it is '
-                f'extracted and patched again.'
-            )
+            p.fail(f'{rel} carries {", ".join(sorted(stale))}, an older version '
+                   f'of this patch. Delete the extracted mpv source so it is '
+                   f'extracted and patched again.')
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    check_stale_marker([
-        os.path.join(src, 'audio', 'mak_tap.h'),
-        os.path.join(src, 'audio', 'mak_tap.c'),
-        os.path.join(src, 'filters', 'f_output_chain.c'),
-        os.path.join(src, 'player', 'command.c'),
-        os.path.join(src, 'meson.build'),
+def apply(p):
+    check_stale_marker(p, ['audio/mak_tap.h', 'audio/mak_tap.c',
+                           'filters/f_output_chain.c', 'player/command.c',
+                           'meson.build'])
+    # The real C sources live in filter_label_tap/ next to this script —
+    # edit them THERE; this patch only copies them into the tree.
+    for name in ('mak_tap.h', 'mak_tap.c'):
+        p.new_file('audio/' + name, p.asset('filter_label_tap/' + name))
+    p.edits('filters/f_output_chain.c', [
+        ('user_filters.h include', OUTPUT_CHAIN_INCLUDE_PRISTINE,
+         OUTPUT_CHAIN_INCLUDE_PATCHED),
+        ('user_wrapper_process PRE block', USER_WRAPPER_PRE_PRISTINE,
+         USER_WRAPPER_PRE_PATCHED),
+        ('user_wrapper_process POST block', USER_WRAPPER_POST_PRISTINE,
+         USER_WRAPPER_POST_PATCHED),
     ])
-    write_new_file(os.path.join(src, 'audio', 'mak_tap.h'), TAP_H)
-    write_new_file(os.path.join(src, 'audio', 'mak_tap.c'), TAP_C)
-    patch_output_chain(os.path.join(src, 'filters', 'f_output_chain.c'))
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-    patch_meson(os.path.join(src, 'meson.build'))
-    write_pending()
+    p.edits('player/command.c', [
+        ('command.c includes', COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED),
+        ('audio-bitrate property entry', COMMAND_TABLE_PRISTINE,
+         COMMAND_TABLE_PATCHED),
+        ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
+         COMMAND_GETTER_INSERT),
+    ])
+    if p.marked('meson.build'):
+        print('Already patched: meson.build')
+    else:
+        # The most-specific form first (both prior patches present).
+        p.optional('meson.build', [
+            (MESON_AFTER_BULK, MESON_AFTER_BULK_PATCHED),
+            (MESON_AFTER_PCM_TAP, MESON_AFTER_PCM_TAP_PATCHED),
+            (MESON_AFTER_BULK_ONLY, MESON_AFTER_BULK_ONLY_PATCHED),
+            (MESON_PRISTINE, MESON_PATCHED),
+        ], 'audio/out/ao.c entry')
 
 
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_filter_label_tap', marker=MARKER,
+            usage='<mpv_src_dir>')

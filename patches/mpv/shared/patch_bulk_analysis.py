@@ -193,43 +193,17 @@ Composes with `patch_pcm_tap.py`, `patch_audio_output_state.py`,
 `patch_embedded_cover_art.py`, `patch_prefetch_*.py` — disjoint
 anchors.
 """
-import os
 import sys
+from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Provenance tag stamped into every patched region and generated file so a
-# patched mpv tree is easy to grep. This is NOT an idempotency guard: the
-# patcher always applies the current patch and assumes a FRESH (git-restored)
-# mpv source tree. There is no version skipping and no legacy fallback —
-# re-running on an already-patched tree is unsupported (restore first).
+# patched mpv tree is easy to grep. A file that already carries it is left
+# alone, so a second run changes nothing; the generated files are refreshed.
 MARKER = 'MAK_WAVEFORM_PATCH'
-
-# The real C sources shipped next to this script (see "Layout" above).
-SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'bulk_analysis')
-
-
-# Every file is checked and edited in memory first and written only at the
-# end, so an anchor that does not match leaves the tree as it was instead
-# of half patched. A file that already carries MARKER is left alone, so a
-# second run changes nothing.
-PENDING = []
-
-
-def stage(path, text):
-    PENDING.append((path, text, 'Patched: '))
-
-
-def already(path, text):
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return True
-    return False
-
-
-def read_src(name):
-    with open(os.path.join(SRC_DIR, name)) as f:
-        return f.read()
 
 
 # ─── player/loadfile.c ────────────────────────────────────────────────
@@ -288,29 +262,6 @@ LOADFILE_CLOSE_PATCHED = (
 )
 
 
-def patch_loadfile_c(path):
-    with open(path) as f:
-        text = f.read()
-    if already(path, text):
-        return
-    if text.count(LOADFILE_INCLUDE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (loadfile.c includes) not found exactly once in {path}.'
-        )
-    if text.count(LOADFILE_NOTIFY_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (FILE_LOADED notify) not found exactly once in {path}.'
-        )
-    if text.count(LOADFILE_CLOSE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (file close) not found exactly once in {path}.'
-        )
-    text = text.replace(LOADFILE_INCLUDE_PRISTINE, LOADFILE_INCLUDE_PATCHED, 1)
-    text = text.replace(LOADFILE_NOTIFY_PRISTINE, LOADFILE_NOTIFY_PATCHED, 1)
-    text = text.replace(LOADFILE_CLOSE_PRISTINE, LOADFILE_CLOSE_PATCHED, 1)
-    stage(path, text)
-
-
 # ─── player/command.c ─────────────────────────────────────────────────
 
 # Anchor for the property table — same neighbour as patch_pcm_tap
@@ -347,32 +298,6 @@ COMMAND_INCLUDE_PATCHED = (
 )
 
 
-def patch_command_c(path):
-    with open(path) as f:
-        text = f.read()
-    if already(path, text):
-        return
-    if text.count(COMMAND_INCLUDE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (command.c includes) not found exactly once in {path}.'
-        )
-    if text.count(COMMAND_TABLE_PRISTINE) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (audio-bitrate property entry) not found '
-            f'in {path}.'
-        )
-    if text.count(COMMAND_GETTER_ANCHOR) != 1:
-        raise RuntimeError(
-            f'Pristine anchor (mp_property_audio_params getter) not '
-            f'found in {path}.'
-        )
-    text = text.replace(COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED, 1)
-    text = text.replace(COMMAND_TABLE_PRISTINE, COMMAND_TABLE_PATCHED, 1)
-    text = text.replace(COMMAND_GETTER_ANCHOR,
-                        read_src('waveform_command_insert.c'), 1)
-    stage(path, text)
-
-
 # ─── player/main.c ────────────────────────────────────────────────────
 
 # Bracket every core's lifetime so the last mp_destroy drains the detached
@@ -407,25 +332,6 @@ MAIN_CREATE_PATCHED = (
     '    /* ' + MARKER + ' */\n'
     '    mak_scan_core_acquire();\n'
 )
-
-
-def patch_main_c(path):
-    with open(path) as f:
-        text = f.read()
-    if already(path, text):
-        return
-    for name, anchor in (('includes', MAIN_INCLUDE_PRISTINE),
-                         ('mp_destroy', MAIN_DESTROY_PRISTINE),
-                         ('mp_create', MAIN_CREATE_PRISTINE)):
-        if text.count(anchor) != 1:
-            raise RuntimeError(
-                f'Pristine anchor (main.c {name}) not found exactly once '
-                f'in {path}.'
-            )
-    text = text.replace(MAIN_INCLUDE_PRISTINE, MAIN_INCLUDE_PATCHED, 1)
-    text = text.replace(MAIN_DESTROY_PRISTINE, MAIN_DESTROY_PATCHED, 1)
-    text = text.replace(MAIN_CREATE_PRISTINE, MAIN_CREATE_PATCHED, 1)
-    stage(path, text)
 
 
 # ─── demux/demux.c ────────────────────────────────────────────────────
@@ -568,23 +474,6 @@ DEMUX_EDITS = [
 ]
 
 
-def patch_demux_c(path):
-    with open(path) as f:
-        text = f.read()
-    if already(path, text):
-        return
-    for label, anchor, _ in DEMUX_EDITS:
-        if text.count(anchor) != 1:
-            raise RuntimeError(
-                f'Pristine anchor (demux.c {label}) not found exactly once '
-                f'in {path}.'
-            )
-    for _, anchor, replacement in DEMUX_EDITS:
-        text = text.replace(anchor, replacement, 1)
-    text = text.rstrip('\n') + '\n' + read_src('demux_feed_insert.c')
-    stage(path, text)
-
-
 # ─── meson.build ──────────────────────────────────────────────────────
 
 # Anchor on the same `audio/out/ao.c` line patch_pcm_tap uses, but
@@ -622,71 +511,55 @@ MESON_PATCHED = (
 )
 
 
-def patch_meson(path):
-    with open(path) as f:
-        text = f.read()
-    if already(path, text):
-        return
-    # Compose with patch_pcm_tap when it has already run.
-    if text.count(MESON_AFTER_PCM_TAP) == 1:
-        text = text.replace(
-            MESON_AFTER_PCM_TAP, MESON_AFTER_PCM_TAP_PATCHED, 1)
-    elif text.count(MESON_PRISTINE) == 1:
-        text = text.replace(MESON_PRISTINE, MESON_PATCHED, 1)
+
+# The generated sources and where they go in the tree.
+NEW_FILES = [
+    ('audio', 'mak_wave_fold.h'),
+    ('audio', 'mak_waveform.h'),
+    ('audio', 'mak_waveform.c'),
+    ('audio', 'mak_scan.h'),
+    ('audio', 'mak_scan.c'),
+    ('audio', 'mak_feed.h'),
+    ('audio', 'mak_feed.c'),
+    ('demux', 'mak_demux_feed.h'),
+    ('demux', 'mak_demux_feed.c'),
+]
+
+
+def apply(p):
+    # The real C sources ship next to this script (see "Layout" above). A
+    # second run refreshes them: patch_loudness_scan.py edits two of them
+    # after this patch, and redoes its edits on the fresh copies.
+    for d, name in NEW_FILES:
+        p.new_file(f'{d}/{name}', p.asset(f'bulk_analysis/{name}'))
+    if p.edits('demux/demux.c', DEMUX_EDITS):
+        p.write('demux/demux.c', p.text('demux/demux.c').rstrip('\n') + '\n'
+                + p.asset('bulk_analysis/demux_feed_insert.c'))
+    p.edits('player/loadfile.c', [
+        ('loadfile.c includes', LOADFILE_INCLUDE_PRISTINE, LOADFILE_INCLUDE_PATCHED),
+        ('FILE_LOADED notify', LOADFILE_NOTIFY_PRISTINE, LOADFILE_NOTIFY_PATCHED),
+        ('file close', LOADFILE_CLOSE_PRISTINE, LOADFILE_CLOSE_PATCHED),
+    ])
+    p.edits('player/command.c', [
+        ('command.c includes', COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED),
+        ('audio-bitrate property entry', COMMAND_TABLE_PRISTINE,
+         COMMAND_TABLE_PATCHED),
+        ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
+         p.asset('bulk_analysis/waveform_command_insert.c')),
+    ])
+    p.edits('player/main.c', [
+        ('main.c includes', MAIN_INCLUDE_PRISTINE, MAIN_INCLUDE_PATCHED),
+        ('main.c mp_destroy', MAIN_DESTROY_PRISTINE, MAIN_DESTROY_PATCHED),
+        ('main.c mp_create', MAIN_CREATE_PRISTINE, MAIN_CREATE_PATCHED),
+    ])
+    if p.marked('meson.build'):
+        print('Already patched: meson.build')
     else:
-        raise RuntimeError(
-            f'Pristine anchor (audio/out/ao.c entry) not found exactly once in {path}.'
-        )
-    stage(path, text)
+        # Composes with patch_pcm_tap when it has already run.
+        p.optional('meson.build', [
+            (MESON_AFTER_PCM_TAP, MESON_AFTER_PCM_TAP_PATCHED),
+            (MESON_PRISTINE, MESON_PATCHED),
+        ], 'audio/out/ao.c entry')
 
 
-# ─── new files ────────────────────────────────────────────────────────
-
-def write_new_file(path, content):
-    """Stage a generated source file, written by write_pending() over any
-    existing one. The patcher assumes a fresh mpv tree, so the file normally
-    does not exist yet; on a re-run it is refreshed with the current copy."""
-    PENDING.append((path, content, 'Wrote:    '))
-
-
-def write_pending():
-    for path, text, label in PENDING:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'{label}{path}')
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    write_new_file(os.path.join(src, 'audio', 'mak_wave_fold.h'),
-                   read_src('mak_wave_fold.h'))
-    write_new_file(os.path.join(src, 'audio', 'mak_waveform.h'),
-                   read_src('mak_waveform.h'))
-    write_new_file(os.path.join(src, 'audio', 'mak_waveform.c'),
-                   read_src('mak_waveform.c'))
-    write_new_file(os.path.join(src, 'audio', 'mak_scan.h'),
-                   read_src('mak_scan.h'))
-    write_new_file(os.path.join(src, 'audio', 'mak_scan.c'),
-                   read_src('mak_scan.c'))
-    write_new_file(os.path.join(src, 'audio', 'mak_feed.h'),
-                   read_src('mak_feed.h'))
-    write_new_file(os.path.join(src, 'audio', 'mak_feed.c'),
-                   read_src('mak_feed.c'))
-    write_new_file(os.path.join(src, 'demux', 'mak_demux_feed.h'),
-                   read_src('mak_demux_feed.h'))
-    write_new_file(os.path.join(src, 'demux', 'mak_demux_feed.c'),
-                   read_src('mak_demux_feed.c'))
-    patch_demux_c(os.path.join(src, 'demux', 'demux.c'))
-    patch_loadfile_c(os.path.join(src, 'player', 'loadfile.c'))
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-    patch_main_c(os.path.join(src, 'player', 'main.c'))
-    patch_meson(os.path.join(src, 'meson.build'))
-    write_pending()
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_bulk_analysis', marker=MARKER, usage='<mpv_src_dir>')

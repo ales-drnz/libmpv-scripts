@@ -68,51 +68,24 @@ Usage
 
 Run AFTER patch_bulk_analysis.py (anchors live in its output).
 """
-import os
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 
 MARKER = 'MAK_LOUDNESS_PATCH'
 
-SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'bulk_analysis')
-
-
-def read_src(name):
-    with open(os.path.join(SRC_DIR, name)) as f:
-        return f.read()
-
-
-# Every edit is checked in memory first and the files are written only at
-# the end, so an anchor that does not match leaves the tree as it was. A
-# file that already carries MARKER is left alone, so a second run changes
-# nothing.
-PENDING = []
-
-
-def apply_edits(path, edits):
-    """[(label, anchor, replacement)] — every anchor must be present and
-    unique; a missing anchor means bulk_analysis didn't run first (or
-    its output drifted) and is a hard error."""
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    for label, anchor, replacement in edits:
-        n = text.count(anchor)
-        if n != 1:
-            raise RuntimeError(
-                f'{label}: anchor found {n} times (expected 1) in {path}. '
-                f'Run patch_bulk_analysis.py first / check for drift.'
-            )
-        text = text.replace(anchor, replacement, 1)
-    PENDING.append((path, text, 'Patched: '))
+# Every anchor must be present and unique; a missing one means bulk_analysis
+# didn't run first (or its output drifted). A file that already carries
+# MARKER is left alone, so a second run changes nothing.
 
 
 # ─── audio/mak_scan.c (bulk-emitted engine) ──────────────────────────
 
-def patch_mak_scan_c(path):
+def patch_mak_scan_c(p):
     edits = [
         ('include', '#include "audio/mak_waveform.h"',
          '#include "audio/mak_waveform.h"\n'
@@ -278,12 +251,12 @@ def patch_mak_scan_c(path):
          '        /* ' + MARKER + ' */\n'
          '        mak_loudness_mark_failed(new_gen);'),
     ]
-    apply_edits(path, edits)
+    p.edits('audio/mak_scan.c', edits)
 
 
 # ─── audio/mak_waveform.c (bulk-emitted product) ─────────────────────
 
-def patch_mak_waveform_c(path):
+def patch_mak_waveform_c(p):
     edits = [
         ('arm_progressive marks unavailable',
          'void mak_waveform_arm_progressive(int my_gen, double duration_secs)\n'
@@ -306,20 +279,18 @@ def patch_mak_waveform_c(path):
          '/* ' + MARKER + ' */\n'
          '#include "audio/mak_loudness.h"'),
     ]
-    apply_edits(path, edits)
+    p.edits('audio/mak_waveform.c', edits)
 
 
 # ─── player/command.c (bulk-emitted anchors) ─────────────────────────
 
-def patch_command_c(path):
+def patch_command_c(p):
     getter_anchor = ('/* MAK_WAVEFORM_PATCH ─── read-only property: '
                      'bulk waveform analyser')
-    insert = read_src('loudness_command_insert.c').rstrip('\n')
+    insert = p.asset('bulk_analysis/loudness_command_insert.c').rstrip('\n')
     if not insert.endswith(getter_anchor):
-        raise RuntimeError(
-            'loudness_command_insert.c must end with the bulk getter-'
-            'comment anchor line (it is re-emitted by the splice).'
-        )
+        p.fail('loudness_command_insert.c must end with the bulk getter-'
+               'comment anchor line (it is re-emitted by the splice).')
     edits = [
         ('include',
          '#include "audio/mak_waveform.h"\n'
@@ -340,12 +311,12 @@ def patch_command_c(path):
 
         ('getter/setter splice', getter_anchor, insert),
     ]
-    apply_edits(path, edits)
+    p.edits('player/command.c', edits)
 
 
 # ─── meson.build (bulk-emitted anchor) ───────────────────────────────
 
-def patch_meson(path):
+def patch_meson(p):
     edits = [
         ('source list',
          "    # MAK_WAVEFORM_PATCH\n"
@@ -355,38 +326,17 @@ def patch_meson(path):
          "    # " + MARKER + "\n"
          "    'audio/mak_loudness.c',"),
     ]
-    apply_edits(path, edits)
+    p.edits('meson.build', edits)
 
 
-# ─── new files ────────────────────────────────────────────────────────
-
-def write_new_file(path, content):
-    PENDING.append((path, content, 'Wrote:    '))
-
-
-def write_pending():
-    for path, text, label in PENDING:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'{label}{path}')
+def apply(p):
+    # Sources of the loudness engine, shipped in bulk_analysis/.
+    for name in ('mak_loudness.h', 'mak_loudness.c'):
+        p.new_file('audio/' + name, p.asset('bulk_analysis/' + name))
+    patch_mak_scan_c(p)
+    patch_mak_waveform_c(p)
+    patch_command_c(p)
+    patch_meson(p)
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    write_new_file(os.path.join(src, 'audio', 'mak_loudness.h'),
-                   read_src('mak_loudness.h'))
-    write_new_file(os.path.join(src, 'audio', 'mak_loudness.c'),
-                   read_src('mak_loudness.c'))
-    patch_mak_scan_c(os.path.join(src, 'audio', 'mak_scan.c'))
-    patch_mak_waveform_c(os.path.join(src, 'audio', 'mak_waveform.c'))
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-    patch_meson(os.path.join(src, 'meson.build'))
-    write_pending()
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_loudness_scan', marker=MARKER, usage='<mpv_src_dir>')

@@ -18,37 +18,22 @@ step that fails leaves the tree as it was.
 
 Usage: python3 patch_ios_audio_stubs.py <mpv_source_dir>
 """
-import sys
 import re
+import sys
+from pathlib import Path
 
-mpv_dir = sys.argv[1]
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
-# (path, new content, message), written once every step has passed.
-pending = []
-
-
-def staged(path):
-    """The text of path with the edits already in pending."""
-    for staged_path, text, _ in reversed(pending):
-        if staged_path == path:
-            return text
-    with open(path) as f:
-        return f.read()
-
+AVF = 'audio/out/ao_avfoundation.m'
+AU = 'audio/out/ao_audiounit.m'
+AOH = 'audio/out/ao.h'
+UTILS = 'audio/out/ao_coreaudio_utils.c'
 
 # ── 1. ao_avfoundation.m: comment out macOS-only device property ────────────
 
-avf_path = f"{mpv_dir}/audio/out/ao_avfoundation.m"
-with open(avf_path) as f:
-    content = f.read()
-
-if '//[p->renderer setAudioOutputDeviceUniqueID:' not in content:
-    content = content.replace(
-        '[p->renderer setAudioOutputDeviceUniqueID:',
-        '//[p->renderer setAudioOutputDeviceUniqueID:',
-    )
-    pending.append((avf_path, content,
-                    "Patched ao_avfoundation.m: commented out macOS-only device property"))
+DEVICE_ID = '[p->renderer setAudioOutputDeviceUniqueID:'
 
 # ── 2. ao_audiounit.m: remove MixWithOthers ─────────────────────────────────
 # mpv 0.38+ adds MixWithOthers by default when not in exclusive mode, which
@@ -58,31 +43,14 @@ if '//[p->renderer setAudioOutputDeviceUniqueID:' not in content:
 # must go exactly once and leave no use of the option behind: if mpv changes
 # its shape, the build stops instead of shipping a session that mixes.
 
-au_path = f"{mpv_dir}/audio/out/ao_audiounit.m"
-with open(au_path) as f:
-    content = f.read()
-
-if 'AVAudioSessionCategoryOptionMixWithOthers' in content:
-    # Remove the if block: if (!(ao->init_flags & AO_INIT_EXCLUSIVE)) { ...MixWithOthers... }
-    content, n = re.subn(
-        r'\s*if \(!\(ao->init_flags & AO_INIT_EXCLUSIVE\)\)\s*\{[^}]*AVAudioSessionCategoryOptionMixWithOthers[^}]*\}',
-        '',
-        content,
-    )
-    if n != 1 or 'AVAudioSessionCategoryOptionMixWithOthers' in content:
-        sys.exit(f"[patch_ios_audio_stubs] {au_path}: the MixWithOthers block "
-                 f"matched {n} times or the option is still used; the session "
-                 f"code of mpv changed")
-    pending.append((au_path, content, "Patched ao_audiounit.m: removed MixWithOthers"))
+MIX = 'AVAudioSessionCategoryOptionMixWithOthers'
+# The if block: if (!(ao->init_flags & AO_INIT_EXCLUSIVE)) { ...MixWithOthers... }
+MIX_BLOCK = (r'\s*if \(!\(ao->init_flags & AO_INIT_EXCLUSIVE\)\)\s*\{[^}]*'
+             r'AVAudioSessionCategoryOptionMixWithOthers[^}]*\}')
 
 # ── 3. ao.h: iOS stub types for CoreAudio HAL ──────────────────────────────
 
-aoh_path = f"{mpv_dir}/audio/out/ao.h"
-with open(aoh_path) as f:
-    content = f.read()
-
-if 'TARGET_OS_IPHONE' not in content:
-    ios_stubs = """
+AO_H_STUBS = """
 #include <TargetConditionals.h>
 #if TARGET_OS_IPHONE
 #include <stdint.h>
@@ -116,36 +84,12 @@ static inline int AudioObjectAddPropertyListener(uint32_t a, const void *b, void
 static inline int AudioObjectRemovePropertyListener(uint32_t a, const void *b, void *c, void *d) { return -1; }
 #endif
 """
-    content = content.replace(
-        '#define MPLAYER_AUDIO_OUT_H',
-        '#define MPLAYER_AUDIO_OUT_H\n' + ios_stubs,
-        1,
-    )
-    pending.append((aoh_path, content, "Patched ao.h: added iOS stub types"))
 
 # ── 4. ao_coreaudio_utils.c: guard macOS code + iOS stubs ───────────────────
 
-utils_path = f"{mpv_dir}/audio/out/ao_coreaudio_utils.c"
-with open(utils_path) as f:
-    src = f.read()
+UTILS_MARKER = 'TARGET_OS_IPHONE_COREAUDIO_UTILS_V2_PATCHED'
 
-utils_patched = 'TARGET_OS_IPHONE_COREAUDIO_UTILS_V2_PATCHED' in src
-if utils_patched:
-    print("ao_coreaudio_utils.c: already patched, skipping")
-
-# Find end of license block
-license_end = src.find('*/\n')
-if license_end == -1:
-    license_end = 0
-else:
-    license_end += 3
-
-# Walk forward to first non-blank line
-code_start = license_end
-while code_start < len(src) and src[code_start] == '\n':
-    code_start += 1
-
-ios_stubs = r'''
+UTILS_STUBS = r'''
 /* ============================================================
  * iOS stubs for ao_coreaudio_utils.c
  * All CoreAudio HAL APIs are macOS-only; we provide minimal
@@ -250,41 +194,69 @@ int64_t ca_get_latency(const AudioTimeStamp *ts) {
 #endif /* TARGET_OS_IPHONE */
 '''
 
-new_src = (
-    src[:code_start]
-    + '#if !TARGET_OS_IPHONE\n'
-    + src[code_start:]
-    + '\n#endif /* !TARGET_OS_IPHONE */\n'
-    + ios_stubs
-    + '\n#define TARGET_OS_IPHONE_COREAUDIO_UTILS_V2_PATCHED 1\n'
-)
-
-if not utils_patched:
-    pending.append((utils_path, new_src,
-                    "Patched ao_coreaudio_utils.c for iOS (full file guard + stubs)"))
-
 # ── 5. ao_audiounit.m, ao_avfoundation.m: no MoviePlayback mode ─────────────
 # mpv sets AVAudioSessionModeMoviePlayback at every AO init. Apple means that
 # mode for video, and it replaced the default mode that the host declares
 # (the kit's media session sets .default), so the mode depended on who wrote
 # last. The category stays: an app without a media session relies on mpv for
 # .playback. Each file must lose exactly this line and keep no other setMode
-# call: a call of another shape stops the build. Reads the staged text, since
-# step 2 already edits ao_audiounit.m.
+# call: a call of another shape stops the build. The text read is the one
+# with the edits so far, since step 2 already edits ao_audiounit.m.
 
 MOVIE_MODE = '    [instance setMode:AVAudioSessionModeMoviePlayback error:nil];\n'
-for path in (au_path, avf_path):
-    content = staged(path)
-    if 'setMode:' not in content:
-        continue
-    if content.count(MOVIE_MODE) != 1 or content.count('setMode:') != 1:
-        sys.exit(f"[patch_ios_audio_stubs] {path}: expected one MoviePlayback "
-                 f"setMode line and no other setMode call; the session code "
-                 f"of mpv changed")
-    pending.append((path, content.replace(MOVIE_MODE, '', 1),
-                    f"Patched {path.rsplit('/', 1)[-1]}: removed the MoviePlayback mode"))
 
-for path, text, message in pending:
-    with open(path, 'w') as f:
-        f.write(text)
-    print(message)
+
+def guard_utils(src):
+    """ao_coreaudio_utils.c with its code wrapped in !TARGET_OS_IPHONE and
+    the iOS stubs appended."""
+    # Find end of license block
+    license_end = src.find('*/\n')
+    if license_end == -1:
+        license_end = 0
+    else:
+        license_end += 3
+    # Walk forward to first non-blank line
+    code_start = license_end
+    while code_start < len(src) and src[code_start] == '\n':
+        code_start += 1
+    return (
+        src[:code_start]
+        + '#if !TARGET_OS_IPHONE\n'
+        + src[code_start:]
+        + '\n#endif /* !TARGET_OS_IPHONE */\n'
+        + UTILS_STUBS
+        + '\n#define ' + UTILS_MARKER + ' 1\n'
+    )
+
+
+def apply(p):
+    if '//' + DEVICE_ID not in p.text(AVF):
+        p.edit(AVF, DEVICE_ID, '//' + DEVICE_ID, 'setAudioOutputDeviceUniqueID')
+
+    if MIX in p.text(AU):
+        p.regex(AU, MIX_BLOCK, '', 'MixWithOthers block')
+        if MIX in p.text(AU):
+            p.fail(f'{AU}: MixWithOthers still used after the block went; '
+                   f'the session code of mpv changed')
+
+    if 'TARGET_OS_IPHONE' not in p.text(AOH):
+        p.edit(AOH, '#define MPLAYER_AUDIO_OUT_H',
+               '#define MPLAYER_AUDIO_OUT_H\n' + AO_H_STUBS)
+
+    if UTILS_MARKER in p.text(UTILS):
+        print('ao_coreaudio_utils.c: already patched, skipping')
+    else:
+        p.write(UTILS, guard_utils(p.text(UTILS)))
+
+    for rel in (AU, AVF):
+        text = p.text(rel)
+        if 'setMode:' not in text:
+            continue
+        if text.count('setMode:') != 1:
+            p.fail(f'{rel}: expected one MoviePlayback setMode line and no '
+                   f'other setMode call; the session code of mpv changed')
+            continue
+        p.edit(rel, MOVIE_MODE, '', 'MoviePlayback setMode line')
+
+
+anchor.main(apply, 'patch_ios_audio_stubs', usage='<mpv_source_dir>')
