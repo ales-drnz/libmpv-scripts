@@ -301,10 +301,11 @@ jobs:
             fi
             builds/audio_fallback_test builds/release/libmpv_linux-x86_64.so /tmp/tone.wav'
 
-  # The TUI's go vet and go test, and the bash checks of the L13 exit code
-  # classification, of the FFmpeg component markers and of the manifest
-  # written from the build records. Not in the needs of release: a red test
-  # here does not hold back the binaries, it only shows next to them.
+  # The TUI's go vet and go test, and the checks of the L13 exit code
+  # classification, of the FFmpeg component markers, of the manifest written
+  # from the build records and of the anchor engine of the patches. Not in
+  # the needs of release: a red test here does not hold back the binaries,
+  # it only shows next to them.
   tui:
     name: TUI and verify tests
     runs-on: ubuntu-24.04
@@ -326,6 +327,8 @@ jobs:
         run: bash verify/tests/components_test.sh
       - name: Manifest and build records
         run: bash verify/tests/manifest_test.sh
+      - name: Anchor engine of the patches
+        run: python3 -B verify/tests/patches/anchor_engine_test.py
 
   # The native tests of the patches, with AddressSanitizer: a debug libmpv
   # with every mpv patch, built against Ubuntu's FFmpeg 6.1, runs the C and
