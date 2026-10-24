@@ -30,9 +30,12 @@ patch adds the other half:
 
 Usage: patch_optional_audio_libs.py <mpv_src_dir>
 """
-
-import os
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 MARKER = 'MAK_OPTIONAL_AUDIO_LIBS_PATCH_V1'
 
@@ -250,43 +253,13 @@ MESON_EDITS = [
 ]
 
 
-def apply_edits(path, edits):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    for name, pristine, patched in edits:
-        count = text.count(pristine)
-        if count != 1:
-            raise RuntimeError(
-                f'Pristine anchor ({name}) found {count} times in {path}, '
-                f'expected 1.'
-            )
-        text = text.replace(pristine, patched, 1)
-    with open(path, 'w') as f:
-        f.write(text)
-    print(f'Patched: {path}')
+def apply(p):
+    p.new_file('audio/out/mak_dl.h', MAK_DL_H)
+    p.new_file('audio/out/mak_dl.c', MAK_DL_C)
+    p.edits('audio/out/ao_pipewire.c', PIPEWIRE_EDITS)
+    p.edits('audio/out/ao_pulse.c', PULSE_EDITS)
+    p.edits('meson.build', MESON_EDITS)
 
 
-def write_new_file(path, content):
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f'Wrote:    {path}')
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    out = os.path.join(src, 'audio', 'out')
-    write_new_file(os.path.join(out, 'mak_dl.h'), MAK_DL_H)
-    write_new_file(os.path.join(out, 'mak_dl.c'), MAK_DL_C)
-    apply_edits(os.path.join(out, 'ao_pipewire.c'), PIPEWIRE_EDITS)
-    apply_edits(os.path.join(out, 'ao_pulse.c'), PULSE_EDITS)
-    apply_edits(os.path.join(src, 'meson.build'), MESON_EDITS)
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_optional_audio_libs', marker=MARKER,
+            usage='<mpv_src_dir>')

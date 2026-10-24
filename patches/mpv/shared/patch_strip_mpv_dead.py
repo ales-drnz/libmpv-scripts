@@ -125,10 +125,10 @@ Idempotency
 Every anchor must be found exactly once, and no file is written until all
 are. Overwritten TUs are rewritten when they differ from the stub; the new
 stub file carries the MARKER and is refreshed when stale-but-ours, never
-written over someone else's file. meson and anchor edits check for the
-post-patch state (stub source listed, tokens already gone, marker present)
-and are skipped on a re-run. Running the patch twice on a cached,
-already-patched tree is a no-op.
+written over someone else's file. That stub file, found before the run,
+marks a tree this patch already cut: the meson sources and the driver
+lines are then left alone, and vo_libmpv.c and input.c carry the marker.
+Running the patch twice on a cached, already-patched tree is a no-op.
 
 Usage
 =====
@@ -820,17 +820,18 @@ INPUT_CONF_NEW = (
 # ─── driver ─────────────────────────────────────────────────────────────
 
 
-def drop_lines(p, rel, lines, label):
-    """Removes each line of lines from rel, all present once, or none on a
-    file this patch already cut."""
-    if not any(line in p.text(rel) for line in lines):
-        print(f'Already patched: {rel} ({label})')
-        return
-    for line in lines:
-        p.edit(rel, line, '', f'{label}: {line.strip()}')
-
-
 def apply(p):
+    # The GPU stub file, ours, marks a tree this patch already cut: the lines
+    # it drops are gone then. Otherwise each must be found once.
+    cut = p.marked(STUB_GPU_FILENAME)
+
+    def drop_lines(rel, lines, label):
+        if cut:
+            print(f'Already patched: {rel} ({label})')
+            return
+        for line in lines:
+            p.edit(rel, line, '', f'{label}: {line.strip()}')
+
     # New and overwritten stub TUs. The overwritten ones replace an upstream
     # TU that must exist.
     p.new_file(STUB_GPU_FILENAME, STUB_GPU_SOURCE)
@@ -839,21 +840,18 @@ def apply(p):
     p.replace_file(ENCODE_REL, ENCODE_STUB)
     p.replace_file(DRAW_BMP_REL, DRAW_BMP_STUB)
 
-    # meson source list: the GPU stub source marks a patched list.
-    if MESON_STUB_GPU_LINE in p.text('meson.build'):
-        print('Already patched: meson.build')
-    else:
-        for line in MESON_REMOVE_SRC:
-            p.edit('meson.build', line, '', f'removed source {line.strip()}')
+    # meson source list.
+    drop_lines('meson.build', MESON_REMOVE_SRC, 'removed sources')
+    if not cut:
         p.edit('meson.build', MESON_STUB_GPU_ANCHOR,
                MESON_STUB_GPU_ANCHOR + MESON_STUB_GPU_LINE, 'video/out/vo.c entry')
 
     # GC-root anchors.
-    drop_lines(p, 'video/out/vo.c', VO_C_EXTERNS + VO_C_ENTRIES, 'vo drivers')
+    drop_lines('video/out/vo.c', VO_C_EXTERNS + VO_C_ENTRIES, 'vo drivers')
     p.edits('video/out/vo_libmpv.c', [('render_backends[] array',
                                        VO_LIBMPV_ENTRY_OLD, VO_LIBMPV_ENTRY_NEW)])
-    drop_lines(p, 'audio/out/ao.c', [AO_C_EXTERN, AO_C_ENTRY], 'ao lavc')
-    drop_lines(p, 'sub/dec_sub.c', [DEC_SUB_ENTRY], 'sd_list[] sd_lavc')
+    drop_lines('audio/out/ao.c', [AO_C_EXTERN, AO_C_ENTRY], 'ao lavc')
+    drop_lines('sub/dec_sub.c', [DEC_SUB_ENTRY], 'sd_list[] sd_lavc')
 
     # Input default-bindings string.
     p.edits('input/input.c', [('builtin_input_conf[] definition',

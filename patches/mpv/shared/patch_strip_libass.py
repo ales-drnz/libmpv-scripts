@@ -69,10 +69,11 @@ This patch surgically removes libass from the build:
 Idempotency
 ===========
 
-Every edit is guarded: meson edits check for the post-patch state (token
-absent / line gone), the stub file is only written if missing or stale,
-and command.c is guarded by a marker comment. Re-running on an
-already-patched (cached) source tree is a no-op.
+Every libass line of meson.build must be found once, and no file is
+written until all are. The stub source listed in meson.build marks it
+patched, the stub file is only written if missing or stale, and command.c
+is guarded by a marker comment. Re-running on an already-patched (cached)
+source tree is a no-op.
 
 Usage
 =====
@@ -80,8 +81,11 @@ Usage
     python3 patch_strip_libass.py <mpv_source_dir>
 """
 import sys
-import os
+from pathlib import Path
 
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 MARKER = 'MAK_STRIP_LIBASS_PATCH_V1'
 
@@ -92,7 +96,7 @@ MARKER = 'MAK_STRIP_LIBASS_PATCH_V1'
 # from the removed sub/ass_mp.c, sub/osd_libass.c and sub/sd_ass.c with
 # EXACT signatures taken from sub/osd.h, sub/osd_state.h and sub/sd.h.
 
-STUB_FILENAME = os.path.join('sub', 'stub_libass.c')
+STUB_FILENAME = 'sub/stub_libass.c'
 
 STUB_SOURCE = r'''/*
  * ''' + MARKER + r'''
@@ -286,94 +290,32 @@ bstr sd_ass_to_plaintext(char **out, const char *in)
 '''
 
 
-def write_stub(src):
-    path = os.path.join(src, STUB_FILENAME)
-    if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-        if existing == STUB_SOURCE:
-            print(f'Already present: {STUB_FILENAME}')
-            return
-        # Stale copy from an older patch revision — overwrite only if it is
-        # clearly ours (carries our marker), never clobber an unrelated file.
-        if MARKER not in existing:
-            raise RuntimeError(
-                f'{path} exists but is not a {MARKER} stub — refusing to '
-                f'overwrite.')
-    with open(path, 'w') as f:
-        f.write(STUB_SOURCE)
-    print(f'Wrote: {STUB_FILENAME}')
-
-
 # ─── meson.build ────────────────────────────────────────────────────────
 
-def patch_meson(path):
-    with open(path) as f:
-        text = f.read()
-    orig = text
-
-    # (a) Drop the `libass = dependency('libass', ...)` line. Tolerate both
-    #     the pristine form and the `required: false` form left by
-    #     patch_optional_deps.py. Match the whole physical line.
-    dep_lines = [
-        "libass = dependency('libass', version: '>= 0.12.2', required: false)\n",
-        "libass = dependency('libass', version: '>= 0.12.2')\n",
-    ]
-    dep_removed = False
-    for dl in dep_lines:
-        if dl in text:
-            text = text.replace(dl, '', 1)
-            dep_removed = True
-            break
-    if not dep_removed and "dependency('libass'" in text:
-        raise RuntimeError(
-            f"libass dependency() line in {path} has an unexpected form — "
-            f"cannot strip safely.")
-
-    # (b) Remove the `libass` token from the dependencies = [ ... ] array.
-    #     Upstream writes it as the first element: `dependencies = [libass,`.
-    deps_old = "dependencies = [libass,\n"
-    deps_new = "dependencies = [\n"
-    if deps_old in text:
-        text = text.replace(deps_old, deps_new, 1)
-    elif "dependencies = [libass" in text:
-        raise RuntimeError(
-            f"`dependencies` array in {path} lists libass in an unexpected "
-            f"layout — cannot strip safely.")
-
-    # (c) Remove the features-dict entry `    'libass': true,`.
-    feat_old = "    'libass': true,\n"
-    if feat_old in text:
-        text = text.replace(feat_old, '', 1)
-    elif "'libass'" in text:
-        raise RuntimeError(
-            f"`features` dict in {path} lists 'libass' in an unexpected "
-            f"layout — cannot strip safely.")
-
-    # (d) Remove the three libass-only sources.
-    for srcline in ("    'sub/ass_mp.c',\n",
-                    "    'sub/osd_libass.c',\n",
-                    "    'sub/sd_ass.c',\n"):
-        if srcline in text:
-            text = text.replace(srcline, '', 1)
-
-    # (e) Add the replacement stub source. Anchor on a sibling sub/ source
-    #     that always remains (sub/dec_sub.c) and is not touched above.
-    stub_line = "    'sub/stub_libass.c',\n"
-    anchor = "    'sub/dec_sub.c',\n"
-    if stub_line not in text:
-        if anchor not in text:
-            raise RuntimeError(
-                f"Anchor `sub/dec_sub.c` not found in {path}; cannot add the "
-                f"replacement stub source.")
-        text = text.replace(anchor, anchor + stub_line, 1)
-
-    if text == orig:
-        print(f'Already patched: {path}')
-        return
-    with open(path, 'w') as f:
-        f.write(text)
-    print(f'Patched: {path}')
+# (a) The `libass = dependency('libass', ...)` line, whole: the
+#     `required: false` form left by patch_optional_deps.py, or the
+#     pristine one.
+MESON_DEP_LINES = [
+    "libass = dependency('libass', version: '>= 0.12.2', required: false)\n",
+    "libass = dependency('libass', version: '>= 0.12.2')\n",
+]
+# (b) The `libass` token of the dependencies = [ ... ] array, which
+#     upstream writes as the first element.
+MESON_DEPS_OLD = "dependencies = [libass,\n"
+MESON_DEPS_NEW = "dependencies = [\n"
+# (c) The features-dict entry.
+MESON_FEATURE = "    'libass': true,\n"
+# (d) The three libass-only sources.
+MESON_SOURCES = [
+    "    'sub/ass_mp.c',\n",
+    "    'sub/osd_libass.c',\n",
+    "    'sub/sd_ass.c',\n",
+]
+# (e) The replacement stub source, after a sibling sub/ source that always
+#     remains (sub/dec_sub.c) and is not touched above. Listed, it marks a
+#     patched meson.build.
+MESON_STUB_LINE = "    'sub/stub_libass.c',\n"
+MESON_STUB_ANCHOR = "    'sub/dec_sub.c',\n"
 
 
 # ─── player/command.c ───────────────────────────────────────────────────
@@ -383,6 +325,9 @@ def patch_meson(path):
 # unresolvable `ass_library_version()`.
 
 CMD_INCLUDE_OLD = "#include <ass/ass.h>\n"
+# Replaced with a marker so re-runs are detected and idempotent.
+CMD_INCLUDE_NEW = ("/* " + MARKER + ": #include <ass/ass.h> removed (libass "
+                   "stripped). */\n")
 
 CMD_GETTER_OLD = (
     "    return m_property_int64_ro(action, arg, ass_library_version());"
@@ -393,50 +338,28 @@ CMD_GETTER_NEW = (
 )
 
 
-def patch_command_c(path):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
+def apply(p):
+    p.new_file(STUB_FILENAME, STUB_SOURCE)
 
-    changed = False
-
-    if CMD_INCLUDE_OLD in text:
-        # Replace with a marker so re-runs are detected and idempotent.
-        text = text.replace(
-            CMD_INCLUDE_OLD,
-            "/* " + MARKER + ": #include <ass/ass.h> removed (libass "
-            "stripped). */\n", 1)
-        changed = True
+    # Every libass line of meson.build must be found once: a form the patch
+    # does not know cannot be stripped safely.
+    if MESON_STUB_LINE in p.text('meson.build'):
+        print('Already patched: meson.build')
     else:
-        raise RuntimeError(
-            f"`#include <ass/ass.h>` not found in {path} — mpv source layout "
-            f"changed.")
+        p.optional('meson.build', [(line, '') for line in MESON_DEP_LINES],
+                   "libass dependency() line")
+        p.edit('meson.build', MESON_DEPS_OLD, MESON_DEPS_NEW,
+               '`dependencies` array lists libass')
+        p.edit('meson.build', MESON_FEATURE, '', "`features` dict 'libass'")
+        for line in MESON_SOURCES:
+            p.edit('meson.build', line, '', f'source {line.strip()}')
+        p.edit('meson.build', MESON_STUB_ANCHOR,
+               MESON_STUB_ANCHOR + MESON_STUB_LINE, 'sub/dec_sub.c source')
 
-    if CMD_GETTER_OLD in text:
-        text = text.replace(CMD_GETTER_OLD, CMD_GETTER_NEW, 1)
-        changed = True
-    else:
-        raise RuntimeError(
-            f"`ass_library_version()` call not found in {path} — mpv source "
-            f"layout changed.")
-
-    if changed:
-        with open(path, 'w') as f:
-            f.write(text)
-        print(f'Patched: {path}')
+    p.edits('player/command.c', [
+        ('`#include <ass/ass.h>`', CMD_INCLUDE_OLD, CMD_INCLUDE_NEW),
+        ('`ass_library_version()` call', CMD_GETTER_OLD, CMD_GETTER_NEW),
+    ])
 
 
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
-    write_stub(src)
-    patch_meson(os.path.join(src, 'meson.build'))
-    patch_command_c(os.path.join(src, 'player', 'command.c'))
-
-
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_strip_libass', marker=MARKER, usage='<mpv_src_dir>')

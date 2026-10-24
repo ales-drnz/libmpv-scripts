@@ -97,34 +97,15 @@ Usage
 
     python3 patch_pcm_stream.py <mpv_source_dir>
 """
-import os
 import sys
+from pathlib import Path
 
-SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                       'pcm_stream')
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Idempotency marker; also present in the copied sources.
 MARKER = 'MAK_PCM_STREAM_PATCH'
-
-
-def read_src(name):
-    with open(os.path.join(SRC_DIR, name)) as f:
-        return f.read()
-
-
-def replace_once(path, pairs):
-    with open(path) as f:
-        text = f.read()
-    if MARKER in text:
-        print(f'Already patched: {path}')
-        return
-    for label, old, new in pairs:
-        if old not in text:
-            raise RuntimeError(f'Pristine anchor ({label}) not found in {path}.')
-        text = text.replace(old, new, 1)
-    with open(path, 'w') as f:
-        f.write(text)
-    print(f'Patched: {path}')
 
 
 # ─── stream/stream.c ─────────────────────────────────────────────────
@@ -264,38 +245,17 @@ MESON = [
 ]
 
 
-def write_new_file(path, content):
-    """Idempotent: refresh a file a prior run wrote, refuse anything else."""
-    verb = 'Created: '
-    if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-        if MARKER not in existing:
-            raise RuntimeError(f'Refusing to overwrite an unrecognised file at {path}')
-        if existing == content:
-            print(f'Already present: {path}')
-            return
-        verb = 'Updated: '
-    with open(path, 'w') as f:
-        f.write(content)
-    print(f'{verb} {path}')
-
-
-def main():
-    if len(sys.argv) < 2:
-        print(f'Usage: {sys.argv[0]} <mpv_src_dir>')
-        sys.exit(1)
-    src = sys.argv[1]
+def apply(p):
+    # The sources of the protocol, shipped in pcm_stream/.
     for name in ('mak_pcm.h', 'mak_pcm.c', 'stream_mak_pcm.c'):
-        write_new_file(os.path.join(src, 'stream', name), read_src(name))
-    replace_once(os.path.join(src, 'stream', 'stream.c'), STREAM_C)
-    replace_once(os.path.join(src, 'demux', 'demux_raw.c'), DEMUX_RAW_C)
-    replace_once(os.path.join(src, 'demux', 'packet.c'), PACKET_C)
-    replace_once(os.path.join(src, 'demux', 'demux.c'), DEMUX_C)
-    replace_once(os.path.join(src, 'player', 'loadfile.c'), LOADFILE_C)
-    replace_once(os.path.join(src, 'player', 'playloop.c'), PLAYLOOP_C)
-    replace_once(os.path.join(src, 'meson.build'), MESON)
+        p.new_file('stream/' + name, p.asset('pcm_stream/' + name))
+    p.edits('stream/stream.c', STREAM_C)
+    p.edits('demux/demux_raw.c', DEMUX_RAW_C)
+    p.edits('demux/packet.c', PACKET_C)
+    p.edits('demux/demux.c', DEMUX_C)
+    p.edits('player/loadfile.c', LOADFILE_C)
+    p.edits('player/playloop.c', PLAYLOOP_C)
+    p.edits('meson.build', MESON)
 
 
-if __name__ == '__main__':
-    main()
+anchor.main(apply, 'patch_pcm_stream', marker=MARKER, usage='<mpv_src_dir>')

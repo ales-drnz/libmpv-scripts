@@ -139,7 +139,7 @@ class Patch:
         text = self.text(rel)
         label = label or _label(anchor)
         self.anchors.append({'file': rel, 'label': label, 'kind': 'edit',
-                             'anchor': anchor})
+                             'anchor': anchor, 'times': times})
         n = text.count(anchor)
         if not self._count_ok(n, times):
             self.fail(f'{rel}: anchor ({label}) found {n} times, '
@@ -156,7 +156,7 @@ class Patch:
         text = self.text(rel)
         label = label or _label(anchor)
         self.anchors.append({'file': rel, 'label': label, 'kind': 'edit',
-                             'anchor': anchor})
+                             'anchor': anchor, 'times': times})
         n = text.count(anchor)
         if not self._count_ok(n, times):
             self.fail(f'{rel}: anchor ({label}) found {n} times, '
@@ -182,7 +182,8 @@ class Patch:
         rx = re.compile(pattern, flags) if isinstance(pattern, str) else pattern
         label = label or _label(rx)
         self.anchors.append({'file': rel, 'label': label, 'kind': 'regex',
-                             'anchor': rx.pattern})
+                             'anchor': rx.pattern, 'flags': rx.flags,
+                             'times': times})
         n = sum(1 for _ in rx.finditer(text))
         if not self._count_ok(n, times):
             self.fail(f'{rel}: pattern ({label}) found {n} times, '
@@ -200,7 +201,8 @@ class Patch:
         text = self.text(rel)
         for anchor, new in variants:
             self.anchors.append({'file': rel, 'label': label,
-                                 'kind': 'optional', 'anchor': anchor})
+                                 'kind': 'optional', 'anchor': anchor,
+                                 'times': 1})
             if text.count(anchor) == 1:
                 self.write(rel, text.replace(anchor, new, 1))
                 return True
