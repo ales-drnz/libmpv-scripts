@@ -16,11 +16,11 @@ which live behind their own platform guards and must not be made
 optional here.
 """
 import sys
-import re
+from pathlib import Path
 
-fn = sys.argv[1]  # path to meson.build
-with open(fn) as f:
-    content = f.read()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # The win32-desktop system libs meson probes with cc.find_library() (mpv
 # meson.build, `if features['win32-desktop']` block). Includes pathcch.
@@ -29,30 +29,21 @@ WIN32_DESKTOP_LIBS = [
     "pathcch", "shcore", "user32", "uuid", "uxtheme", "version",
 ]
 
-# Idempotent: if the first lib is already optional, the patch ran before.
-if "cc.find_library('avrt', required: false)" in content:
-    print(f"Nothing to patch in {fn} (already patched)")
-    sys.exit(0)
+# A first lib already optional means the patch ran before.
+DONE = "cc.find_library('avrt', required: false)"
 
-hits = 0
-for lib in WIN32_DESKTOP_LIBS:
-    content, n = re.subn(
-        rf"cc\.find_library\('{lib}'\)",
-        f"cc.find_library('{lib}', required: false)",
-        content,
-    )
-    hits += n
 
-# Fail loud if the block was restructured: a partial match would otherwise
-# ship a meson.build where some win32 imports were never made optional,
-# deferring the failure to the link line and masking the anchor drift.
-if hits < 10:
-    sys.exit(
-        f"[patch_windows_deps] expected >= 10 win32-desktop find_library "
-        f"anchors, rewrote {hits} of {len(WIN32_DESKTOP_LIBS)} — "
-        f"meson.build layout changed"
-    )
+def apply(p, meson):
+    if DONE in p.text(meson):
+        print(f"Nothing to patch in {meson} (already patched)")
+        return
+    # Every lib must be probed exactly once: a block restructured upstream
+    # would otherwise ship a meson.build where some win32 imports were never
+    # made optional, deferring the failure to the link line.
+    for lib in WIN32_DESKTOP_LIBS:
+        p.edit(meson, f"cc.find_library('{lib}')",
+               f"cc.find_library('{lib}', required: false)")
 
-with open(fn, 'w') as f:
-    f.write(content)
-print(f"Patched meson.build: {hits} win32-desktop libs made optional for MinGW")
+
+anchor.main(apply, "patch_windows_deps", usage="<mpv meson.build>",
+            file_arg=True)

@@ -12,37 +12,34 @@ link-time use is then gated out for an audio-only build by
 required). Applied on every platform via apply_mpv_patches_common().
 """
 import sys
-import re
+from pathlib import Path
 
-fn = sys.argv[1]  # path to meson.build
-with open(fn) as f:
-    content = f.read()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # libplacebo: head-anchored on the unique `dependency('libplacebo'` token
 # so an upstream reflow of the default_options list can't drift the match.
 # In Python `re`, `[^)]` spans newlines and the two-line call has no ')'
 # inside its argument list, so `[^)]*` correctly swallows to the single
-# closing paren.
+# closing paren. The patched call matches too, and is rewritten as itself.
+LP_RE = r"libplacebo = dependency\('libplacebo'[^)]*\)"
 LP_NEW = "libplacebo = dependency('libplacebo', version: '>=6.338.2', required: false)"
-content, n_lp = re.subn(
-    r"libplacebo = dependency\('libplacebo'[^)]*\)", LP_NEW, content)
-if n_lp == 0:
-    sys.exit(f"[patch_optional_deps] libplacebo dependency() call not found "
-             f"in {fn} — mpv source layout changed")
 
-# libass: make optional. Idempotent — on a re-run the unpatched anchor is
-# gone but the patched form is present, which is not an error. Neither is
-# a tree where patch_strip_libass.py already dropped the line and swapped
-# in its stub source.
+# libass: the patched form on a re-run is not an error. Neither is a tree
+# where patch_strip_libass.py already dropped the line and swapped in its
+# stub source.
 LA_OLD = "libass = dependency('libass', version: '>= 0.12.2')"
 LA_NEW = "libass = dependency('libass', version: '>= 0.12.2', required: false)"
 LA_STRIPPED = "'sub/stub_libass.c'"
-if LA_OLD in content:
-    content = content.replace(LA_OLD, LA_NEW, 1)
-elif LA_NEW not in content and LA_STRIPPED not in content:
-    sys.exit(f"[patch_optional_deps] libass dependency() call not found "
-             f"in {fn} — mpv source layout changed")
 
-with open(fn, 'w') as f:
-    f.write(content)
-print("Patched meson.build: libplacebo and libass made optional")
+
+def apply(p, meson):
+    p.regex(meson, LP_RE, LP_NEW, 'libplacebo dependency() call')
+    text = p.text(meson)
+    if LA_NEW not in text and LA_STRIPPED not in text:
+        p.edit(meson, LA_OLD, LA_NEW, 'libass dependency() call')
+
+
+anchor.main(apply, 'patch_optional_deps', usage='<mpv meson.build>',
+            file_arg=True)

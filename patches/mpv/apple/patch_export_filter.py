@@ -23,62 +23,50 @@ script lives at link time via `-Wl,--version-script` directly in build_mpv).
 
 Usage: patch_export_filter.py <mpv_source_dir> <abs_path_to_mpv.exports> <abs_prefix_dir>
 """
-import pathlib
 import sys
+from pathlib import Path
 
-if len(sys.argv) != 4:
-    sys.exit(
-        "usage: patch_export_filter.py <mpv_source_dir> "
-        "<mpv.exports path> <prefix dir>"
-    )
-
-mpv_dir = pathlib.Path(sys.argv[1])
-exports_file = pathlib.Path(sys.argv[2]).resolve()
-prefix = pathlib.Path(sys.argv[3]).resolve()
-target = mpv_dir / "meson.build"
-text = target.read_text()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 MARKER = "# mpv_audio_kit: export filter"
-if MARKER in text:
-    print("[patch_export_filter] already applied", file=sys.stderr)
-    sys.exit(0)
 
-# Resolve transitive static archives by absolute path so the linker
-# pulls them in regardless of the meson `library()` -L search path.
-def _archive(name: str) -> str:
-    a = prefix / "lib" / f"lib{name}.a"
-    if not a.exists():
-        sys.exit(f"[patch_export_filter] missing archive: {a}")
-    return str(a)
+OLD = "link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),"
 
-extra_archives = [
-    _archive("ssl"),
-    _archive("crypto"),
-    _archive("xml2"),
-    _archive("bz2"),
-    _archive("lzma"),
-]
 
-old = "link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),"
-# The `-Wl,...` flags go through cc.get_supported_link_arguments() (a
-# compile-probe + filter). The absolute static-archive paths must NOT —
-# a bare `.a` path can be silently dropped by the probe on some
-# clang/ld64 combos, defeating the static link. Concatenate them raw to
-# the probed flag list instead.
-new = (
-    "link_args: cc.get_supported_link_arguments(["
-    "'-Wl,-Bsymbolic', "
-    f"'-Wl,-exported_symbols_list,{exports_file}', "
-    "'-Wl,-dead_strip']) + ["
-    + ", ".join(f"'{a}'" for a in extra_archives)
-    + "],  " + MARKER
-)
+def apply(p, exports, prefix):
+    if p.marked("meson.build"):
+        print("Already patched: meson.build (export filter)")
+        return
+    exports_file = Path(exports).resolve()
+    prefix = Path(prefix).resolve()
 
-if old not in text:
-    sys.exit(
-        "[patch_export_filter] anchor not found — mpv version may have "
-        "changed the libmpv link_args call site"
+    # Resolve transitive static archives by absolute path so the linker
+    # pulls them in regardless of the meson `library()` -L search path.
+    archives = []
+    for name in ("ssl", "crypto", "xml2", "bz2", "lzma"):
+        a = prefix / "lib" / f"lib{name}.a"
+        if not a.exists():
+            p.fail(f"missing archive: {a}")
+        archives.append(str(a))
+
+    # The `-Wl,...` flags go through cc.get_supported_link_arguments() (a
+    # compile-probe + filter). The absolute static-archive paths must NOT —
+    # a bare `.a` path can be silently dropped by the probe on some
+    # clang/ld64 combos, defeating the static link. Concatenate them raw to
+    # the probed flag list instead.
+    new = (
+        "link_args: cc.get_supported_link_arguments(["
+        "'-Wl,-Bsymbolic', "
+        f"'-Wl,-exported_symbols_list,{exports_file}', "
+        "'-Wl,-dead_strip']) + ["
+        + ", ".join(f"'{a}'" for a in archives)
+        + "],  " + MARKER
     )
+    # A missing anchor: mpv may have changed the libmpv link_args call site.
+    p.edit("meson.build", OLD, new, "libmpv link_args")
 
-target.write_text(text.replace(old, new))
-print("[patch_export_filter] applied", file=sys.stderr)
+
+anchor.main(apply, "patch_export_filter", marker=MARKER,
+            usage="<mpv_source_dir> <mpv.exports path> <prefix dir>", nargs=3)

@@ -29,40 +29,33 @@ Idempotent (MARKER-guarded). This patch is applied on the iOS build only.
 
 Usage: patch_compat_apple.py <mpv_source_dir>
 """
-import pathlib
 import sys
+from pathlib import Path
 
-if len(sys.argv) != 2:
-    sys.exit("usage: patch_compat_apple.py <mpv_source_dir>")
-
-target = pathlib.Path(sys.argv[1]) / "osdep" / "mac" / "compat.h"
-if not target.exists():
-    sys.exit(f"[patch_compat_apple] file not found: {target}")
-
-text = target.read_text()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 MARKER = "/* mpv_audio_kit: gate on TARGET_OS_OSX */"
-if MARKER in text:
-    print("[patch_compat_apple] already applied", file=sys.stderr)
-    sys.exit(0)
 
 # Anchor on the single, tree-wide-unique `#if` line rather than the whole
 # 3-line block — shrinks the brittle match surface to one line. The
 # `#define`/`#endif` below it are left untouched.
-old = (
+OLD = (
     "#if !HAVE_MACOS_12_FEATURES || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_VERSION_12_0)\n"
 )
-new = (
+NEW = (
     "#include <TargetConditionals.h>\n"
-    "/* mpv_audio_kit: gate on TARGET_OS_OSX */\n"
+    + MARKER + "\n"
     "#if TARGET_OS_OSX && (!HAVE_MACOS_12_FEATURES || (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_VERSION_12_0))\n"
 )
 
-if old not in text:
-    sys.exit(
-        "[patch_compat_apple] anchor not found — mpv may have already "
-        "fixed this upstream or the compat.h layout changed"
-    )
 
-target.write_text(text.replace(old, new))
-print("[patch_compat_apple] applied", file=sys.stderr)
+def apply(p):
+    # A missing anchor: mpv may have fixed this upstream, or the compat.h
+    # layout changed.
+    p.edits("osdep/mac/compat.h", [("kAudioObjectPropertyElementMain shim",
+                                    OLD, NEW)])
+
+
+anchor.main(apply, "patch_compat_apple", marker=MARKER)

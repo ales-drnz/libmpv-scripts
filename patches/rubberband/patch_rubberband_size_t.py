@@ -32,8 +32,13 @@ Usage:
 """
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_lib"))
+import anchor  # noqa: E402
 
 MARKER = "/* libmpv-scripts: stddef.h for size_t */"
 
@@ -44,44 +49,27 @@ INJECT_H = MARKER + "\n#include <stddef.h>\n#include \"sysutils.h\""
 INJECT_CPP = MARKER + "\n#include <stddef.h>\n#include \"mathmisc.h\""
 
 
-def patch_one(target: Path, anchor: str, inject: str) -> bool:
-    if not target.is_file():
-        print(f"ERROR: {target} not found", file=sys.stderr)
-        return False
-    text = target.read_text()
+def patch_one(p, rel: str, anchor_line: str, inject: str) -> None:
+    if not p.exists(rel):
+        p.fail(f"{rel} not found")
+        return
+    text = p.text(rel)
     if MARKER in text:
-        print(f"Already patched: {target}")
-        return True
-    if anchor not in text:
-        # Upstream may have reshuffled the header. If there's no
-        # unqualified size_t reference left in the file, the patch
-        # is unnecessary on that tree — no-op success.
-        if "size_t" not in text:
-            print(f"Skipping (no size_t reference): {target}")
-            return True
-        print(f"ERROR: anchor not found in {target}; patch needs "
-              "update for this upstream version", file=sys.stderr)
-        return False
-    text = text.replace(anchor, inject, 1)
-    target.write_text(text)
-    print(f"Patched: {target}")
-    return True
+        print(f"Already patched: {rel}")
+        return
+    if anchor_line not in text and "size_t" not in text:
+        # Upstream may have reshuffled the header. With no unqualified
+        # size_t reference left in the file the patch is unnecessary on
+        # that tree.
+        print(f"Skipping (no size_t reference): {rel}")
+        return
+    p.edit(rel, anchor_line, inject)
 
 
-def patch(src_root: Path) -> bool:
-    h_target = src_root / "src" / "common" / "mathmisc.h"
-    cpp_target = src_root / "src" / "common" / "mathmisc.cpp"
-    ok_h = patch_one(h_target, ANCHOR_H, INJECT_H)
-    ok_cpp = patch_one(cpp_target, ANCHOR_CPP, INJECT_CPP)
-    return ok_h and ok_cpp
+def apply(p):
+    patch_one(p, "src/common/mathmisc.h", ANCHOR_H, INJECT_H)
+    patch_one(p, "src/common/mathmisc.cpp", ANCHOR_CPP, INJECT_CPP)
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <rubberband-source-dir>", file=sys.stderr)
-        sys.exit(2)
-    src = Path(sys.argv[1])
-    if not src.is_dir():
-        print(f"ERROR: {src} is not a directory", file=sys.stderr)
-        sys.exit(2)
-    sys.exit(0 if patch(src) else 1)
+anchor.main(apply, "patch_rubberband_size_t", marker=MARKER,
+            usage="<rubberband-source-dir>")

@@ -41,6 +41,8 @@ from pathlib import Path
 
 # times= of edit() and regex(): found at least once, the first replaced.
 FIRST = 'first'
+# times= of edit() and regex(): found at least once, every one replaced.
+ALL = 'all'
 # times= of edit() and regex(): found any number of times, all replaced.
 ANY = 'any'
 
@@ -107,6 +109,8 @@ class Patch:
     def marked(self, rel, marker=None) -> bool:
         """Whether rel exists and carries marker (the patch's by default)."""
         marker = marker or self.marker
+        if not marker:
+            raise ValueError(f'{self.name}: marked() needs a marker')
         return self.exists(rel) and marker in self._file(rel).text
 
     def asset(self, name) -> str:
@@ -121,7 +125,7 @@ class Patch:
         self.errors.append(message)
 
     def _count_ok(self, n, times) -> bool:
-        if times == FIRST:
+        if times in (FIRST, ALL):
             return n >= 1
         if times == ANY:
             return True
@@ -130,7 +134,8 @@ class Patch:
     def edit(self, rel, anchor, new, label=None, times=1) -> bool:
         """Replaces anchor with new in rel. The anchor must be found
         exactly times times, all replaced; FIRST asks for at least one and
-        replaces the first, ANY takes any number and replaces them all."""
+        replaces the first, ALL for at least one and replaces them all, ANY
+        takes any number and replaces them all."""
         text = self.text(rel)
         label = label or _label(anchor)
         self.anchors.append({'file': rel, 'label': label, 'kind': 'edit',

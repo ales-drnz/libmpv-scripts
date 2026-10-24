@@ -10,48 +10,39 @@ cfstr_from_cstr / cfstr_get_cstr are left undefined and CoreAudio AO crashes.
 
 Used on macOS and iOS.
 """
-import sys
 import re
+import sys
+from pathlib import Path
 
-fn = sys.argv[1]  # path to meson.build
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
-with open(fn) as f:
-    content = f.read()
+MARKER = 'utils-mac-unconditional-patched'
 
-if 'utils-mac-unconditional-patched' in content:
-    print("Already patched, skipping")
-    sys.exit(0)
-
-# Remove 'osdep/utils-mac.c' from the cocoa-conditional block — exactly
-# once. A counted assertion turns a future meson reshuffle (where the
-# entry moved or vanished) into a hard failure instead of a silent
-# partial apply. `[ \t]` (not `\s`) so the class can't span lines.
-content, n_removed = re.subn(
-    r"^[ \t]+'osdep/utils-mac\.c',\n", "", content, flags=re.MULTILINE)
-if n_removed != 1:
-    sys.exit(
-        f"[patch_utils_mac] expected exactly one 'osdep/utils-mac.c' list "
-        f"entry to remove, found {n_removed} — meson.build layout changed"
-    )
-
-# Insert it unconditionally inside the canonical Darwin osdep block, right
+# Inserted unconditionally inside the canonical Darwin osdep block, right
 # after the (unique) timer-darwin source line. Anchoring on this Darwin-
 # semantic line keeps the addition in the correct section and decouples it
 # from the (unrelated) cocoa dependency declaration.
-anchor = "    timer_source = files('osdep/timer-darwin.c')\n"
-patch = anchor + (
-    "    # utils-mac-unconditional-patched\n"
+ANCHOR = "    timer_source = files('osdep/timer-darwin.c')\n"
+PATCH = ANCHOR + (
+    "    # " + MARKER + "\n"
     "    # Always compile on Darwin: provides cfstr_from_cstr / cfstr_get_cstr\n"
     "    # (needed by ao_coreaudio even when the Cocoa UI is disabled)\n"
     "    sources += files('osdep/utils-mac.c')\n"
 )
-if anchor not in content:
-    sys.exit(
-        "[patch_utils_mac] Darwin timer-darwin source anchor not found — "
-        "meson.build layout changed"
-    )
-content = content.replace(anchor, patch, 1)
 
-with open(fn, 'w') as f:
-    f.write(content)
-print("Patched meson.build: osdep/utils-mac.c compiled unconditionally on Darwin")
+
+def apply(p, meson):
+    if p.marked(meson):
+        print('Already patched, skipping')
+        return
+    # Remove 'osdep/utils-mac.c' from the cocoa-conditional block, exactly
+    # once. `[ \t]` (not `\s`) so the class can't span lines.
+    p.regex(meson, r"^[ \t]+'osdep/utils-mac\.c',\n", '',
+            'osdep/utils-mac.c list entry', flags=re.MULTILINE)
+    p.edit(meson, ANCHOR, PATCH, 'Darwin timer-darwin source')
+
+
+anchor.main(apply, 'patch_utils_mac', marker=MARKER,
+            usage='<mpv meson.build>', file_arg=True)

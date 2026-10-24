@@ -16,42 +16,34 @@ No-op on non-Windows (the statement lives inside mpv's `if win32` block and
 never runs there), so it is safe to apply unconditionally from
 apply_mpv_patches_common. Idempotent. Usage: patch_strip_win_resources.py <mpv_dir>
 """
-import os
 import re
 import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 MARKER = "# MAK_WIN_RESOURCES_STRIPPED"
 
+# The whole `sources += windows.compile_resources('osdep/mpv.rc' ... )`
+# statement, tolerant of its multi-line layout / indentation.
+STATEMENT = re.compile(
+    r"[ \t]*sources \+= windows\.compile_resources\('osdep/mpv\.rc'.*?\)\n",
+    re.DOTALL,
+)
+REPLACEMENT = (
+    "    " + MARKER + " — icon/manifest/version dropped for the audio-only DLL\n"
+)
 
-def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: patch_strip_win_resources.py <mpv_source_dir>")
-    mb = os.path.join(sys.argv[1], "meson.build")
-    with open(mb, encoding="utf-8") as f:
-        text = f.read()
 
-    if MARKER in text:
+def apply(p):
+    if p.marked("meson.build"):
         print("Already patched: meson.build (Windows resources)")
         return
-
-    # Match the whole `sources += windows.compile_resources('osdep/mpv.rc' ... )`
-    # statement, tolerant of its multi-line layout / indentation.
-    pat = re.compile(
-        r"[ \t]*sources \+= windows\.compile_resources\('osdep/mpv\.rc'.*?\)\n",
-        re.DOTALL,
-    )
-    new_text, n = pat.subn(
-        "    " + MARKER + " — icon/manifest/version dropped for the audio-only DLL\n",
-        text, count=1)
-    if n != 1:
-        raise SystemExit(
-            "patch_strip_win_resources: compile_resources('osdep/mpv.rc') anchor "
-            "not found in meson.build — mpv source layout changed.")
-
-    with open(mb, "w", encoding="utf-8") as f:
-        f.write(new_text)
-    print("Patched: meson.build (dropped Windows icon/manifest/version resources)")
+    p.regex("meson.build", STATEMENT, REPLACEMENT,
+            "compile_resources('osdep/mpv.rc')")
 
 
-if __name__ == "__main__":
-    main()
+anchor.main(apply, "patch_strip_win_resources", marker=MARKER,
+            usage="<mpv_source_dir>")

@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(ROOT / 'patches' / '_lib'))
 import anchor  # noqa: E402
-from anchor import ANY, FIRST, Patch  # noqa: E402
+from anchor import ALL, ANY, FIRST, Patch  # noqa: E402
 
 MARKER = 'MAK_TEST_PATCH_V1'
 
@@ -92,11 +92,15 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(p.edit('a.c', 'int ', 'long ', times=2))
         self.assertEqual(p.text('a.c'), 'long a;\nlong b;\n')
 
-    def test_first_and_any(self):
+    def test_first_all_and_any(self):
         p = self.patch()
         self.assertTrue(p.edit('a.c', 'int ', 'long ', times=FIRST))
         self.assertEqual(p.text('a.c'), 'long a;\nint b;\n')
         self.assertFalse(p.edit('a.c', 'char ', '', times=FIRST))
+        p = self.patch()
+        self.assertTrue(p.regex('a.c', r'int', 'long', times=ALL))
+        self.assertEqual(p.text('a.c'), 'long a;\nlong b;\n')
+        self.assertFalse(p.edit('a.c', 'char ', '', times=ALL))
         p = self.patch()
         self.assertTrue(p.edit('a.c', 'char ', 'x', times=ANY))
         self.assertTrue(p.edit('a.c', 'int ', 'long ', times=ANY))

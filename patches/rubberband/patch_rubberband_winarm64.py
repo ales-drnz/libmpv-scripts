@@ -31,8 +31,13 @@ Usage:
 """
 
 from __future__ import annotations
+
 import sys
 from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_lib"))
+import anchor  # noqa: E402
 
 OLD_BLOCK = """#else /* (mingw) */
     LONG Barrier = 0;
@@ -49,45 +54,28 @@ NEW_BLOCK = """#else /* (mingw) — portable across x86/x86_64/aarch64 */
 #endif"""
 
 MARKER = "patch_rubberband_winarm64"
+TARGET = "src/common/sysutils.cpp"
 
 
-def patch(src_root: Path) -> bool:
-    target = src_root / "src" / "common" / "sysutils.cpp"
-    if not target.is_file():
-        print(f"ERROR: {target} not found", file=sys.stderr)
-        return False
-    text = target.read_text()
+def apply(p):
+    if not p.exists(TARGET):
+        p.fail(f"{TARGET} not found")
+        return
+    text = p.text(TARGET)
     if MARKER in text:
-        print(f"Already patched: {target}")
-        return True
-    if OLD_BLOCK not in text:
-        # Rubberband 4.0+ removed the system_memorybarrier() function
-        # entirely (the spinlock primitive was retired upstream).
-        # Older 3.x and earlier still carry the x86 xchgl asm block.
-        # Treat a missing anchor in 4.0+ as a SUCCESSFUL no-op (the
-        # patch is unnecessary on those versions) instead of an
-        # ERROR. The marker check above keeps idempotency for re-runs
-        # on already-patched 3.x trees.
-        if "system_memorybarrier" not in text:
-            print(f"Skipping (no system_memorybarrier in upstream 4.0+): {target}")
-            return True
-        print(f"ERROR: system_memorybarrier present in {target} but the "
-              "expected mingw/xchgl anchor block has shifted shape; "
-              "patch needs to be updated for this upstream version",
-              file=sys.stderr)
-        return False
-    text = text.replace(OLD_BLOCK, NEW_BLOCK, 1)
-    target.write_text(text)
-    print(f"Patched: {target}")
-    return True
+        print(f"Already patched: {TARGET}")
+        return
+    if "system_memorybarrier" not in text:
+        # Rubberband 4.0+ removed system_memorybarrier() entirely (the
+        # spinlock primitive was retired upstream); older 3.x and earlier
+        # still carry the x86 xchgl asm block. The patch is unnecessary on
+        # those versions.
+        print(f"Skipping (no system_memorybarrier in upstream 4.0+): {TARGET}")
+        return
+    # system_memorybarrier present: the mingw/xchgl block must be there in
+    # the shape this patch knows.
+    p.edit(TARGET, OLD_BLOCK, NEW_BLOCK, "mingw xchgl barrier")
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <rubberband-source-dir>", file=sys.stderr)
-        sys.exit(2)
-    src = Path(sys.argv[1])
-    if not src.is_dir():
-        print(f"ERROR: {src} is not a directory", file=sys.stderr)
-        sys.exit(2)
-    sys.exit(0 if patch(src) else 1)
+anchor.main(apply, "patch_rubberband_winarm64", marker=MARKER,
+            usage="<rubberband-source-dir>")

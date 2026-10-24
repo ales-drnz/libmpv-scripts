@@ -13,13 +13,14 @@ This patch adds an early return in parse_afmt so that empty string or "no" sets
 the internal value to 0 (AF_FORMAT_UNKNOWN), matching the initial default.
 """
 import sys
+from pathlib import Path
 
-fn = sys.argv[1]  # path to options/m_option.c
-with open(fn) as f:
-    content = f.read()
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
 # Find the parse_afmt function and add reset handling after the opening brace.
-old = (
+OLD = (
     'static int parse_afmt(struct mp_log *log, const m_option_t *opt,\n'
     '                      struct bstr name, struct bstr param, void *dst)\n'
     '{'
@@ -27,7 +28,7 @@ old = (
 
 MARKER = 'mpv_audio_kit: parse_afmt reset'
 
-new = (
+NEW = (
     'static int parse_afmt(struct mp_log *log, const m_option_t *opt,\n'
     '                      struct bstr name, struct bstr param, void *dst)\n'
     '{\n'
@@ -40,18 +41,11 @@ new = (
     '    }'
 )
 
-# A second run would insert the block again in front of the first one.
-if MARKER in content:
-    print("Already patched: m_option.c parse_afmt reset")
-    sys.exit(0)
 
-if content.count(old) != 1:
-    print(f"ERROR: parse_afmt signature not found exactly once in {fn}",
-          file=sys.stderr)
-    sys.exit(1)
+def apply(p, m_option):
+    # The marker keeps a second run from inserting the block again.
+    p.edits(m_option, [('parse_afmt signature', OLD, NEW)])
 
-content = content.replace(old, new, 1)
 
-with open(fn, 'w') as f:
-    f.write(content)
-print("Patched m_option.c: parse_afmt now accepts '' and 'no' for reset to default")
+anchor.main(apply, 'patch_afmt_reset', marker=MARKER,
+            usage='<mpv options/m_option.c>', file_arg=True)

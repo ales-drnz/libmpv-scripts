@@ -56,24 +56,16 @@ no-ops with a message if the file is absent (a future source-layout change).
 
 Usage: patch_timer_resolution.py <mpv_source_dir>
 """
-import os
 import sys
+from pathlib import Path
 
-if len(sys.argv) != 2:
-    sys.exit("usage: patch_timer_resolution.py <mpv_source_dir>")
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
+import anchor  # noqa: E402
 
-fn = os.path.join(sys.argv[1], "osdep", "timer-win32.c")
-if not os.path.exists(fn):
-    print(f"Nothing to patch: {fn} not present (no-op)")
-    sys.exit(0)
-
-with open(fn, encoding="utf-8") as f:
-    content = f.read()
+TIMER = "osdep/timer-win32.c"
 
 PATCHED_MARKER = 'v = "never"; // mpv_audio_kit'
-if PATCHED_MARKER in content:
-    print(f"Nothing to patch in {fn} (already patched)")
-    sys.exit(0)
 
 ANCHOR = '        v = IsWindows10OrGreater() ? "perwait" : "always";'
 REPLACEMENT = (
@@ -82,19 +74,18 @@ REPLACEMENT = (
     '        // playback that disrupt the host GUI compositor (DWM) on clean high-\n'
     '        // refresh machines. Force "never"; audio sleep accuracy is preserved\n'
     '        // by the high-resolution waitable timer (Win10 1803+).\n'
-    '        v = "never"; // mpv_audio_kit'
+    '        ' + PATCHED_MARKER
 )
 
-if ANCHOR not in content:
-    print(
-        f"ERROR: timer-resolution anchor not found in {fn}.\n"
-        "The upstream mp_raw_time_init policy line changed — re-review "
-        "osdep/timer-win32.c against this patch before shipping.",
-        file=sys.stderr,
-    )
-    sys.exit(1)
 
-content = content.replace(ANCHOR, REPLACEMENT, 1)
-with open(fn, "w", encoding="utf-8") as f:
-    f.write(content)
-print(f"Patched {fn}: forced high-res-timer policy to never")
+def apply(p):
+    if not p.exists(TIMER):
+        print(f"Nothing to patch: {TIMER} not present (no-op)")
+        return
+    # A missing anchor: the upstream mp_raw_time_init policy line changed,
+    # re-review osdep/timer-win32.c against this patch before shipping.
+    p.edits(TIMER, [("mp_raw_time_init policy line", ANCHOR, REPLACEMENT)])
+
+
+anchor.main(apply, "patch_timer_resolution", marker=PATCHED_MARKER,
+            usage="<mpv_source_dir>")

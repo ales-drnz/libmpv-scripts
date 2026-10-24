@@ -23,10 +23,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-MARKER = "MAK_PLAYLIST_PREV_DOS_PATH_PATCH_V1"
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+import anchor  # noqa: E402
 
-root = Path(sys.argv[1])
-playlist = root / "common/playlist.c"
+MARKER = "MAK_PLAYLIST_PREV_DOS_PATH_PATCH_V1"
 
 OLD = (
     "    if (bstr_startswith(bstr0(current_playlist_path),\n"
@@ -50,11 +51,9 @@ NEW = (
     "#endif\n"
 )
 
-text = playlist.read_text()
-if MARKER in text:
-    print(f"Already patched: {playlist.name}")
-    sys.exit(0)
-if text.count(OLD) != 1:
-    sys.exit(f"patch_playlist_prev_dos_path: anchor not found once in {playlist}")
-playlist.write_text(text.replace(OLD, NEW, 1))
-print(f"Patched: {playlist}")
+
+def apply(p):
+    p.edits("common/playlist.c", [("playlist-path prefixes", OLD, NEW)])
+
+
+anchor.main(apply, "patch_playlist_prev_dos_path", marker=MARKER)

@@ -26,10 +26,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-MARKER = "MAK_CHAPTER_LIST_RESET_PATCH_V1"
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
+import anchor  # noqa: E402
 
-root = Path(sys.argv[1])
-command = root / "player/command.c"
+MARKER = "MAK_CHAPTER_LIST_RESET_PATCH_V1"
 
 OLD = (
     "    talloc_free(mpctx->chapters);\n"
@@ -45,11 +46,9 @@ NEW = OLD + (
     "    mpctx->last_chapter_flag = false;\n"
 )
 
-text = command.read_text()
-if MARKER in text:
-    print(f"Already patched: {command.name}")
-    sys.exit(0)
-if text.count(OLD) != 1:
-    sys.exit(f"patch_chapter_list_reset: anchor not found once in {command}")
-command.write_text(text.replace(OLD, NEW, 1))
-print(f"Patched: {command}")
+
+def apply(p):
+    p.edits("player/command.c", [("parse_node_chapters reset", OLD, NEW)])
+
+
+anchor.main(apply, "patch_chapter_list_reset", marker=MARKER)
