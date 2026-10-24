@@ -10,8 +10,9 @@
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
-#   3.  Patched mpv properties present (all 14: prefetch-state +
-#       -cache-duration, audio-output-state, embedded-cover-art-data/mime,
+#   3.  Patched mpv properties present (all 14: prefetch-state,
+#       -cache-duration, -open-filename and -playlist-entry-id,
+#       audio-output-state, embedded-cover-art-data/mime,
 #       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data/-enabled,
 #       loudness-scan-data/-enabled)
 #   4.  FFmpeg patches present (libsmb2 protocol, mov advanced_editlist,
@@ -159,7 +160,8 @@ EXPECTED_FORMATS=(
 # static string presence (Layer 3) so a patch that silently fails to apply
 # — leaving its property name out of the binary — is caught here rather
 # than only surfacing as a soft-skipped consumer test later.
-#   prefetch_state    : prefetch-state, prefetch-cache-duration
+#   prefetch          : prefetch-state, prefetch-cache-duration,
+#                       prefetch-open-filename, prefetch-playlist-entry-id
 #   audio_output_state: audio-output-state
 #   embedded_cover    : embedded-cover-art-data, embedded-cover-art-mime
 #   pcm_tap           : pcm-tap-frame
@@ -168,6 +170,7 @@ EXPECTED_FORMATS=(
 #   loudness_scan     : loudness-scan-data, loudness-scan-enabled
 MPV_PATCHED_PROPS=(
   prefetch-state prefetch-cache-duration
+  prefetch-open-filename prefetch-playlist-entry-id
   audio-output-state
   embedded-cover-art-data embedded-cover-art-mime
   pcm-tap-frame

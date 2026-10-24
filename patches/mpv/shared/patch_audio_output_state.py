@@ -77,9 +77,9 @@ Usage
 
     python3 patch_audio_output_state.py <mpv_source_dir>
 
-The patch is independent of patch_prefetch_state.py — both can be applied
+The patch is independent of patch_prefetch.py: both can be applied
 to the same source tree in either order. Each anchors on a different
-MPContext field (this patch anchors on `audio_status`; prefetch_state
+MPContext field (this patch anchors on `audio_status`; prefetch
 anchors on `als_state`).
 """
 import sys
@@ -98,7 +98,7 @@ MARKER = 'MAK_AUDIO_OUTPUT_STATE_PATCH_V1'
 # ─── core.h ────────────────────────────────────────────────────────────
 
 # Anchor on the `audio_status` field — stable, directly conceptually
-# adjacent to the new state, and disjoint from `patch_prefetch_state.py`'s
+# adjacent to the new state, and disjoint from `patch_prefetch.py`'s
 # `als_state` anchor so the two patches compose cleanly.
 CORE_PRISTINE = (
     '    enum playback_status video_status, audio_status;\n'

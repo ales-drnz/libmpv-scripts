@@ -49,8 +49,7 @@ func patchesCatalog() []PatchItem {
 		// (patch_optional_deps is build infrastructure — always applied, not a
 		// user-facing toggle, so it isn't listed here.)
 		{ID: "afmt_reset", Title: "Audio-format reset", Desc: "Reset the audio-format property to auto via the API", Category: "mpv runtime", DefaultOn: true},
-		{ID: "prefetch_hook", Title: "Prefetch on_load hook", Desc: "Run on_load hooks for prefetched files (e.g. Plex URLs)", Category: "mpv runtime", DefaultOn: true},
-		{ID: "prefetch_state", Title: "Prefetch-state property", Desc: "Observable 'prefetch-state' for a Prefetching… UI", Category: "mpv runtime", DefaultOn: true},
+		{ID: "prefetch", Title: "Prefetch hook and state", Desc: "An on_prefetch hook that resolves the URL of the next entry while the current one plays (e.g. Plex URLs), and the observable 'prefetch-state' for a Prefetching… UI", Category: "mpv runtime", DefaultOn: true},
 		{ID: "audio_output_state", Title: "Audio-output state", Desc: "Observable 'audio-output-state' (connecting/failed)", Category: "mpv runtime", DefaultOn: true},
 		{ID: "embedded_cover_art", Title: "Embedded cover art", Desc: "Expose embedded album-art bytes + MIME as properties", Category: "mpv runtime", DefaultOn: true},
 		{ID: "pcm_tap", Title: "PCM tap (visualizer)", Desc: "'pcm-tap-frame' post-DSP samples for spectrum visualizers", Category: "mpv runtime", DefaultOn: true},

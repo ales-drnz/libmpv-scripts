@@ -181,7 +181,7 @@ DEMUX_C = [
 
 # ─── player/loadfile.c ───────────────────────────────────────────────
 
-# The anchor is the same with or without patch_prefetch_hook.py.
+# The anchor is the same with or without patch_prefetch.py.
 LOADFILE_C = [
     ('prefetch_next next entry',
      '    struct playlist_entry *new_entry = mp_next_file(mpctx, +1, false, false);\n',

@@ -65,10 +65,10 @@ DISABLED_PATCHES="$WANT_DISABLED"
 #   audiotrack: includes pristine ao_audiotrack.c with its patch.
 #   fixtures: a dir of fixtures.sh, "-" for none; HTTP "-": no server.
 CASES=(
-  "lib prefetch_hook_test prefetch - dump props tracks resume title clear"
+  "lib prefetch_hook_test prefetch - stall transition rewrite props clear stop destroy noclient repeat"
   "lib prefetch_guard_test prefetch - two"
   "lib prefetch_params_test prefetch - differ only-b same none"
-  "lib prefetch_state_test prefetch - fail stop failstop"
+  "lib prefetch_state_test prefetch - fail stop failstop hookfail"
   "lib prefetch_state_test prefetch 2000 httpstop"
   "lib analysis_channels_test analysis - opus16 opus16wave opus16loud sm smloud ms"
   "lib analysis_channels_test analysis 4000000 opus16http opus16httpwave"
@@ -94,7 +94,7 @@ CASES=(
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
 PATCH_TESTS=(
-  "prefetch_state_patch_test {mpv}"
+  "prefetch_patch_test {mpv}"
   "ios_audio_stubs_patch_test {mpv}"
   "audiotrack_patch_test {mpv} {src} {build}"
   "apply_order_test {mpv}"

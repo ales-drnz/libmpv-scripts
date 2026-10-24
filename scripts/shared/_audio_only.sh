@@ -773,8 +773,7 @@ apply_mpv_patches_common() {
 
   # ── Optional feature patches — toggleable from Settings ▸ Patches. ───────────
   _mpv_patch afmt_reset         patch_afmt_reset.py         "$mpv_dir/options/m_option.c"
-  _mpv_patch prefetch_hook      patch_prefetch_hook.py      "$mpv_dir"
-  _mpv_patch prefetch_state     patch_prefetch_state.py     "$mpv_dir"
+  _mpv_patch prefetch           patch_prefetch.py           "$mpv_dir"
   _mpv_patch audio_output_state patch_audio_output_state.py "$mpv_dir"
   _mpv_patch embedded_cover_art patch_embedded_cover_art.py "$mpv_dir"
   _mpv_patch pcm_tap            patch_pcm_tap.py            "$mpv_dir"

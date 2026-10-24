@@ -190,7 +190,7 @@ Usage
     python3 patch_bulk_analysis.py <mpv_source_dir>
 
 Composes with `patch_pcm_tap.py`, `patch_audio_output_state.py`,
-`patch_embedded_cover_art.py`, `patch_prefetch_*.py` — disjoint
+`patch_embedded_cover_art.py`, `patch_prefetch.py`: disjoint
 anchors.
 """
 import sys

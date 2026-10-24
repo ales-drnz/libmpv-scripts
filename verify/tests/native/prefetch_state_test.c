@@ -11,6 +11,9 @@
 //             prefetch-state goes idle, prefetch-cache-duration 0, and the
 //             prefetched b is closed (r17 keeps ready and b open).
 //   failstop  fail, then stop: prefetch-state goes idle.
+//   hookfail  a.flac then b.flac; the on_prefetch hook of b sets
+//             prefetch-open-filename to a missing file: prefetch-state is
+//             failed while a plays.
 //   httpstop  b comes from slow_http.py on $HTTP_PORT at 2000 bytes a
 //             second (run.sh), so the prefetch open is still running at
 //             the stop. Prints how long the stop takes to reach idle, now
@@ -20,17 +23,20 @@
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s fail|stop|failstop|httpstop <fixtures> <tmpdir>\n", argv[0]);
+        fprintf(stderr, "usage: %s fail|stop|failstop|hookfail|httpstop <fixtures> <tmpdir>\n",
+                argv[0]);
         return 2;
     }
     const char *mode = argv[1];
-    int fail = strcmp(mode, "fail") == 0 || strcmp(mode, "failstop") == 0;
+    int hookfail = strcmp(mode, "hookfail") == 0;
+    int fail = strcmp(mode, "fail") == 0 || strcmp(mode, "failstop") == 0 || hookfail;
     int http = strcmp(mode, "httpstop") == 0;
     int stop = strcmp(mode, "stop") == 0 || strcmp(mode, "failstop") == 0 || http;
-    char a[1024], b[1024];
+    char a[1024], b[1024], missing[1024];
     snprintf(a, sizeof a, "%s/a.flac", argv[2]);
-    if (fail)
-        snprintf(b, sizeof b, "%s/missing.flac", argv[3]);
+    snprintf(missing, sizeof missing, "%s/missing.flac", argv[3]);
+    if (fail && !hookfail)
+        snprintf(b, sizeof b, "%s", missing);
     else if (http)
         snprintf(b, sizeof b, "http://127.0.0.1:%s/b.flac",
                  getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0");
@@ -39,15 +45,25 @@ int main(int argc, char **argv)
 
     mpv_handle *h = mt_create();
     mpv_initialize(h);
+    if (hookfail)
+        mpv_hook_add(h, 0, "on_prefetch", 0);
     mt_cmd(h, "loadfile", a, NULL, NULL);
     mt_cmd(h, "loadfile", b, "append", NULL);
 
-    int loaded = 0, stopped = 0, idle_seen = 0;
+    int loaded = 0, stopped = 0, idle_seen = 0, hooks = 0;
     double t_loaded = 0, t_stop = 0, t0 = mt_now();
     while (mt_now() - t0 < 30) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == MPV_EVENT_FILE_LOADED && ++loaded == 1)
             t_loaded = mt_now();
+        if (e->event_id == MPV_EVENT_HOOK) {
+            mpv_event_hook *hk = e->data;
+            hooks++;
+            int r = mpv_set_property_string(h, "prefetch-open-filename", missing);
+            mt_check(r >= 0, "the hook sets prefetch-open-filename to a missing file (%s)",
+                     mpv_error_string(r));
+            mpv_hook_continue(h, hk->id);
+        }
         if (e->event_id == MPV_EVENT_IDLE && stopped && !idle_seen) {
             idle_seen = 1;
             printf("idle %.3f s after stop\n", mt_now() - t_stop);
@@ -86,6 +102,8 @@ int main(int argc, char **argv)
         }
     }
     mt_check(loaded >= 1, "a loaded");
+    if (hookfail)
+        mt_check(hooks == 1, "one on_prefetch hook (%d)", hooks);
     if (stop)
         mt_check(idle_seen, "player idle after stop");
     mpv_terminate_destroy(h);

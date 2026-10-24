@@ -18,7 +18,9 @@
 # Usage: bash verify/tests/patches/patch_identity_test.sh <reference root>
 #        <pristine mpv> <pristine ffmpeg> <pristine rubberband> <work dir>
 # <reference root> holds patches/, e.g. `git archive <rev> patches | tar -x`.
-# CASES="name ..." runs only the cases named.
+# CASES="name ..." runs only the cases named. CHANGED="id ..." names toggles
+# whose patch changed on purpose since the reference: they are left out on
+# both sides of every case, so the cases prove the other scripts unchanged.
 
 set -uo pipefail
 
@@ -97,7 +99,7 @@ CASE_LIST=(
   "no-strip_libass+strip_mpv_dead linux strip_libass strip_mpv_dead"
   "no-strip_swscale+strip_mpv_dead linux strip_swscale strip_mpv_dead"
 )
-for t in strip_swscale strip_libass afmt_reset prefetch_hook prefetch_state \
+for t in strip_swscale strip_libass afmt_reset prefetch \
          audio_output_state embedded_cover_art pcm_tap bulk_analysis loudness_scan \
          filter_label_tap chain_eof lavfi_eof_passthrough hotplug_core_thread \
          playlist_prev_dos_path chapter_list_reset; do
@@ -112,6 +114,7 @@ check() { if [[ "$1" == 0 ]]; then echo "ok   $2"; else echo "FAIL $2"; fails=$(
 
 for c in "${CASE_LIST[@]}"; do
   read -r name kind disabled <<< "$c"
+  disabled="$disabled ${CHANGED:-}"
   if [[ -n "${CASES:-}" && " $CASES " != *" $name "* ]]; then continue; fi
   ran=$((ran + 1))
   case "$kind" in
