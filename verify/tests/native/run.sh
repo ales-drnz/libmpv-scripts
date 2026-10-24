@@ -163,7 +163,7 @@ fetch "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.g
   "${MPV_TARBALL:-}" "$WORK/mpv"
 if (( NEED_FFMPEG )); then
   fetch "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "${FFMPEG_TARBALL:-}" \
-    "$WORK/ffmpeg" configure libavformat libavfilter
+    "$WORK/ffmpeg" configure libavcodec libavformat libavfilter
 fi
 
 echo "mpv $MPV_VERSION, libavcodec $(pkg-config --modversion libavcodec 2>/dev/null || echo '?')," \
