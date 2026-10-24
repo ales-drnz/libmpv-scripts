@@ -14,7 +14,8 @@
  *
  *   mak_spike [-n loops] [-x step]... [-l long_file]... file...
  *
- * -x skips a step: af, analysis or pcm (to see what a number comes from).
+ * -x skips a step: af, analysis, pcm or realtime (to see what a number comes
+ * from).
  * -a replaces the af chain (default AF_CHAIN below).
  * Every loop creates a core, runs the checks and destroys it. The long files
  * are timed in the first loop only: plain, then through a three filter lavfi
@@ -393,6 +394,83 @@ static void check_pcm(struct run *r)
     mak_pcm_release(id);
 }
 
+/* One file played in real time through ao=null (ao-null-untimed=no): the
+ * timed waits of mpv's audio thread and playloop pace it, as they will pace
+ * ao_webaudio. time-pos must advance one second per second of wall time
+ * between 1 s and duration - 1 s. The whole entry takes about 0.35 s less
+ * than the duration natively too: ao=null starts with its buffer full. */
+static void check_realtime(const char *path)
+{
+    mpv_handle *h = mpv_create();
+    mpv_set_option_string(h, "ao", "null");
+    mpv_set_option_string(h, "vid", "no");
+    mpv_set_option_string(h, "idle", "yes");
+    mpv_set_option_string(h, "config", "no");
+    if (mpv_initialize(h) < 0) {
+        check(0, "realtime", "mpv_initialize");
+        mpv_terminate_destroy(h);
+        return;
+    }
+    struct run r = {.h = h};
+    mpv_observe_property(h, 1, "duration", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(h, 4, "time-pos", MPV_FORMAT_DOUBLE);
+    reset_entry(&r);
+    double t0 = now_ms();
+    const char *args[] = {"loadfile", path, NULL};
+    cmd(h, args);
+    int ticks = 0, taps = 0;
+    double w1 = -1, v1 = 0, w2 = -1, v2 = 0;
+    float tap_peak = 0;
+    double next_tap = 0;
+    while (!r.got_end && now_ms() - t0 < 30000) {
+        mpv_event *ev = mpv_wait_event(h, 0.05);
+        if (ev->event_id == MPV_EVENT_PROPERTY_CHANGE &&
+            strcmp(((mpv_event_property *)ev->data)->name, "time-pos") == 0) {
+            mpv_event_property *p = ev->data;
+            ticks++;
+            if (p->format == MPV_FORMAT_DOUBLE) {
+                double v = *(double *)p->data, w = now_ms() / 1e3;
+                if (w1 < 0 && v >= 1.0) {
+                    w1 = w;
+                    v1 = v;
+                }
+                if (w1 >= 0 && r.duration_seen > 0 && v <= r.duration_seen - 1.0) {
+                    w2 = w;
+                    v2 = v;
+                }
+            }
+        }
+        if (ev->event_id != MPV_EVENT_NONE)
+            on_event(&r, ev);
+        /* The visualizer tap of patch_pcm_tap.py, polled like the kit's
+         * spectrum does: the post-DSP samples the output just took. */
+        if (r.file_loaded && now_ms() >= next_tap) {
+            next_tap = now_ms() + 100;
+            mpv_node n;
+            if (mpv_get_property(h, "pcm-tap-frame", MPV_FORMAT_NODE, &n) >= 0) {
+                mpv_node *smp = node_get(&n, "samples");
+                if (smp && smp->format == MPV_FORMAT_BYTE_ARRAY && smp->u.ba->size >= sizeof(float)) {
+                    taps++;
+                    const float *f = smp->u.ba->data;
+                    for (size_t i = 0; i < smp->u.ba->size / sizeof(float); i++)
+                        tap_peak = fmaxf(tap_peak, fabsf(f[i]));
+                }
+                mpv_free_node_contents(&n);
+            }
+        }
+    }
+    double wall = (now_ms() - t0) / 1e3, dur = r.duration_seen;
+    double rate = w2 > w1 ? (v2 - v1) / (w2 - w1) : 0;
+    check(r.got_end && r.end_reason == MPV_END_FILE_REASON_EOF && dur > 0 &&
+          fabs(rate - 1) < 0.02 && fabs(wall - dur) < 0.6 && ticks > 10, "realtime",
+          "%s %.3f s of audio in %.3f s of wall time, time-pos %.3f s per s from %.2f to %.2f, %d updates",
+          base_name(path), dur, wall, rate, v1, v2, ticks);
+    measure("realtime_rate", rate);
+    check(taps > 10 && tap_peak > 0.01f, "pcm-tap", "%d frames read, peak %.3f", taps, tap_peak);
+    measure("realtime_wall_s", wall);
+    mpv_terminate_destroy(h);
+}
+
 static mpv_handle *make_core(double *init_ms)
 {
     double t0 = now_ms();
@@ -422,7 +500,7 @@ int main(int argc, char **argv)
     int nlong = 0;
     const char *files[32];
     int nfiles = 0;
-    int skip_af = 0, skip_analysis = 0, skip_pcm = 0;
+    int skip_af = 0, skip_analysis = 0, skip_pcm = 0, skip_realtime = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0 && i + 1 < argc)
             loops = atoi(argv[++i]);
@@ -431,6 +509,7 @@ int main(int argc, char **argv)
             skip_af |= strcmp(x, "af") == 0;
             skip_analysis |= strcmp(x, "analysis") == 0;
             skip_pcm |= strcmp(x, "pcm") == 0;
+            skip_realtime |= strcmp(x, "realtime") == 0;
         } else if (strcmp(argv[i], "-a") == 0 && i + 1 < argc) {
             g_af = argv[++i];
         } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc && nlong < 8)
@@ -485,6 +564,8 @@ int main(int argc, char **argv)
         if (!skip_pcm)
             check_pcm(&r);
 
+        if (loop == 0 && nfiles > 0 && !skip_realtime)
+            check_realtime(files[0]);
         if (loop == 0) {
             for (int i = 0; i < nlong; i++) {
                 const char *b = base_name(longs[i]);

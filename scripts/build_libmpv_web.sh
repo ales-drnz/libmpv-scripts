@@ -39,6 +39,7 @@
 #   WEB_SIMD=0|1            (-msimd128; default 0)
 #   WEB_POOL=16             (pthread workers made at start; 0 makes each on
 #                           demand, which counts the threads mpv needs)
+#   WEB_INITIAL_MEMORY=128MB (wasm memory at start; it grows up to 2GB)
 #   BUILD_DIR=<dir>         (default: builds/work/Web/<variant>)
 #   RELEASE_DIR=<dir>       (default: builds/release/libmpv_web)
 #   KEEP_BUILD=0            (wipe build/ and prefix/ at the end; by default
@@ -78,6 +79,7 @@ WEB_OPT="${WEB_OPT:--Oz}"
 WEB_LTO="${WEB_LTO:-0}"
 WEB_SIMD="${WEB_SIMD:-0}"
 WEB_POOL="${WEB_POOL:-16}"
+WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-128MB}"
 
 # The variant names the build dir, so a flag change never reuses archives
 # built with other flags.
@@ -339,7 +341,7 @@ web_link_common() {
     -sMODULARIZE -sEXPORT_ES6 \
     -sPTHREAD_POOL_SIZE="$WEB_POOL" \
     -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sSTACK_SIZE=1MB \
-    -sINITIAL_MEMORY=128MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
+    -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY" -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
     -sWASMFS -sFORCE_FILESYSTEM
 }
 
