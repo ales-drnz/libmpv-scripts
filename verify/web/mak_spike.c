@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <mpv/client.h>
 
@@ -538,5 +539,10 @@ int main(int argc, char **argv)
     measure("peak_memory_bytes", peak_memory());
     printf("RESULT pass=%d fail=%d\n", g_pass, g_fail);
     fflush(stdout);
+#ifdef __EMSCRIPTEN__
+    /* The lines of this pthread reach the page through the main thread;
+     * without a pause the runtime exits before the last ones arrive. */
+    usleep(300 * 1000);
+#endif
     return g_fail ? 1 : 0;
 }

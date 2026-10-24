@@ -11,8 +11,8 @@
 # builds/release/libmpv_web) and <build_dir>/fixtures (make_fixtures.sh) into
 # <build_dir>/browser, serves it with serve_coi.py and opens it with a fresh
 # profile. Prints the page's lines; the exit status is the harness's.
-# CHROME=<binary> picks the Chrome (default: Chrome for Testing in
-# ../_tools/chrome). TIMEOUT=<s> (default 300).
+# CHROME=<binary> picks the Chrome (default: chrome-headless-shell of Chrome
+# for Testing on PATH). TIMEOUT=<s> (default 300).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -60,7 +60,7 @@ EOF
     bpid=$!
     ;;
   chrome)
-    chrome="${CHROME:-$(ls -d "$ROOT"/../_tools/chrome/*/chrome-headless-shell-linux64/chrome-headless-shell 2>/dev/null | tail -1)}"
+    chrome="${CHROME:-$(command -v chrome-headless-shell || true)}"
     [[ -x "$chrome" ]] || { echo "no Chrome: set CHROME" >&2; exit 2; }
     "$chrome" --user-data-dir="$profile" --no-first-run --disable-gpu \
       --remote-debugging-port=0 "$url" >"$build/browser.log" 2>&1 &

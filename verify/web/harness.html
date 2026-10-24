@@ -54,7 +54,8 @@ try {
     const { default: factory } = await import('./spike/spike.mjs');
     const mod = await factory({
       print: log, printErr: log,
-      onExit: (code) => { log(`page: harness exit ${code}`); post({ code, busyTicks }); },
+      // The last lines of a pthread reach the page after onExit: wait a bit.
+      onExit: (code) => setTimeout(() => { log(`page: harness exit ${code}`); post({ code, busyTicks }); }, 500),
     });
     log(`measure instantiate_ms ${(performance.now() - t0).toFixed(3)}`);
     mod.FS.mkdir('/in');
