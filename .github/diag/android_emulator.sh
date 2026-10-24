@@ -8,9 +8,12 @@
 # and the test checks that the output comes back. That test
 # runs last, so no other test meets an audioserver restarting. adb root
 # restarts adbd, which cuts flutter test and logcat off the device, so it
-# runs once at the start, before both. Logs go to emu-logs/.
+# runs once at the start, before both. Logs go to emu-logs/. The tests get
+# MAK_CI and MAK_LIBMPV_RELEASE, the release of the binary under test, so a
+# fix up to that release fails instead of skipping (skipBeforeRelease).
 set -u
 api=$1
+defines=(--dart-define=MAK_CI=true "--dart-define=MAK_LIBMPV_RELEASE=${MAK_LIBMPV_RELEASE:?set from the manifest of the run}")
 mkdir -p emu-logs
 adb root || true
 sleep 2
@@ -52,7 +55,7 @@ run() {
   local name=$1 try r
   for try in 1 2; do
     echo "== $name on API $api (try $try)"
-    timeout -s INT -k 30 480 flutter test "integration_test/$name" -d emulator-5554 -r expanded 2>&1 | tee "emu-logs/$name-$api-$try.log"
+    timeout -s INT -k 30 480 flutter test "integration_test/$name" -d emulator-5554 -r expanded "${defines[@]}" 2>&1 | tee "emu-logs/$name-$api-$try.log"
     r=${PIPESTATUS[0]}
     [ "$r" = 0 ] && return
     if [ "$r" != 124 ] && [ "$r" != 137 ]; then rc=1; return; fi
@@ -67,7 +70,7 @@ run android_owner_exit_test.dart
 run android_engine_exit_test.dart
 # F278: the test waits for the kill.
 echo "== android_audiotrack_dead_object_test.dart on API $api"
-timeout -s INT -k 30 480 flutter test integration_test/android_audiotrack_dead_object_test.dart -d emulator-5554 -r expanded > "emu-logs/dead-object-$api.log" 2>&1 &
+timeout -s INT -k 30 480 flutter test integration_test/android_audiotrack_dead_object_test.dart -d emulator-5554 -r expanded "${defines[@]}" > "emu-logs/dead-object-$api.log" 2>&1 &
 pid=$!
 for i in $(seq 1 600); do
   grep -q '\[f278\] playing' "emu-logs/dead-object-$api.log" && break

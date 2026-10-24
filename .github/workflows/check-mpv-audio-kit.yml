@@ -15,6 +15,10 @@ name: Check mpv_audio_kit
 # run, the app builds and the iOS simulator; '[full check]' adds the Android
 # emulators, and '[android emu]', '[native]', '[cpu diag]', '[underrun diag]',
 # '[ios only]' and '[macos test only]' run just their part.
+#
+# The jobs that run the kit's tests set MAK_LIBMPV_RELEASE to the release
+# of the run's manifest (--dart-define on the devices): a test of a fix up
+# to that release then fails on a binary without it instead of skipping.
 on:
   push:
     branches: ['ci/**']
@@ -65,6 +69,7 @@ jobs:
       - name: Fetch the libraries
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
+          echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
           py=python3; [ "$RUNNER_OS" = Windows ] && py=python
           "$py" - bin <<'EOF'
           import hashlib, json, os, sys
@@ -144,6 +149,7 @@ jobs:
       - name: Fetch the libraries and point the build hook at them
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
+          echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../bin\n' >> kit/pubspec.yaml
       - uses: subosito/flutter-action@v2
         with:
@@ -282,7 +288,9 @@ jobs:
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Fetch the libraries
-        run: gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
+        run: |
+          gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
+          echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json)" >> "$GITHUB_ENV"
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -333,7 +341,8 @@ jobs:
               log="../logs/$name.$attempt.log"
               echo "=== $f attempt $attempt $(date -u +%T)"
               set +e
-              perl -e 'alarm shift; exec @ARGV' 600 flutter test "$f" -d "$UDID" -r expanded -v > "$log" 2>&1
+              perl -e 'alarm shift; exec @ARGV' 600 flutter test "$f" -d "$UDID" -r expanded -v \
+                --dart-define=MAK_CI=true --dart-define=MAK_LIBMPV_RELEASE="$MAK_LIBMPV_RELEASE" > "$log" 2>&1
               rc=$?
               set -e
               grep -E '[0-9]+:[0-9]+ \+|All tests passed|Some tests failed|No tests ran' "$log" | tail -40 || true
@@ -548,7 +557,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Fetch the libraries
-        run: gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
+        run: |
+          gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
+          echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json)" >> "$GITHUB_ENV"
       - name: Point the build hook of test_app at them
         run: |
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../../bin\n' >> kit/test_app/pubspec.yaml
