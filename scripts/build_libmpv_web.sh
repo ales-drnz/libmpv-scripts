@@ -37,8 +37,12 @@
 #   WEB_OPT=-Oz             (optimization flag of every C and C++ unit)
 #   WEB_LTO=0|1             (LTO across FFmpeg, mpv and the deps; default 0)
 #   WEB_SIMD=0|1            (-msimd128; default 0)
+#   WEB_POOL=16             (pthread workers made at start; 0 makes each on
+#                           demand, which counts the threads mpv needs)
 #   BUILD_DIR=<dir>         (default: builds/work/Web/<variant>)
-#   KEEP_BUILD=1            (preserve all of BUILD_DIR for inspection)
+#   RELEASE_DIR=<dir>       (default: builds/release/libmpv_web)
+#   KEEP_BUILD=0            (wipe build/ and prefix/ at the end; by default
+#                           they stay, so STAGE=link can relink)
 #   STAGE=all|libs|link     (libs builds the archives only, link relinks)
 # =============================================================================
 
@@ -73,6 +77,7 @@ STAGE="${STAGE:-all}"
 WEB_OPT="${WEB_OPT:--Oz}"
 WEB_LTO="${WEB_LTO:-0}"
 WEB_SIMD="${WEB_SIMD:-0}"
+WEB_POOL="${WEB_POOL:-16}"
 
 # The variant names the build dir, so a flag change never reuses archives
 # built with other flags.
@@ -81,7 +86,7 @@ WEB_VARIANT="${WEB_OPT#-}"
 [[ "$WEB_SIMD" == "1" ]] && WEB_VARIANT+="-simd"
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Web/$WEB_VARIANT}"
 PREFIX="$BUILD_DIR/prefix"
-RELEASE_DIR="$LIBMPV_SCRIPTS_ROOT/builds/release/libmpv_web"
+RELEASE_DIR="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release/libmpv_web}"
 
 # ── Toolchain ────────────────────────────────────────────────────────────────
 if ! command -v emcc >/dev/null 2>&1 && [[ -n "${EMSDK:-}" ]]; then
@@ -332,7 +337,7 @@ web_link_common() {
   printf '%s\n' \
     -sENVIRONMENT=web,worker,node \
     -sMODULARIZE -sEXPORT_ES6 \
-    -sPTHREAD_POOL_SIZE=16 \
+    -sPTHREAD_POOL_SIZE="$WEB_POOL" \
     -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sSTACK_SIZE=1MB \
     -sINITIAL_MEMORY=128MB -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
     -sWASMFS -sFORCE_FILESYSTEM
