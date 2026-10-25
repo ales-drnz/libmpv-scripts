@@ -47,7 +47,9 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   const m = await factory({ print: log, printErr: log });
   const wa = m.makWebAudio;
   if (!check(!!wa, 'glue', `makWebAudio ${wa ? 'present' : 'missing'}`)) return finish();
+  const ti = performance.now();
   await wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false });
+  measure('webaudio_init_ms', performance.now() - ti);
   const ctx = wa.context;
   const rate = ctx.sampleRate;
   measure('context_rate', rate);
