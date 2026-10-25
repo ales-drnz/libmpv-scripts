@@ -210,11 +210,99 @@ jobs:
           path: builds/sources-*.txt
           if-no-files-found: ignore
 
-  # The native tests are a need: no release artifact while a fix fails
-  # its test.
+  # The web module: scripts/build_libmpv_web.sh with Emscripten and
+  # pthreads, then libmpv_web.zip and build_web.json. Every check of the
+  # module runs on the zip as published, in Node and in the runner's Chrome
+  # with COOP and COEP (verify/web/run_checks.sh, serve_coi.py and
+  # net_server.py): a failed check fails the job, which release needs. The
+  # emsdk and the system libraries Emscripten builds at the first link are
+  # cached; the archives are built on every run, as on the other targets.
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The version build_libmpv_web.sh pins (EMSDK_VERSION): it stops on
+      # another emcc.
+      - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: 6.0.12
+          actions-cache-folder: builds/emsdk-cache
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: builds/em-cache
+          key: em-cache-6.0.12-${{ hashFiles('scripts/build_libmpv_web.sh') }}
+          restore-keys: em-cache-6.0.12-
+      # meson and ninja at the versions of the local builds; ffmpeg makes the
+      # fixtures of the checks, brotli measures the module.
+      - name: Install meson, ninja, ffmpeg and brotli
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg brotli
+          python3 -m venv builds/venv
+          builds/venv/bin/pip install --quiet meson==1.12.1 ninja==1.13.2
+          echo "$PWD/builds/venv/bin" >> "$GITHUB_PATH"
+      - name: Build
+        env:
+          RECORD_SOURCES: ${{ github.workspace }}/builds/sources-web.txt
+        run: |
+          export EM_CACHE="$PWD/builds/em-cache"
+          emcc --version | sed -n 1p
+          bash scripts/build_libmpv_web.sh
+      # The kit's fixtures, at the commit of mpv_audio_kit 0.5.3.
+      - name: Check out the fixtures of mpv_audio_kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ales-drnz/mpv_audio_kit
+          ref: 66d6d1da7b9a6d047f582e19b285c8cdb7f094ae
+          path: builds/kit
+          sparse-checkout: test/fixtures
+      # Node from the emsdk (the version of the local runs), the runner's
+      # Chrome. Ubuntu 24.04 can keep unprivileged user namespaces from
+      # Chrome's sandbox.
+      - name: Checks
+        run: |
+          export EM_CACHE="$PWD/builds/em-cache"
+          if [[ -n "${EMSDK_NODE:-}" ]]; then export PATH="$(dirname "$EMSDK_NODE"):$PATH"; fi
+          node --version
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          CHROME="$(command -v google-chrome)" || { echo "no google-chrome on the runner"; exit 1; }
+          export CHROME
+          "$CHROME" --version
+          verify/web/make_net_fixtures.sh builds/kit builds/web-fixtures > /dev/null
+          mkdir -p builds/web-module
+          unzip -q builds/release/libmpv_web.zip -d builds/web-module
+          BROWSERS=chrome verify/web/run_checks.sh builds/web-module \
+            builds/work/Web/Oz/spike builds/web-fixtures builds/web-checks
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web
+          path: |
+            builds/release/libmpv_web.zip
+            builds/release/build_web.json
+          if-no-files-found: error
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-check-logs
+          path: |
+            builds/web-checks/*.txt
+            builds/logs/build_web-*.log
+          if-no-files-found: ignore
+      # A build stopped by an unpinned source leaves the hash to pin here.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unpinned-sources-web
+          path: builds/sources-*.txt
+          if-no-files-found: ignore
+
+  # The native tests and the checks of the web module are needs: no release
+  # artifact while a fix fails its test.
   release:
     name: Collect release
-    needs: [linux, android, windows, apple, native]
+    needs: [linux, android, windows, apple, native, web]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
