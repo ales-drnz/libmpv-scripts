@@ -24,7 +24,8 @@ Media: /media/<mode>/<file under --media>?<query>
   trickle   the answer at once, then the body at 64 bytes/s
   status    the query's code (default 404)
   drop      as range, but the first answer of each tag breaks off after
-            after bytes (default 500000): the connection closes
+            after bytes (default 500000): the connection closes. With
+            again=<code>, every later answer of the tag is that status
 Query on any mode: cors=0 (no CORS headers), cors=1 (the default:
 Access-Control-Allow-Origin, nothing exposed), cors=expose (Content-Range
 and icy-* exposed too); hdrs=deny answers the preflight without
@@ -267,6 +268,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             first = key not in self.server.dropped
             self.server.dropped.add(key)
         if not first:
+            if q.get('again'):
+                return self.media_status(rel, {**q, 'code': q['again']}, e)
             return self.media_range(rel, q, e)
         p = self.file(rel)
         if not p:
