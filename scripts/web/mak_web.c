@@ -14,6 +14,7 @@
  *   A flag per handle keeps at most one task queued; it is cleared before
  *   the JS side drains, so a wakeup during the drain queues the next one.
  * - The layout of the client API structs on wasm32, for the JS decoder.
+ * - The version of what a client of the module relies on, MAK_WEB_ABI.
  */
 #include <stdatomic.h>
 #include <stddef.h>
@@ -24,6 +25,12 @@
 #include <emscripten/threading.h>
 #include <libavutil/cpu.h>
 #include <mpv/client.h>
+
+/* Bumped when a client of the module has to change with it: an export
+ * removed or changed, the layout table below, the wakeup bridge, the API of
+ * Module.makWebAudio or the makblob:// scheme. build_libmpv_web.sh writes
+ * it into build_web.json, and the manifest lists it. */
+#define MAK_WEB_ABI 1
 
 __attribute__((constructor)) static void mak_web_one_cpu(void)
 {
@@ -89,6 +96,23 @@ EMSCRIPTEN_KEEPALIVE void mak_web_wakeup_detach(struct mak_web_wakeup *w)
         free(w);
 }
 
+/* MAK_WEB_ABI: a client checks it before any other call. */
+EMSCRIPTEN_KEEPALIVE int mak_web_abi_version(void)
+{
+    return MAK_WEB_ABI;
+}
+
+/* The two fields patch_read_error.py adds at the end of mpv_event_end_file.
+ * build_libmpv_web.sh defines MAK_WEB_READ_ERROR when the archive has the
+ * patch; without it the table gives 0 for both, where no field can sit. */
+#ifdef MAK_WEB_READ_ERROR
+#define MAK_WEB_END_FILE_READ_ERROR offsetof(mpv_event_end_file, mak_read_error)
+#define MAK_WEB_END_FILE_SKIPPED offsetof(mpv_event_end_file, mak_skipped_segments)
+#else
+#define MAK_WEB_END_FILE_READ_ERROR 0
+#define MAK_WEB_END_FILE_SKIPPED 0
+#endif
+
 /* sizeof and offsetof of the structs the JS side reads, in this order. The
  * glue compares them with its own table at start. */
 EMSCRIPTEN_KEEPALIVE const int *mak_web_layout(void)
@@ -108,6 +132,7 @@ EMSCRIPTEN_KEEPALIVE const int *mak_web_layout(void)
         offsetof(mpv_event_end_file, playlist_entry_id),
         offsetof(mpv_event_end_file, playlist_insert_id),
         offsetof(mpv_event_end_file, playlist_insert_num_entries),
+        MAK_WEB_END_FILE_READ_ERROR, MAK_WEB_END_FILE_SKIPPED,
         sizeof(mpv_event_hook), offsetof(mpv_event_hook, id),
         -1,
     };

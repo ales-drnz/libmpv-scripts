@@ -16,7 +16,8 @@
 #                                                     with Module.makWebAudio
 # builds/release/libmpv_web/mak_webaudio_processor.js the AudioWorklet module
 #                                                     of the webaudio output
-# builds/release/libmpv_web/build_web.json            the patch record
+# builds/release/libmpv_web/build_web.json            the patch record, with
+#                                                     the module's ABI
 # $BUILD_DIR/spike/spike.mjs, spike.wasm              the W1 harness module
 #                                                     (verify/web/mak_spike.c)
 #
@@ -369,7 +370,7 @@ write_web_exports() {
   {
     awk '/^EXPORTS/ {on=1; next} on && NF {print $1}' "$SCRIPT_DIR/shared/mpv.def" \
       | grep -Ev '^(mpv_render_|mpv_get_wakeup_pipe$)' | sed 's/^/_/'
-    printf '%s\n' _mak_web_wakeup_attach _mak_web_wakeup_detach \
+    printf '%s\n' _mak_web_abi_version _mak_web_wakeup_attach _mak_web_wakeup_detach \
       _mak_web_layout _mak_wa_table_get _malloc _free
     # Streams of the webio protocols not freed yet, for the tests.
     printf '%s\n' _mak_webio_live_streams
@@ -381,7 +382,13 @@ link_web() {
   local shim="$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_web.c"
   local obj="$BUILD_DIR/build/mak_web.o"
   mkdir -p "$BUILD_DIR/build" "$RELEASE_DIR" "$BUILD_DIR/spike"
-  emcc $WEB_CFLAGS -I"$PREFIX/include" -c "$shim" -o "$obj"
+  # The layout table of the shim names the END_FILE fields of read_error
+  # when the archive has them (its record in the prefix says so).
+  local shim_defs=()
+  if grep -qx read_error "$PREFIX/share/libmpv-scripts/mpv.patches" 2>/dev/null; then
+    shim_defs+=(-DMAK_WEB_READ_ERROR=1)
+  fi
+  emcc $WEB_CFLAGS "${shim_defs[@]}" -I"$PREFIX/include" -c "$shim" -o "$obj"
   write_web_exports
   # The JS side of the webio protocols, which libavformat calls.
   local webio_js="$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_webio.js"
@@ -418,6 +425,29 @@ link_web() {
   ok "spike.mjs ✓"
 }
 
+# The module's versions in its record, which write_manifest.sh lists under
+# "web": MAK_WEB_ABI of scripts/web/mak_web.c, what a client of the module
+# relies on, and MAK_WA_ABI of the webaudio output's table, read from the
+# mpv tree the archive was built from, with the emsdk that built them. The
+# harness checks both against the module (verify/web/lib_harness.mjs).
+record_web_module() {
+  local web_abi wa_abi
+  web_abi="$(sed -n 's/^#define MAK_WEB_ABI \([0-9][0-9]*\).*/\1/p' \
+    "$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_web.c")"
+  wa_abi="$(sed -n 's/^#define MAK_WA_ABI \([0-9][0-9]*\).*/\1/p' \
+    "$BUILD_DIR/src/mpv-$MPV_VERSION/audio/out/mak_wa_ring.h" 2>/dev/null || true)"
+  [[ -n "$web_abi" ]] || die "No MAK_WEB_ABI in scripts/web/mak_web.c"
+  [[ -n "$wa_abi" ]] || die "No MAK_WA_ABI in the mpv tree of $BUILD_DIR: build mpv again"
+  python3 - "$RELEASE_DIR/build_web.json" "$web_abi" "$wa_abi" "$EMSDK_VERSION" <<'PY'
+import json, sys
+path, abi, wa, emsdk = sys.argv[1:]
+r = json.load(open(path))
+r["module"] = {"abi": int(abi), "webaudioAbi": int(wa), "emscripten": emsdk}
+open(path, "w").write(json.dumps(r, indent=2) + "\n")
+print(f"{path}: abi {abi}, webaudio abi {wa}, emscripten {emsdk}")
+PY
+}
+
 report_sizes() {
   local f
   for f in "$RELEASE_DIR/libmpv.wasm" "$RELEASE_DIR/libmpv.mjs" \
@@ -448,6 +478,7 @@ main() {
     # The record of the patches and filters the archives were built with,
     # next to the module (write_build_record in shared/_audio_only.sh).
     RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
+    record_web_module
     report_sizes
   fi
   if [[ "${KEEP_BUILD:-1}" != "1" ]]; then
