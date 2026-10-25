@@ -3,13 +3,15 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-# Checks the SMB protocol and the embedded CA bundle of the FFmpeg patches
-# at runtime. It downloads FFmpeg and libsmb2, checks them against
-# scripts/shared/_sources.sha256, and builds with AddressSanitizer libsmb2
-# (without Kerberos, like the release builds) and a minimal FFmpeg: the
-# file, tcp, udp, tls (system OpenSSL) and libsmb2 protocols and the wav
-# demuxer, with patch_ffmpeg_libsmb2.py and patch_ffmpeg_embed_cacert.py
-# applied.
+# Checks the network side of the FFmpeg patches at runtime: the SMB
+# protocol, the embedded CA bundle and the read errors. It downloads FFmpeg
+# and libsmb2, checks them against scripts/shared/_sources.sha256, and
+# builds with AddressSanitizer libsmb2 (without Kerberos, like the release
+# builds) and a minimal FFmpeg: the file, tcp, udp, tls (system OpenSSL),
+# http and libsmb2 protocols, the wav, hls, mpegts, dash (libxml2) and mov
+# demuxers and the aac decoder, with patch_ffmpeg_libsmb2.py,
+# patch_ffmpeg_embed_cacert.py, patch_ffmpeg_http_reconnect.py and
+# patch_ffmpeg_segment_skips.py applied.
 # Then it runs, each mode in its own process:
 #   - smb_url_test: the URL handling of libsmb2.c, password and percent
 #     decoding (F85, F86);
@@ -17,16 +19,21 @@
 #     against openssl s_server (F90);
 #   - smb_client_test: opens, reads and stops against impacket's server
 #     (smb_server.py, one per mode, stopped with SIGSTOP), and a TCP connect
-#     slowed by slow_connect.py (F83, F84, F85).
+#     slowed by slow_connect.py (F83, F84, F85);
+#   - read_errors_test: an HTTP body cut short ends with EIO when the
+#     reconnect gets an error reply, and the HLS and DASH demuxers count the
+#     segments they lose, against native/slow_http.py (one per mode).
 # A mode passes when its process exits 0: it printed RESULT PASS and
 # AddressSanitizer and LeakSanitizer found nothing. open-hang and pause-read
 # wait about 35 s each and run in the background meanwhile. The logs stay
 # in <work dir>/runs.
 #
-# Needs gcc, make, cmake, ninja, pkg-config, git, curl, python3, openssl and
-# the OpenSSL development files. The smb_client_test modes need impacket
-# for the python in SMB_PYTHON (default python3), e.g. a venv with
-# pip install impacket==0.13.1.
+# Needs gcc, make, cmake, ninja, pkg-config, git, curl, python3, openssl,
+# the OpenSSL and libxml2 development files, and the ffmpeg command with the
+# aac encoder and the hls and dash muxers (the fixtures of
+# read_errors_test). The smb_client_test modes need impacket for the python
+# in SMB_PYTHON (default python3), e.g. a venv with pip install
+# impacket==0.13.1.
 #
 # The work dir is wiped first; --reuse keeps the downloads and builds, and
 # applies the patches again and runs make, to rerun after editing a patch
@@ -34,8 +41,10 @@
 # of modes: smb_client_test:read-stop,open-stop. Environment: FFMPEG_TARBALL
 # names a local copy of the tarball (checked against the same pin), JOBS
 # sets the build jobs (default 4), CC and FFMPEG_TOOLCHAIN the compiler
-# (default gcc and gcc-asan, or clang and clang-asan). About two minutes at
-# JOBS=4, half of it building.
+# (default gcc and gcc-asan, or clang and clang-asan), and
+# DISABLED_PATCHES=read_error leaves out patch_ffmpeg_http_reconnect.py and
+# patch_ffmpeg_segment_skips.py, to see read_errors_test fail without them.
+# About two minutes at JOBS=4, half of it building.
 #
 # Usage: bash verify/tests/network_test.sh [--reuse] <work dir> [test[:mode,...] ...]
 
@@ -53,6 +62,7 @@ CC="${CC:-gcc}"
 TOOLCHAIN="${FFMPEG_TOOLCHAIN:-gcc-asan}"
 JOBS="${JOBS:-4}"
 SMB_PYTHON="${SMB_PYTHON:-python3}"
+WANT_DISABLED="${DISABLED_PATCHES:-}"
 
 # shellcheck source=/dev/null
 source "$ROOT/scripts/shared/_helpers.sh"
@@ -60,12 +70,15 @@ source "$ROOT/scripts/shared/_helpers.sh"
 source "$ROOT/scripts/shared/_versions.sh"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/shared/_audio_only.sh"
+# Only what the caller asked for is left out, not a local Settings override.
+DISABLED_PATCHES="$WANT_DISABLED"
 
 # <test> <modes...>; smb_client_test modes are <mode>[@<timeout in s>].
 CASES=(
   "smb_url_test strip decode parse"
   "tls_roots_test verify"
   "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read"
+  "read_errors_test http-refused http-resume http-nolength http-nolength-norange hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
 LONG_MODES=" open-hang pause-read "
@@ -125,29 +138,36 @@ if [[ ! -f "$BLD/config.h" ]]; then
   rm -rf "$SRC" "$BLD" "$FFPREFIX" "$WORK/pristine"
   tar -xzf "$TARBALL" -C "$WORK/src" || die "cannot extract $TARBALL"
   mkdir -p "$WORK/pristine" "$BLD"
-  cp "$SRC/libavformat/tls_openssl.c" "$WORK/pristine/"
+  for f in tls_openssl.c http.c hls.c dashdec.c; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" \
     > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "patch_ffmpeg_libsmb2.py failed"; }
   ( cd "$BLD" && "$SRC/configure" --prefix="$FFPREFIX" --cc="$CC" --toolchain="$TOOLCHAIN" \
       --disable-everything --disable-autodetect --disable-programs --disable-doc \
       --disable-avdevice --disable-avfilter --disable-swscale --disable-x86asm \
       --disable-stripping --optflags=-O1 --enable-network --enable-openssl --enable-libsmb2 \
-      --enable-protocol=file,tcp,udp,tls,libsmb2 --enable-demuxer=wav --enable-decoder=pcm_s16le
+      --enable-libxml2 --enable-protocol=file,tcp,udp,tls,http,libsmb2 \
+      --enable-demuxer=wav,hls,mpegts,dash,mov --enable-decoder=pcm_s16le,aac --enable-parser=aac
   ) > "$WORK/logs/configure.log" 2>&1 || { tail -30 "$WORK/logs/configure.log"; die "FFmpeg configure failed"; }
 fi
 # The patches of the tree under test, every run: libsmb2.c is copied again,
-# and tls_openssl.c is patched again from its pristine copy.
+# and the other files are patched again from their pristine copies (cp
+# keeps them newer than their objects, so make rebuilds them).
 { python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" &&
   touch "$SRC/libavformat/libsmb2.c" &&
-  cp "$WORK/pristine/tls_openssl.c" "$SRC/libavformat/tls_openssl.c" &&
-  python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$SRC"
+  for f in tls_openssl.c http.c hls.c dashdec.c; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
+  python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$SRC" &&
+  if patch_on read_error; then
+    python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_http_reconnect.py" "$SRC" &&
+      python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_segment_skips.py" "$SRC"
+  fi
 } > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "the FFmpeg patches failed"; }
+[[ -n "$DISABLED_PATCHES" ]] && echo "disabled patches: $DISABLED_PATCHES"
 log "Building FFmpeg"
 make -C "$BLD" -j"$JOBS" install > "$WORK/logs/make.log" 2>&1 || {
   grep -B2 -A8 'error' "$WORK/logs/make.log" | head -60; die "the FFmpeg build failed"; }
-grep -q 'CONFIG_LIBSMB2_PROTOCOL 1' "$BLD/config_components.h" &&
-  grep -q 'CONFIG_TLS_PROTOCOL 1' "$BLD/config_components.h" ||
-  die "FFmpeg was built without the libsmb2 or tls protocol"
+for c in LIBSMB2_PROTOCOL TLS_PROTOCOL HTTP_PROTOCOL HLS_DEMUXER DASH_DEMUXER; do
+  grep -q "CONFIG_$c 1" "$BLD/config_components.h" || die "FFmpeg was built without CONFIG_$c"
+done
 ok "built $FFPREFIX"
 
 # ── Tests ────────────────────────────────────────────────────────────────────
@@ -292,6 +312,50 @@ PY
   for m in "${bg[@]}"; do smb_report "$m"; done
 }
 
+# read_errors_mode <mode>: one mode against its own slow_http.py.
+read_errors_mode() {
+  local m="$1" log="$RUNS/read_errors_test-$1.log" port srv r opts=()
+  case "$m" in
+    http-refused) opts=(233287) ;;
+    http-resume) opts=(233287 resume) ;;
+    http-nolength) opts=(nolength) ;;
+    http-nolength-norange) opts=(nolength norange) ;;
+    hls-404) opts=(missing=seg2.ts) ;;
+    hls-cut) opts=(cutfile=seg2.ts) ;;
+    dash-404) opts=(missing=chunk3.m4s) ;;
+    dash-cut) opts=(cutfile=chunk3.m4s) ;;
+  esac
+  port="$(free_port)"
+  python3 -I "$ROOT/verify/tests/native/slow_http.py" "$WORK/errors" "$port" 10000000 "${opts[@]}" \
+    2> "$log.http" &
+  srv=$!; echo "$srv" >> "$PIDS"
+  wait_port "$port" || echo "slow_http.py did not start on port $port" >> "$log.http"
+  timeout 120 "$BIN/read_errors_test" "$m" "$port" > "$log" 2>&1; r=$?
+  kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null
+  report "read_errors_test $m" "$r" "$log"
+}
+
+run_read_errors() {
+  local d="$WORK/errors" m
+  compile read_errors_test || return
+  if [[ ! -f "$d/d.mpd" ]]; then
+    rm -rf "$d"; mkdir -p "$d"
+    {
+      python3 -c 'import random, sys; open(sys.argv[1], "wb").write(random.Random(1).randbytes(466574))' \
+        "$d/data.bin" &&
+      ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=4" \
+        -ac 2 -c:a aac -b:a 128k -f hls -hls_time 1 -hls_playlist_type vod \
+        -hls_segment_filename "$d/seg%d.ts" "$d/hls.m3u8" &&
+      ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=4" \
+        -ac 2 -c:a aac -b:a 128k -f dash -seg_duration 1 -use_template 1 -use_timeline 0 \
+        -init_seg_name init.m4s -media_seg_name 'chunk$Number$.m4s' "$d/d.mpd"
+    } > "$WORK/logs/errors_fixtures.log" 2>&1 || {
+      tail -5 "$WORK/logs/errors_fixtures.log"; echo "FAIL read_errors_test: no fixtures"
+      FAILED+=("read_errors_test (fixtures)"); return; }
+  fi
+  for m in "$@"; do read_errors_mode "$m"; done
+}
+
 smb_report() {
   local m="$1" label="smb_client_test ${1%@*}" log="$RUNS/smb_client_test-$1.log"
   [[ "$m" == *@* ]] && label+=" (timeout ${m#*@} s)"
@@ -308,6 +372,7 @@ for c in "${CASES[@]}"; do
     smb_url_test) run_url "${modes[@]}" ;;
     tls_roots_test) run_tls ;;
     smb_client_test) run_smb "${modes[@]}" ;;
+    read_errors_test) run_read_errors "${modes[@]}" ;;
   esac
 done
 

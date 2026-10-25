@@ -334,8 +334,9 @@ jobs:
   # with every mpv patch, built against Ubuntu's FFmpeg 6.1, runs the C and
   # white-box tests of verify/tests/native and the patch script tests of
   # verify/tests/patches (run.sh); then, each on a minimal FFmpeg 8.1.1, the
-  # filter bounds check and the SMB and TLS checks against impacket's server
-  # (network_test.sh). In the needs of release, unlike tui. A failure
+  # filter bounds check, and the SMB and TLS checks against impacket's server
+  # with the read errors of http, HLS and DASH (network_test.sh). In the
+  # needs of release, unlike tui. A failure
   # uploads the logs as native-test-logs.
   native:
     name: Native tests (ASan)
@@ -349,7 +350,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
             libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev zlib1g-dev libssl-dev openssl python3-venv
+            libswscale-dev libplacebo-dev zlib1g-dev libssl-dev libxml2-dev openssl python3-venv
       # The ASan runtime of gcc 13 can crash at start with the 32 bits of
       # mmap randomness of newer kernels.
       - name: Fewer mmap random bits for ASan
@@ -360,7 +361,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: CC=gcc FFMPEG_TOOLCHAIN=gcc-asan JOBS=4 bash verify/tests/filter_bounds_test.sh builds/filter-bounds
       # impacket is the SMB server of the test, pinned, in a venv of its own.
-      - name: FFmpeg SMB and TLS
+      - name: FFmpeg SMB, TLS and read errors
         if: ${{ !cancelled() }}
         run: |
           python3 -m venv builds/impacket

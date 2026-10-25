@@ -34,6 +34,15 @@
 #   dcm20.flac    -0.25, 20 s, stereo, 48 kHz
 #   dc2.mka       dc20.flac then dcm20.flac as two audio tracks
 #   sine60.flac   60 s sine, stereo, 48 kHz
+# readerror/ (read_error_test), read over HTTP from slow_http.py
+#   n.flac      4 s pink noise with a fixed seed, 44.1 kHz stereo (466574
+#               bytes, 116 KB a second, so a seek of a second goes past the
+#               read buffers); the cut offsets in run.sh are its own
+#   short.flac  1 s sine, the second entry of the playlist modes
+#   vbr.mp3     VBR MP3 without Xing header, 1.5 s of silence then 2.5 s of
+#               pink noise: its duration is an estimate, about 6 s for 4
+#   hls.m3u8    n.flac in AAC as HLS VOD, seg0.ts to seg3.ts of 1 s and
+#               seg4.ts of 23 ms
 #
 # Usage: bash verify/tests/native/fixtures.sh <dir>
 
@@ -93,3 +102,12 @@ dc dc20.flac "0.25|0.25" 48000 20
 dc dcm20.flac "-0.25|-0.25" 48000 20
 [[ -f "$d/dc2.mka" ]] || ff -i "$d/dc20.flac" -i "$d/dcm20.flac" -map 0 -map 1 -c copy "$d/dc2.mka"
 [[ -f "$d/sine60.flac" ]] || ff -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=60" -ac 2 -c:a flac "$d/sine60.flac"
+
+d="$D/readerror"; mkdir -p "$d"
+[[ -f "$d/n.flac" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=44100:duration=4:seed=1" \
+  -ac 2 -c:a flac "$d/n.flac"
+[[ -f "$d/short.flac" ]] || ff -f lavfi -i "sine=frequency=660:sample_rate=44100:duration=1" -ac 2 "$d/short.flac"
+[[ -f "$d/vbr.mp3" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=44100:duration=4:seed=1" \
+  -af "volume=enable='lt(t,1.5)':volume=0" -ac 2 -c:a libmp3lame -q:a 6 -write_xing 0 "$d/vbr.mp3"
+[[ -f "$d/hls.m3u8" ]] || ff -i "$d/n.flac" -c:a aac -b:a 128k -f hls -hls_time 1 -hls_playlist_type vod \
+  -hls_segment_filename "$d/seg%d.ts" "$d/hls.m3u8"

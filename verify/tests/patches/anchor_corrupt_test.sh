@@ -98,6 +98,7 @@ SHARED = [
     'patch_chain_eof.py', 'patch_lavfi_eof_passthrough.py',
     'patch_hotplug_core_thread.py', 'patch_playlist_prev_dos_path.py',
     'patch_chapter_list_reset.py', 'patch_af_command_args.py',
+    'patch_read_error.py',
 ]
 audio_only = (ROOT / 'scripts/shared/_audio_only.sh').read_text()
 body = re.search(r'^apply_mpv_patches_common\(\) \{\n(.*?)^\}', audio_only,
@@ -135,11 +136,13 @@ BUILDS = {
     'ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', True) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
         'patch_ffmpeg_libsmb2.py', 'patch_ffmpeg_advanced_editlist.py',
-        'patch_ffmpeg_dash_keepalive.py', 'patch_ffmpeg_embed_cacert.py')]),
+        'patch_ffmpeg_dash_keepalive.py', 'patch_ffmpeg_http_reconnect.py',
+        'patch_ffmpeg_segment_skips.py', 'patch_ffmpeg_embed_cacert.py')]),
     # The web build: no libsmb2 and no embed_cacert, then webio.
-    'web': (FFMPEG, [(f'ffmpeg/{s}', False) for s in (
+    'web-ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', False) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
-        'patch_ffmpeg_advanced_editlist.py', 'patch_ffmpeg_dash_keepalive.py')]
+        'patch_ffmpeg_advanced_editlist.py', 'patch_ffmpeg_dash_keepalive.py',
+        'patch_ffmpeg_http_reconnect.py', 'patch_ffmpeg_segment_skips.py')]
         + [('ffmpeg/patch_ffmpeg_webio.py', True)]),
 }
 

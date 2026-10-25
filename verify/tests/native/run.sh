@@ -60,10 +60,11 @@ source "$ROOT/scripts/shared/_audio_only.sh"
 # Only what the caller asked for is left out, not a local Settings override.
 DISABLED_PATCHES="$WANT_DISABLED"
 
-# <kind> <test> <fixtures> <HTTP bytes per second[:cut]> <modes...>
+# <kind> <test> <fixtures> <HTTP bytes per second[:cut[:option,...]]> <modes...>
 #   lib: linked with libmpv; unit: includes a patched source file;
 #   audiotrack: includes pristine ao_audiotrack.c with its patch.
 #   fixtures: a dir of fixtures.sh, "-" for none; HTTP "-": no server.
+#   The cut and the options go to slow_http.py, which lists them.
 CASES=(
   "lib prefetch_hook_test prefetch - stall transition rewrite props clear stop destroy noclient repeat"
   "lib prefetch_guard_test prefetch - two"
@@ -91,6 +92,13 @@ CASES=(
   "lib pcm_loop_test playback - file late ab next abnext off"
   "lib chapter_list_test playback - meta index observe kit same"
   "lib af_command_args_test playback - prop seek track extern reload next keep rollback order fail labels bridge"
+  "lib read_error_test readerror 2000000:233000:drop cutlist"
+  "lib read_error_test readerror 2000000:233000:down cutpark"
+  "lib read_error_test readerror 2000000:233000:norange norange"
+  "lib read_error_test readerror 2000000 whole vbr"
+  "lib read_error_test readerror 2000000:233000:resume resume"
+  "lib read_error_test readerror 2000000:311000:drop seekback"
+  "lib read_error_test readerror 2000000::missing=seg2.ts hls"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
@@ -103,6 +111,7 @@ PATCH_TESTS=(
   "embed_cacert_patch_test {ffmpeg}"
   "filter_bounds_anchor_test {ffmpeg}"
   "dash_keepalive_patch_test {ffmpeg}"
+  "read_error_patch_test {ffmpeg}"
   "anchor_corrupt_test {mpv} {ffmpeg}"
 )
 AUDIOTRACK_PATCH="$ROOT/patches/mpv/android/patch_audiotrack.py"
@@ -228,8 +237,11 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
   local kind="$1" t="$2" log="$RUNS/$2.cc.log"
   case "$kind" in
     lib)
-      "$CC" -g -O1 -fsanitize=address -I"$SRC/include" "$HERE/$t.c" -o "$BIN/$t" \
-        -L"$BLD" -lmpv -Wl,-rpath,"$BLD" -lpthread -lm > "$log" 2>&1 ;;
+      # The FFmpeg headers for read_error_test, which stands in for an
+      # libavutil function.
+      # shellcheck disable=SC2046
+      "$CC" -g -O1 -fsanitize=address -I"$SRC/include" $(pkg-config --cflags libavutil) \
+        "$HERE/$t.c" -o "$BIN/$t" -L"$BLD" -lmpv -Wl,-rpath,"$BLD" -ldl -lpthread -lm > "$log" 2>&1 ;;
     unit)
       # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
@@ -259,9 +271,11 @@ run_mode() {
   rm -rf "$tmp"; mkdir -p "$tmp"
   if [[ "$http" != "-" ]]; then
     port="$(free_port)"
-    local rate="${http%%:*}" cut=""
+    local rate="${http%%:*}" cut="" opts=""
     [[ "$http" == *:* ]] && cut="${http#*:}"
-    python3 -B "$HERE/slow_http.py" "$FX/$fx" "$port" "$rate" $cut 2> "$tmp.http.log" &
+    if [[ "$cut" == *:* ]]; then opts="${cut#*:}"; cut="${cut%%:*}"; fi
+    # shellcheck disable=SC2086
+    python3 -B "$HERE/slow_http.py" "$FX/$fx" "$port" "$rate" $cut ${opts//,/ } 2> "$tmp.http.log" &
     srv=$!
     wait_port "$port" || echo "slow_http.py did not start on port $port" >> "$tmp.log"
   fi
