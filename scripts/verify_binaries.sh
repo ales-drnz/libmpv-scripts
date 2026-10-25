@@ -10,13 +10,14 @@
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
-#   3.  Patched mpv properties present (all 14: prefetch-state,
+#   3.  Patched mpv properties present (all 16: prefetch-state,
 #       -cache-duration, -open-filename and -playlist-entry-id,
 #       audio-output-state, embedded-cover-art-data/mime,
 #       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data/-enabled,
-#       loudness-scan-data/-enabled)
+#       loudness-scan-data/-enabled, demuxer-read-error and
+#       demuxer-skipped-segments)
 #   4.  FFmpeg patches present (libsmb2 protocol, mov advanced_editlist,
-#       filter bounds)
+#       the segment count of HLS and DASH, filter bounds)
 #   5.  Required audio decoder whitelist sample present
 #   6.  Required audio filter whitelist sample present
 #  6b.  FFmpeg components no decoder or filter check covers: the spdif muxer
@@ -168,6 +169,7 @@ EXPECTED_FORMATS=(
 #   filter_label_tap  : audio-tap-frames, analyzer-taps
 #   bulk_analysis     : waveform-data, waveform-enabled
 #   loudness_scan     : loudness-scan-data, loudness-scan-enabled
+#   read_error        : demuxer-read-error, demuxer-skipped-segments
 MPV_PATCHED_PROPS=(
   prefetch-state prefetch-cache-duration
   prefetch-open-filename prefetch-playlist-entry-id
@@ -177,11 +179,15 @@ MPV_PATCHED_PROPS=(
   audio-tap-frames analyzer-taps
   waveform-data waveform-enabled
   loudness-scan-data loudness-scan-enabled
+  demuxer-read-error demuxer-skipped-segments
 )
 
+# "ended on a read error" is the warning patch_ffmpeg_segment_skips.py adds to
+# hls.c and dashdec.c; its option name is no marker, since mpv reads it.
 FFMPEG_PATCH_MARKERS=(
   "libsmb2|libsmb2 SMB2 protocol patch"
   "advanced_editlist|mov demuxer fragmented-MP4 editlist patch"
+  "ended on a read error|HLS and DASH segment count (read_error)"
 )
 
 # FFmpeg components the kit relies on outside the decoder and filter lists:
