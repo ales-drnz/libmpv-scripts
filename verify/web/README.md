@@ -60,6 +60,15 @@ reads, set up by `Module.makWebAudio` (`scripts/web/mak_webaudio.js`).
 | `audio_harness.mjs`, `mpv_client.mjs` | mpv plays in real time through the output: frames consumed, latency, underruns with the main thread busy, pause, seek, format change, volume, a new AudioContext |
 | `gesture.mjs` | a trusted click through the browser's remote protocol, for the AudioContext that waits for a gesture |
 | `proc_cpu.py` | the CPU time of the browser's processes |
+| `firefox_sound.sh` | the sound device of the test Firefox: the null sink `PULSE_SINK` names, JACK and ALSA cut off |
+
+No browser plays on the speakers. Chrome renders into its fake output
+(`--disable-audio-output`). Firefox plays into the null sink that
+`PULSE_SINK` names, on that sink's clock, so the AudioWorklet runs in real
+time; it must exist and not be the default output (with PipeWire or
+PulseAudio: `pactl load-module module-null-sink sink_name=mak_tests`).
+Without it Firefox gets no device, its AudioContext does not start and its
+audio checks fail.
 
 ```
 EMSDK=<emsdk> verify/web/ring_test.sh <out dir>

@@ -14,8 +14,9 @@
 # status is the harness's.
 #
 # No browser reaches the machine's sound card: Chrome renders into its fake
-# output (--disable-audio-output, a 44.1 kHz clock), Firefox gets no
-# PulseAudio and ALSA's null device (48 kHz). Autoplay is allowed unless
+# output (--disable-audio-output, a 44.1 kHz clock), Firefox into the null
+# sink PULSE_SINK names, on that sink's clock (firefox_sound.sh; without
+# such a sink its AudioContext does not start). Autoplay is allowed unless
 # AUTOPLAY=0, which leaves an AudioContext suspended until a gesture.
 #
 # The page's signals (serve_coi.py): click makes a user gesture through the
@@ -29,6 +30,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+source "$HERE/firefox_sound.sh"
 browser="${1:?firefox or chrome}"
 build="${2:?build dir}"
 query="${3:-mode=spike}"
@@ -76,9 +78,9 @@ EOF
       printf '%s\n' 'user_pref("media.autoplay.default", 0);' \
         'user_pref("media.autoplay.block-webaudio", false);' >> "$profile/user.js"
     fi
-    printf 'pcm.!default { type null }\nctl.!default { type hw card 0 }\n' > "$profile/asound.conf"
-    PULSE_SERVER=unix:/nonexistent ALSA_CONFIG_PATH="$profile/asound.conf" \
-      firefox --headless --no-remote --profile "$profile" \
+    firefox_sound_env "$profile"
+    [[ -z "$FIREFOX_SOUND_NOTE" ]] || echo "run_browser: $FIREFOX_SOUND_NOTE" >&2
+    env "${FIREFOX_ENV[@]}" firefox --headless --no-remote --profile "$profile" \
       --remote-debugging-port "$bidi_port" "$url" >"$build/browser.log" 2>&1 &
     bpid=$!
     ;;
