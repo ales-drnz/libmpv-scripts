@@ -229,26 +229,46 @@ export async function runNetHarness(factory, env, log) {
   });
 
   // ── ICY metadata ──────────────────────────────────────────────────────
+  // mpv reads the ICY packet after each demuxed packet and keeps it as
+  // timed metadata at the demuxer's newest timestamp (demux.c,
+  // update_cache and add_timed_metadata); demux_update publishes it when
+  // playback crosses that time. With ao-null-untimed and a server slower
+  // than the decoder, playback runs at the demuxer's edge, already past the
+  // title when it is found, and mpv skips it, as with http.c on native. So
+  // these cases play in real time, as a real output does, with a title
+  // every 0.5 s of the server (1.5 s of audio at rate 48000), and every
+  // title must show, in order.
   const icyCase = async (name, url, { expectTitles, expectIcyHeader, extra = {} }) => {
     await run(name, async (core) => {
       const titles = new Set();
+      const seen = [];
       let icyName = null;
+      let lastPos = null;
+      let t0 = now();
       core.on((ev) => {
+        if (ev.id === EV.PROPERTY_CHANGE && ev.name === 'time-pos') lastPos = ev.value;
         if (ev.id === EV.PROPERTY_CHANGE && ev.name === 'metadata' && ev.value) {
           const v = ev.value;
-          if (v['icy-title']) titles.add(v['icy-title']);
+          if (v['icy-title'] && !titles.has(v['icy-title'])) {
+            titles.add(v['icy-title']);
+            seen.push([v['icy-title'], Math.round(ev.t - t0), lastPos && Number(lastPos.toFixed(2))]);
+          }
           if (v['icy-name']) icyName = v['icy-name'];
         }
       });
       core.observe('metadata', FMT.NODE);
+      core.observe('time-pos', FMT.DOUBLE);
+      t0 = now();
       const l = await load(core, url);
       check(l.ok, `${name}.loaded`);
       await sleep(4000);
       const pos = await core.get('time-pos', FMT.DOUBLE);
       check(pos.value > 2, `${name}.plays`, `time-pos ${pos.value}`);
       const list = [...titles];
+      measure(`${name}.titles_seen`, JSON.stringify(seen));
       if (expectTitles) {
-        check(list.length >= 2 && list.every((x) => /^Mak title \d+$/.test(x)), `${name}.titles`, JSON.stringify(list));
+        const nums = list.map((x) => Number(/^Mak title (\d+)$/.exec(x)?.[1]));
+        check(list.length >= 2 && nums.every((n, i) => n === i + 1), `${name}.titles`, JSON.stringify(list));
         check(icyName === 'Mak Test Radio', `${name}.icy_name`, String(icyName));
       } else {
         check(list.length === 0, `${name}.no_titles`, JSON.stringify(list));
@@ -260,13 +280,13 @@ export async function runNetHarness(factory, env, log) {
       check(expectIcyHeader(gets), `${name}.requests`, JSON.stringify(gets.map((e) => ({ icy: e.icy, sent: e.icy_sent }))));
       await core.command(['stop']);
       await l.ended;
-    }, { extra });
+    }, { extra: { 'ao-null-untimed': 'no', ...extra } });
   };
-  await icyCase('icy_same', `${env.base}/media/live/live.mp3?icy=1&rate=48000&tag=icy1`, {
+  await icyCase('icy_same', `${env.base}/media/live/live.mp3?icy=1&rate=48000&titlesecs=0.5&tag=icy1`, {
     expectTitles: true, expectIcyHeader: (g) => g.length === 1 && g[0].icy === '1' && g[0].icy_sent,
   });
   if (env.browser) {
-    await icyCase('icy_cross_exposed', `${env.cross}/media/live/live.mp3?icy=1&cors=expose&rate=48000&tag=icy2`, {
+    await icyCase('icy_cross_exposed', `${env.cross}/media/live/live.mp3?icy=1&cors=expose&rate=48000&titlesecs=0.5&tag=icy2`, {
       expectTitles: true, extra: { 'stream-lavf-o': 'icy_cross_origin=1' },
       expectIcyHeader: (g) => g.length === 1 && g[0].icy === '1' && g[0].icy_sent,
     });
