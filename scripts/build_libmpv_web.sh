@@ -26,8 +26,10 @@
 # are in $BUILD_DIR/src: every tarball is checked against _sources.sha256.
 #
 # What differs from the native builds:
-# - no OpenSSL, no libsmb2, no network protocols: the browser does TLS and
-#   the transport (DISABLED_PATCHES gets libsmb2 and embed_cacert);
+# - no OpenSSL, no libsmb2, no sockets: the browser does TLS and the
+#   transport (DISABLED_PATCHES gets libsmb2 and embed_cacert). http, https
+#   and makblob (blob: URLs) are the webio protocols, which read through
+#   fetch (patches/ffmpeg/patch_ffmpeg_webio.py, scripts/web/mak_webio.js);
 # - the audio output is webaudio (patches/mpv/web/patch_ao_webaudio.py): mpv
 #   writes rings in wasm memory that an AudioWorklet plays;
 # - every shared mpv patch is applied as on the other platforms.
@@ -245,12 +247,13 @@ build_libplacebo() {
   ok "libplacebo ✓"
 }
 
-# The shared FFmpeg flags with the web cuts: no network, no TLS, no lzma
-# (nothing on the audio path reads it), and the protocols that read memory
-# and WasmFS. The decoder, filter, parser and bsf lists stay the shared ones.
+# The shared FFmpeg flags with the web cuts: no sockets, no TLS, no lzma
+# (nothing on the audio path reads it), the protocols that read memory and
+# WasmFS, and webio for http, https and blob: URLs. The decoder, filter,
+# parser and bsf lists stay the shared ones.
 ffmpeg_web_args() {
   ffmpeg_common_args | sed \
-    -e 's/^--enable-protocol=.*/--enable-protocol=file,data,crypto,subfile/' \
+    -e 's/^--enable-protocol=.*/--enable-protocol=file,data,crypto,subfile,webio_http,webio_https,webio_makblob/' \
     -e 's/^--enable-network$/--disable-network/' \
     -e 's/^--enable-openssl$/--disable-openssl/' \
     -e 's/^--enable-lzma$/--disable-lzma/' \
@@ -266,6 +269,8 @@ build_ffmpeg() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   patch_record_start ffmpeg "$PREFIX"
   apply_ffmpeg_patches "$dir"
+  # http and https through fetch: the web build's only transport.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_webio.py" "$dir"
 
   local bdir="$BUILD_DIR/build/ffmpeg"; rm -rf "$bdir"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -366,6 +371,8 @@ write_web_exports() {
       | grep -Ev '^(mpv_render_|mpv_get_wakeup_pipe$)' | sed 's/^/_/'
     printf '%s\n' _mak_web_wakeup_attach _mak_web_wakeup_detach \
       _mak_web_layout _mak_wa_table_get _malloc _free
+    # Streams of the webio protocols not freed yet, for the tests.
+    printf '%s\n' _mak_webio_live_streams
   } > "$f"
   WEB_EXPORTS_FILE="$f"
 }
@@ -376,6 +383,8 @@ link_web() {
   mkdir -p "$BUILD_DIR/build" "$RELEASE_DIR" "$BUILD_DIR/spike"
   emcc $WEB_CFLAGS -I"$PREFIX/include" -c "$shim" -o "$obj"
   write_web_exports
+  # The JS side of the webio protocols, which libavformat calls.
+  local webio_js="$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_webio.js"
 
   log "Linking libmpv.mjs..."
   # The page side of the webaudio output goes into the glue (post-js:
@@ -383,7 +392,7 @@ link_web() {
   # shellcheck disable=SC2046
   em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" -L"$PREFIX/lib" "${WEB_LIBS[@]}" \
     $(web_link_common) \
-    --no-entry \
+    --no-entry --js-library "$webio_js" \
     -sEXPORT_NAME=createLibmpv \
     -sEXPORTED_FUNCTIONS=@"$WEB_EXPORTS_FILE" \
     -sEXPORTED_RUNTIME_METHODS=FS,UTF8ToString,stringToNewUTF8,HEAPU8,HEAP32,HEAPF64,wasmMemory \
@@ -401,7 +410,7 @@ link_web() {
     -o "$BUILD_DIR/build/mak_spike.o"
   em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" "$BUILD_DIR/build/mak_spike.o" \
     -L"$PREFIX/lib" "${WEB_LIBS[@]}" \
-    $(web_link_common) \
+    $(web_link_common) --js-library "$webio_js" \
     -sEXPORT_NAME=createSpike \
     -sPROXY_TO_PTHREAD -sEXIT_RUNTIME -sINVOKE_RUN=0 \
     -sEXPORTED_RUNTIME_METHODS=FS,callMain \

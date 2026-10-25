@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
+     All rights reserved.
+     Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+
+     The webio harness in a browser, served by net_server.py (run_net.sh
+     stages the files). Query: cases=a,b (default all), repeat=N (timing
+     cases, default 3), timeout=<s>. The result goes to POST /result. -->
+<meta charset="utf-8">
+<title>mak webio</title>
+<pre id="out"></pre>
+<script type="module">
+const q = new URLSearchParams(location.search);
+const lines = [];
+const out = document.getElementById('out');
+const log = (s) => { lines.push(String(s)); out.textContent += s + '\n'; };
+let posted = false;
+const post = async (extra) => {
+  if (posted) return;
+  posted = true;
+  await fetch('/result', { method: 'POST', body: JSON.stringify({ userAgent: navigator.userAgent,
+    crossOriginIsolated, lines, ...extra }) });
+};
+window.addEventListener('error', (e) => { log(`page error: ${e.message}`); post({ code: -1 }); });
+window.addEventListener('unhandledrejection', (e) => { log(`page rejection: ${e.reason}`); post({ code: -1 }); });
+setTimeout(() => { log('page timeout'); post({ code: -2 }); }, Number(q.get('timeout') || 900) * 1000);
+log(`crossOriginIsolated ${crossOriginIsolated}`);
+const fixture = async (name) => new Uint8Array(await (await fetch(`fixtures/${name}`)).arrayBuffer());
+try {
+  const { runNetHarness } = await import('./net_harness.mjs');
+  const { default: factory } = await import('./lib/libmpv.mjs');
+  const port = Number(location.port);
+  const r = await runNetHarness(factory, {
+    base: location.origin,
+    cross: `${location.protocol}//${location.hostname}:${port + 1}`,
+    browser: true,
+    fixture,
+    blobUrl: async (name) => URL.createObjectURL(new Blob([await fixture(name)])),
+    cases: q.get('cases') ? q.get('cases').split(',') : null,
+    repeat: Number(q.get('repeat') || 3),
+    verbose: q.get('verbose') === '1',
+  }, log);
+  await post({ code: r.fail ? 1 : 0 });
+} catch (e) {
+  log(`page exception: ${e && e.stack || e}`);
+  post({ code: -1 });
+}
+</script>
