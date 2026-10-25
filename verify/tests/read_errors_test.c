@@ -12,6 +12,16 @@
 //                 upstream ends them with AVERROR_EOF, as a complete file.
 //   http-resume   the same cut, the resume served: every byte, then
 //                 AVERROR_EOF (control).
+//   http-nolength the whole file without Content-Length, so its end is the
+//                 close, from a server with Range support: http.c takes the
+//                 close for a cut, reconnects past the end and gets 416,
+//                 which ends the file with AVERROR_EOF. The patch leaves a
+//                 body of unknown size alone, or it would retry it and end
+//                 it with EIO.
+//   http-nolength-norange  the same from a server without Range support:
+//                 no reconnect, and http.c ends even the whole body with
+//                 EIO. An end of unknown place cannot be told from a cut:
+//                 the known limit, also upstream.
 //   hls-ok        hls.m3u8 (4 s of AAC in 1 s segments) to its end: the
 //                 skipped_segments option of the demuxer reads 0
 //                 (patch_ffmpeg_segment_skips.py; upstream has no option).
@@ -106,8 +116,14 @@ int main(int argc, char **argv)
                      av_err2str(r));
             check(r == AVERROR(EIO), msg);
             check(bytes == 233287, "the bytes up to the cut");
+        } else if (!strcmp(mode, "http-nolength-norange")) {
+            snprintf(msg, sizeof msg, "the whole body of unknown size ends with EIO (%s)",
+                     av_err2str(r));
+            check(r == AVERROR(EIO), msg);
+            check(bytes == 466574, "every byte");
         } else {
-            check(r == AVERROR_EOF, "the repaired body ends with AVERROR_EOF");
+            snprintf(msg, sizeof msg, "the body ends with AVERROR_EOF (%s)", av_err2str(r));
+            check(r == AVERROR_EOF, msg);
             check(bytes == 466574, "every byte");
         }
     } else {

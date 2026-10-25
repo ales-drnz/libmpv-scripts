@@ -78,7 +78,7 @@ CASES=(
   "smb_url_test strip decode parse"
   "tls_roots_test verify"
   "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read"
-  "read_errors_test http-refused http-resume hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
+  "read_errors_test http-refused http-resume http-nolength http-nolength-norange hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
 LONG_MODES=" open-hang pause-read "
@@ -318,6 +318,8 @@ read_errors_mode() {
   case "$m" in
     http-refused) opts=(233287) ;;
     http-resume) opts=(233287 resume) ;;
+    http-nolength) opts=(nolength) ;;
+    http-nolength-norange) opts=(nolength norange) ;;
     hls-404) opts=(missing=seg2.ts) ;;
     hls-cut) opts=(cutfile=seg2.ts) ;;
     dash-404) opts=(missing=chunk3.m4s) ;;

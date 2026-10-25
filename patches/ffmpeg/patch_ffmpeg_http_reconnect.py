@@ -20,11 +20,18 @@ A reconnect that fails before a reply (no network) keeps filesize, so the
 same cut ends with EIO after the retries.
 
 This patch saves that state with the old buffer, and puts it back with it
-when the new request fails. The cut body stays short whatever the failed
-reply said: the loop tries again as reconnect_delay_max allows, and then
-returns AVERROR(EIO), which mpv reports as a read error
-(patch_read_error.py). A user seek whose request fails goes on with the
-old connection as it is, as upstream intended.
+when the new request fails, if the old response announced its size: then
+the cut body stays short whatever the failed reply said, the loop tries
+again as reconnect_delay_max allows, and returns AVERROR(EIO), which mpv
+reports as a read error (patch_read_error.py). A user seek whose request
+fails goes on with the old connection as it is, as upstream intended.
+
+A response of unknown size (no Content-Length) ends where its connection
+closes, and no cut can be told from its end: http.c reads every such end as
+premature, and on a server with Range support its reconnect past the end
+gets 416, whose reply then ends the file. That stays as upstream has it;
+putting the state back there would retry a complete body for seconds and
+end it with EIO.
 
 Applied with patch_ffmpeg_segment_skips.py under the read_error toggle,
 the FFmpeg side of patch_read_error.py: with the toggle off the build keeps
@@ -76,16 +83,18 @@ RESTORE = (
 RESTORE_NEW = (
     '        s->hd      = old_hd;\n'
     '        s->off     = old_off;\n'
-    '        /* ' + MARKER + ' */\n'
-    '        s->filesize         = old_filesize;\n'
-    '        s->chunksize        = old_chunksize;\n'
-    '        s->icy_data_read    = old_icy_data_read;\n'
-    '        s->willclose        = old_willclose;\n'
-    '        s->end_header       = old_end_header;\n'
-    '        s->end_chunked_post = old_end_chunked_post;\n'
+    '        /* ' + MARKER + ': only a body of known size can be cut short. */\n'
+    '        if (old_filesize != UINT64_MAX) {\n'
+    '            s->filesize         = old_filesize;\n'
+    '            s->chunksize        = old_chunksize;\n'
+    '            s->icy_data_read    = old_icy_data_read;\n'
+    '            s->willclose        = old_willclose;\n'
+    '            s->end_header       = old_end_header;\n'
+    '            s->end_chunked_post = old_end_chunked_post;\n'
     '#if CONFIG_ZLIB\n'
-    '        s->compressed       = old_compressed;\n'
+    '            s->compressed       = old_compressed;\n'
     '#endif\n'
+    '        }\n'
     '        return ret;\n'
 )
 

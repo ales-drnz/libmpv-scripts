@@ -21,7 +21,11 @@ with Content-Length 0 (a download cut short for good). The options:
                   is refused (the network is gone)
   norange         no Accept-Ranges, and a Range header is ignored (200 with
                   the whole file); cut stops every response
-  nolength        no Content-Length: the body ends when the connection closes
+  nolength        the size is never told: no Content-Length, the body ends
+                  when the connection closes, a range from 0 gets 200 and a
+                  range past the end 416 without Content-Range
+
+A range that starts at or past the end of the file gets 416.
   missing=<name>  that file answers 404
   cutfile=<name>  every response for that file stops at half of it
 """
@@ -52,8 +56,17 @@ class H(http.server.BaseHTTPRequestHandler):
         size = os.path.getsize(p)
         start, end = 0, size - 1
         m = None if NORANGE else re.match(r'bytes=(\d+)-(\d*)', self.headers.get('Range', ''))
+        if m and NOLENGTH and int(m.group(1)) == 0:
+            m = None
         if m:
             start = int(m.group(1)); end = int(m.group(2)) if m.group(2) else size - 1
+        if m and start >= size:
+            sys.stderr.write(f'GET {self.path} range={start}- 416\n')
+            self.send_response(416)
+            if not NOLENGTH:
+                self.send_header('Content-Range', f'bytes */{size}')
+            self.send_header('Content-Length', '0'); self.end_headers()
+            return
         if CUT and cut_done and start == CUT and not RESUME:
             sys.stderr.write(f'GET {self.path} range={start}- {"dropped" if DROP else "refused"}\n')
             if DROP:
@@ -66,7 +79,8 @@ class H(http.server.BaseHTTPRequestHandler):
         if CUT and (NORANGE or not cut_done):
             stop = CUT
         if m:
-            self.send_response(206); self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+            self.send_response(206)
+            self.send_header('Content-Range', f'bytes {start}-{end}/{"*" if NOLENGTH else size}')
         else:
             self.send_response(200)
         if not NOLENGTH:

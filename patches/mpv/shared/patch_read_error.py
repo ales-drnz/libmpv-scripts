@@ -46,6 +46,13 @@ same end, the same playlist advance, the same keep-open park.
     demuxer-read-error property. The node form of the event (scripts,
     JSON IPC) gets read_error and skipped_segments.
 
+Limits. A response with neither Content-Length nor chunked encoding ends
+where its connection closes, and no cut can be told from that end: from a
+server without Range support http.c reads it as premature (EIO), so such a
+file ends with demuxer-read-error yes even when whole, as an internet radio
+that stops should. A local file (stream_file.c) and the files of a
+timeline (EDL, CUE with files of their own) report no read error.
+
 The C of the properties is in read_error/read_error_command_insert.c, the
 fields of client.h in read_error/end_file_fields_insert.h.
 
