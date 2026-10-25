@@ -811,6 +811,11 @@ apply_mpv_patches_common() {
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"
   _mpv_patch chapter_list_reset patch_chapter_list_reset.py "$mpv_dir"
+  # read_error: the demuxer-read-error and demuxer-skipped-segments
+  # properties and the END_FILE fields that tell a file cut short by a read
+  # error from one that ended. The segment count comes from the FFmpeg side
+  # of the same toggle (apply_ffmpeg_patches), and stays 0 without it.
+  _mpv_patch read_error         patch_read_error.py         "$mpv_dir"
   # NOTE: the `timer_resolution` patch is Windows-only (it edits the
   # win32-only osdep/timer-win32.c), so it lives in patches/mpv/windows/ and
   # is applied — still toggleable via `patch_on timer_resolution` — inline in
