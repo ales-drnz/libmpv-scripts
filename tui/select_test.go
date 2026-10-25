@@ -23,7 +23,7 @@ func TestAvailabilityByHost(t *testing.T) {
 	}
 
 	hostOS = "windows"
-	for _, k := range []string{"macos", "ios", "manifest"} { // Apple + bash scripts are off-limits
+	for _, k := range []string{"macos", "ios", "manifest", "web"} { // Apple + bash scripts are off-limits
 		if get(k).Available() {
 			t.Errorf("%s must be unavailable on Windows", k)
 		}
@@ -39,14 +39,14 @@ func TestAvailabilityByHost(t *testing.T) {
 	if get("macos").Available() || get("ios").Available() {
 		t.Error("Apple targets must be unavailable on Linux")
 	}
-	for _, k := range []string{"android", "manifest", "windows-x86_64", "linux-x86_64", "verify"} {
+	for _, k := range []string{"android", "manifest", "windows-x86_64", "linux-x86_64", "verify", "web"} {
 		if !get(k).Available() {
 			t.Errorf("%s should be available on Linux", k)
 		}
 	}
 
 	hostOS = "darwin"
-	for _, k := range []string{"macos", "ios", "android", "manifest", "windows-x86_64", "linux-x86_64", "verify"} {
+	for _, k := range []string{"macos", "ios", "android", "manifest", "windows-x86_64", "linux-x86_64", "verify", "web"} {
 		if !get(k).Available() {
 			t.Errorf("%s should be available on macOS", k)
 		}
