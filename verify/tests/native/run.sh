@@ -90,6 +90,7 @@ CASES=(
   "unit pcm_tap_idle_test - - idle slow pause quiet"
   "lib pcm_loop_test playback - file late ab next abnext off"
   "lib chapter_list_test playback - meta index observe kit same"
+  "lib af_command_args_test playback - prop seek track extern reload next keep rollback order fail labels bridge"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
