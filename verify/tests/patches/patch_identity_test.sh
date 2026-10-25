@@ -102,10 +102,10 @@ CASE_LIST=(
 for t in strip_swscale strip_libass afmt_reset prefetch \
          audio_output_state embedded_cover_art pcm_tap bulk_analysis loudness_scan \
          filter_label_tap chain_eof lavfi_eof_passthrough hotplug_core_thread \
-         playlist_prev_dos_path chapter_list_reset; do
+         playlist_prev_dos_path chapter_list_reset read_error; do
   CASE_LIST+=("no-$t linux $t")
 done
-for t in libsmb2 advanced_editlist dash_keepalive embed_cacert; do
+for t in libsmb2 advanced_editlist dash_keepalive read_error embed_cacert; do
   CASE_LIST+=("no-$t ffmpeg $t")
 done
 

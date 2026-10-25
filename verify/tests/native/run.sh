@@ -110,6 +110,7 @@ PATCH_TESTS=(
   "embed_cacert_patch_test {ffmpeg}"
   "filter_bounds_anchor_test {ffmpeg}"
   "dash_keepalive_patch_test {ffmpeg}"
+  "read_error_patch_test {ffmpeg}"
   "anchor_corrupt_test {mpv} {ffmpeg}"
 )
 AUDIOTRACK_PATCH="$ROOT/patches/mpv/android/patch_audiotrack.py"

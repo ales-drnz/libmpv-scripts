@@ -639,7 +639,7 @@ verify_mpv_config() {
   ok "mpv config audit passed ($platform)"
 }
 
-# ── ffmpeg patch application (6 patches, identical on every platform) ───────
+# ── ffmpeg patch application (8 patches, identical on every platform) ───────
 # Usage: apply_ffmpeg_patches <ffmpeg_source_dir>
 # Requires SCRIPT_DIR to be set to the directory containing this file.
 apply_ffmpeg_patches() {
@@ -690,6 +690,21 @@ apply_ffmpeg_patches() {
     record_patch dash_keepalive
   else
     warn "Skipping disabled patch: dash_keepalive"
+  fi
+
+  # The FFmpeg side of read_error, one toggle with the mpv side: a reconnect
+  # that gets an error reply keeps the size of the body it resumes, so a cut
+  # body ends with EIO and not as a complete file (http.c), and the HLS and
+  # DASH demuxers count the segments they lose in the read-only
+  # skipped_segments option mpv reads. After dash_keepalive, whose anchors
+  # in dashdec.c it leaves alone.
+  if patch_on read_error; then
+    log "Patching FFmpeg http, HLS and DASH to report read errors..."
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_http_reconnect.py" "$ffmpeg_dir"
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_segment_skips.py" "$ffmpeg_dir"
+    record_patch read_error
+  else
+    warn "Skipping disabled patch: read_error (FFmpeg side)"
   fi
 
   # Embedded CA bundle: compile the Mozilla root store into the OpenSSL TLS
@@ -813,8 +828,9 @@ apply_mpv_patches_common() {
   _mpv_patch chapter_list_reset patch_chapter_list_reset.py "$mpv_dir"
   # read_error: the demuxer-read-error and demuxer-skipped-segments
   # properties and the END_FILE fields that tell a file cut short by a read
-  # error from one that ended. The segment count comes from the FFmpeg side
-  # of the same toggle (apply_ffmpeg_patches), and stays 0 without it.
+  # error from one that ended. The FFmpeg side of the same toggle
+  # (apply_ffmpeg_patches) fixes the EIO of http.c and counts the segments;
+  # without it the count stays 0.
   _mpv_patch read_error         patch_read_error.py         "$mpv_dir"
   # NOTE: the `timer_resolution` patch is Windows-only (it edits the
   # win32-only osdep/timer-win32.c), so it lives in patches/mpv/windows/ and
