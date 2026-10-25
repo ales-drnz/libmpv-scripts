@@ -110,6 +110,7 @@ typedef struct WebioStream {
     int broken;               /* the body broke off (WEBIO_END_BROKEN) */
     int closed;
     int started;              /* a task went to the net thread */
+    uint32_t taken;           /* the generation the net thread last started */
     int64_t req_off;          /* offset of the first byte of the request */
     int64_t data_at;          /* av_gettime_relative() of the last data */
     double ms_headers;        /* fetch to answer, measured by the net thread */
@@ -271,6 +272,7 @@ static void task_start(void *arg)
     uint32_t gen = s->gen;
     double off = (double)s->req_off;
     int stale = s->closed;
+    s->taken = gen;
     pthread_mutex_unlock(&s->lock);
     if (!stale)
         mak_webio_js_start(s, gen, s->url, s->headers, off,
@@ -509,14 +511,20 @@ static int wait_answer(URLContext *h, WebioContext *c)
         if (ff_check_interrupt(&h->interrupt_callback))
             return AVERROR_EXIT;
         if (av_gettime_relative() > deadline) {
-            av_log(h, AV_LOG_ERROR, "webio: no answer within %.1f s\n",
-                   c->timeout / 1e6);
+            pthread_mutex_lock(&s->lock);
+            int taken = s->taken == s->gen;
+            pthread_mutex_unlock(&s->lock);
+            av_log(h, AV_LOG_ERROR, "webio: no answer within %.1f s (%s)\n",
+                   c->timeout / 1e6, taken ? "the fetch is pending"
+                                           : "the net thread has not taken the request");
             return AVERROR(ETIMEDOUT);
         }
         pthread_mutex_lock(&s->lock);
     }
     log_note(h, c, s);
-    if (s->state == WEBIO_ERROR) {
+    /* A body that broke off right after the answer is not a failed request:
+     * the reads ask again from the break, or return the error. */
+    if (s->state == WEBIO_ERROR && !s->broken) {
         log_error(h, c, s);
         ret = s->error;
     }
