@@ -70,19 +70,44 @@ struct mak_end_file {
 // mode); -1 stands in for nothing.
 static int64_t stand_in = -1;
 
+// Whether obj, an AVFormatContext, has an HLS demuxer: one of its child
+// objects has FFmpeg's "hls demuxer" class. By class name, which every
+// FFmpeg has, not by one of its options, which the FFmpeg 6.1 of the CI
+// runner did not find (Build 40213197005).
+static int is_hls(void *obj)
+{
+    // Through dlsym, like av_opt_get_int: the test links libmpv only.
+    static void *(*child_next)(void *, void *);
+    if (!child_next)
+        child_next = (void *(*)(void *, void *))dlsym(RTLD_DEFAULT, "av_opt_child_next");
+    if (!child_next)
+        return 0;
+    for (void *c = NULL; (c = child_next(obj, c));) {
+        const AVClass *cls = *(const AVClass **)c;
+        if (cls && cls->class_name && strstr(cls->class_name, "hls"))
+            return 1;
+    }
+    return 0;
+}
+
 int av_opt_get_int(void *obj, const char *name, int search_flags, int64_t *out_val)
 {
     static int (*real)(void *, const char *, int, int64_t *);
+    static int told;
     if (!real)
         real = (int (*)(void *, const char *, int, int64_t *))dlsym(RTLD_NEXT, "av_opt_get_int");
     int r = real(obj, name, search_flags, out_val);
-    int64_t v;
     if (r == AVERROR_OPTION_NOT_FOUND && stand_in >= 0 &&
-        !strcmp(name, "skipped_segments") &&
-        real(obj, "m3u8_hold_counters", search_flags, &v) >= 0)
+        !strcmp(name, "skipped_segments"))
     {
-        *out_val = stand_in;
-        return 0;
+        int hls = is_hls(obj);
+        if (!told++)
+            printf("stand-in for skipped_segments: %s\n",
+                   hls ? "an HLS demuxer" : "no HLS demuxer");
+        if (hls) {
+            *out_val = stand_in;
+            return 0;
+        }
     }
     return r;
 }
