@@ -8,13 +8,16 @@
 Every response carries COOP same-origin and COEP require-corp (what Safari
 needs; Chrome and Firefox take credentialless too), so SharedArrayBuffer and
 the pthread workers are available. The page POSTs its JSON result to
-/result; the server writes it to --result and exits.
+/result; the server writes it to --result and exits. A POST to
+/signal?name=<name> creates <result>.<name> for the runner (a user gesture
+to make, a CPU sample to take).
 
     python3 -I serve_coi.py --root <dir> --port 8123 --result <file>
 """
 import argparse
 import functools
 import http.server
+import re
 import threading
 
 
@@ -34,6 +37,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_POST(self):
+        if self.path.startswith('/signal?name='):
+            name = self.path.split('=', 1)[1]
+            if not re.fullmatch(r'[a-z0-9-]{1,32}', name):
+                self.send_error(400)
+                return
+            open(f'{self.server.result_path}.{name}', 'w').close()
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path != '/result':
             self.send_error(404)
             return
