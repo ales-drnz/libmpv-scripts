@@ -634,6 +634,10 @@ verify_mpv_config() {
     windows)
       assert_define "$cfg" "HAVE_WASAPI" "1"
       ;;
+    web)
+      # patch_ao_webaudio.py and -Dwebaudio=enabled: the only output there.
+      assert_define "$cfg" "HAVE_WEBAUDIO" "1"
+      ;;
   esac
 
   ok "mpv config audit passed ($platform)"

@@ -8,6 +8,10 @@
        mode=spike   the C harness (spike/spike.mjs), main on a pthread
        mode=lib     lib_harness.mjs on the module (lib/libmpv.mjs), from the
                     main thread
+       mode=audio   audio_harness.mjs: mpv's webaudio output on the module;
+                    ao=null for the real-time ao=null run, gesture=1 when the
+                    AudioContext waits for a user gesture (resume=0: the glue
+                    does not resume on it)
        files=a,b    fixtures/ names; longs=c,d the timed files (spike only)
        loops=N      core create and destroy cycles (spike only)
        busy=1       keeps the main thread busy 50 ms every 100 ms
@@ -42,7 +46,19 @@ if (q.get('busy') === '1') {
 const fetchBytes = async (name) => new Uint8Array(await (await fetch(`fixtures/${name}`)).arrayBuffer());
 
 try {
-  if (mode === 'lib') {
+  if (mode === 'audio') {
+    const { runAudioHarness } = await import('./audio_harness.mjs');
+    const { default: factory } = await import('./lib/libmpv.mjs');
+    const inputs = {};
+    for (const f of files) inputs[f] = await fetchBytes(f);
+    // The runner acts on a signal (a user gesture, the CPU samples).
+    const signal = async (name) => { await fetch(`/signal?name=${name}`, { method: 'POST' }); };
+    const r = await runAudioHarness(factory, inputs, log,
+      { ao: q.get('ao') || 'webaudio', gesture: q.get('gesture') === '1', signal,
+        resumeOnGesture: q.get('resume') !== '0',
+        slowProcessorUrl: new URL('lib/mak_webaudio_processor.js?delay=400', location.href).href });
+    await post({ code: r.fail ? 1 : 0, busyTicks, measures: r.measures });
+  } else if (mode === 'lib') {
     const { runLibHarness } = await import('./lib_harness.mjs');
     const { default: factory } = await import('./lib/libmpv.mjs');
     const inputs = [];
