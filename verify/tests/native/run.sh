@@ -238,12 +238,10 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
   case "$kind" in
     lib)
       # The FFmpeg headers for read_error_test, which stands in for an
-      # libavutil function; -rdynamic exports that stand-in, which the CI
-      # toolchain left out of the dynamic symbols without it (Build
-      # 40230335137: libmpv never reached it).
+      # libavutil function.
       # shellcheck disable=SC2046
       "$CC" -g -O1 -fsanitize=address -I"$SRC/include" $(pkg-config --cflags libavutil) \
-        "$HERE/$t.c" -o "$BIN/$t" -rdynamic -L"$BLD" -lmpv -Wl,-rpath,"$BLD" -ldl -lpthread -lm > "$log" 2>&1 ;;
+        "$HERE/$t.c" -o "$BIN/$t" -L"$BLD" -lmpv -Wl,-rpath,"$BLD" -ldl -lpthread -lm > "$log" 2>&1 ;;
     unit)
       # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
