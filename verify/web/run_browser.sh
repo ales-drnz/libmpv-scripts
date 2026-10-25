@@ -23,7 +23,8 @@
 # CPU time of the browser's processes (proc_cpu.py).
 #
 # CHROME=<binary> picks the Chrome (default: chrome-headless-shell of Chrome
-# for Testing on PATH). TIMEOUT=<s> (default 300).
+# for Testing on PATH; a full Chrome runs with --headless=new). TIMEOUT=<s>
+# (default 300).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -86,6 +87,9 @@ EOF
     [[ -x "$chrome" ]] || { echo "no Chrome: set CHROME" >&2; exit 2; }
     flags=(--disable-audio-output)
     [[ "$autoplay" == 1 ]] && flags+=(--autoplay-policy=no-user-gesture-required)
+    # chrome-headless-shell is headless by itself; a full Chrome, such as
+    # the CI runner's google-chrome, needs the flag.
+    [[ "$(basename "$chrome")" == chrome-headless-shell ]] || flags+=(--headless=new)
     "$chrome" --user-data-dir="$profile" --no-first-run --disable-gpu \
       --remote-debugging-port=0 "${flags[@]}" "$url" >"$build/browser.log" 2>&1 &
     bpid=$!
