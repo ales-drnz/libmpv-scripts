@@ -24,12 +24,15 @@
 #             3600 s later, gaplate.ogg in Vorbis starting at 100 s
 #   over.aac  ADTS AAC, 3 s of silence then pink noise, 40 s, whose
 #             estimated duration overshoots
-# playback/ (pcm_*, chapter_list_test): constant (DC) files, 3 s each, so a
-# sample tells which file it came from
+# playback/ (pcm_*, chapter_list_test, af_command_args_test): constant (DC)
+# files, so a sample tells which file it came from, 3 s each unless said
 #   p_st48.flac   +0.25, stereo, 48 kHz     p_mono48.flac +0.25, mono, 48 kHz
 #   n_st48.flac   -0.5,  stereo, 48 kHz     n_mono48.flac -0.5,  mono, 48 kHz
 #   n_st44.flac   -0.5,  stereo, 44.1 kHz
 #   pn_st48.flac  +0.25 for 2 s then -0.5 for 4 s, stereo, 48 kHz
+#   dc20.flac     +0.25, 20 s, stereo, 48 kHz
+#   dcm20.flac    -0.25, 20 s, stereo, 48 kHz
+#   dc2.mka       dc20.flac then dcm20.flac as two audio tracks
 #   sine60.flac   60 s sine, stereo, 48 kHz
 #
 # Usage: bash verify/tests/native/fixtures.sh <dir>
@@ -86,4 +89,7 @@ dc n_st48.flac "-0.5|-0.5" 48000 3
 dc n_mono48.flac "-0.5" 48000 3
 dc n_st44.flac "-0.5|-0.5" 44100 3
 dc pn_st48.flac "if(lt(t\,2)\,0.25\,-0.5)|if(lt(t\,2)\,0.25\,-0.5)" 48000 6
+dc dc20.flac "0.25|0.25" 48000 20
+dc dcm20.flac "-0.25|-0.25" 48000 20
+[[ -f "$d/dc2.mka" ]] || ff -i "$d/dc20.flac" -i "$d/dcm20.flac" -map 0 -map 1 -c copy "$d/dc2.mka"
 [[ -f "$d/sine60.flac" ]] || ff -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=60" -ac 2 -c:a flac "$d/sine60.flac"

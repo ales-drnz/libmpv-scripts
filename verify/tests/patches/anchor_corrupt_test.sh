@@ -97,7 +97,7 @@ SHARED = [
     'patch_loudness_scan.py', 'patch_filter_label_tap.py',
     'patch_chain_eof.py', 'patch_lavfi_eof_passthrough.py',
     'patch_hotplug_core_thread.py', 'patch_playlist_prev_dos_path.py',
-    'patch_chapter_list_reset.py',
+    'patch_chapter_list_reset.py', 'patch_af_command_args.py',
 ]
 audio_only = (ROOT / 'scripts/shared/_audio_only.sh').read_text()
 body = re.search(r'^apply_mpv_patches_common\(\) \{\n(.*?)^\}', audio_only,

@@ -10,11 +10,11 @@
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
-#   3.  Patched mpv properties present (all 14: prefetch-state,
+#   3.  Patched mpv properties present (all 15: prefetch-state,
 #       -cache-duration, -open-filename and -playlist-entry-id,
 #       audio-output-state, embedded-cover-art-data/mime,
 #       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data/-enabled,
-#       loudness-scan-data/-enabled)
+#       loudness-scan-data/-enabled, af-command-saves-args)
 #   4.  FFmpeg patches present (libsmb2 protocol, mov advanced_editlist,
 #       filter bounds)
 #   5.  Required audio decoder whitelist sample present
@@ -168,6 +168,7 @@ EXPECTED_FORMATS=(
 #   filter_label_tap  : audio-tap-frames, analyzer-taps
 #   bulk_analysis     : waveform-data, waveform-enabled
 #   loudness_scan     : loudness-scan-data, loudness-scan-enabled
+#   af_command_args   : af-command-saves-args
 MPV_PATCHED_PROPS=(
   prefetch-state prefetch-cache-duration
   prefetch-open-filename prefetch-playlist-entry-id
@@ -177,6 +178,7 @@ MPV_PATCHED_PROPS=(
   audio-tap-frames analyzer-taps
   waveform-data waveform-enabled
   loudness-scan-data loudness-scan-enabled
+  af-command-saves-args
 )
 
 FFMPEG_PATCH_MARKERS=(
