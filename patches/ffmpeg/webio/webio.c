@@ -83,6 +83,8 @@ enum { WEBIO_CONNECTING, WEBIO_OPEN, WEBIO_EOF, WEBIO_ERROR };
 #define WEBIO_READ_WAIT_MS 100
 /* The poll of the open and of a seek, between two interrupt checks. */
 #define WEBIO_OPEN_WAIT_MS 50
+/* Requests again from the break before a broken body fails the read. */
+#define WEBIO_RECONNECTS 3
 
 typedef struct IcyPacket {
     int64_t at;               /* the stream offset it belongs to */
@@ -105,6 +107,7 @@ typedef struct WebioStream {
     int64_t size;             /* -1 when unknown */
     int seekable;
     int want_space;           /* the net thread waits for room */
+    int broken;               /* the body broke off (WEBIO_END_BROKEN) */
     int closed;
     int started;              /* a task went to the net thread */
     int64_t req_off;          /* offset of the first byte of the request */
@@ -125,6 +128,7 @@ typedef struct WebioContext {
     int64_t pos;              /* the offset the next read returns */
     int64_t t_open;
     int first_logged, error_logged, note_logged;
+    int reconnects;           /* in a row, without data in between */
     /* options */
     char *user_agent, *headers, *referer, *cookies;
     int icy, icy_cross_origin;
@@ -134,6 +138,7 @@ typedef struct WebioContext {
     int seekable;
     int64_t off, end_off;
     int buffer_size;
+    int reconnect;
 } WebioContext;
 
 /* The JS side (scripts/web/mak_webio.js), on the net thread. */
@@ -413,6 +418,7 @@ EMSCRIPTEN_KEEPALIVE void mak_webio_end(WebioStream *s, uint32_t gen,
     default:
         s->error = AVERROR(EIO);
         s->state = WEBIO_ERROR;
+        s->broken = kind == WEBIO_END_BROKEN;
         break;
     }
     if (msg) {
@@ -467,15 +473,19 @@ static void stream_close(WebioStream *s)
         av_log(NULL, AV_LOG_ERROR, "webio: the net thread is gone, a stream leaks\n");
 }
 
-/* Logs what the net thread left for the reader: a warning once per stream,
- * the error once. Lock held. */
-static void log_notes(URLContext *h, WebioContext *c, WebioStream *s)
+/* What the net thread left for the reader, logged once: its warnings, and
+ * the error when the reader returns it. Lock held. */
+static void log_note(URLContext *h, WebioContext *c, WebioStream *s)
 {
     if (s->note && !c->note_logged) {
         c->note_logged = 1;
         av_log(h, AV_LOG_WARNING, "%s\n", s->note);
     }
-    if (s->state == WEBIO_ERROR && s->errmsg && !c->error_logged) {
+}
+
+static void log_error(URLContext *h, WebioContext *c, WebioStream *s)
+{
+    if (s->errmsg && !c->error_logged) {
         c->error_logged = 1;
         av_log(h, AV_LOG_ERROR, "%s\n", s->errmsg);
     }
@@ -505,9 +515,11 @@ static int wait_answer(URLContext *h, WebioContext *c)
         }
         pthread_mutex_lock(&s->lock);
     }
-    log_notes(h, c, s);
-    if (s->state == WEBIO_ERROR)
+    log_note(h, c, s);
+    if (s->state == WEBIO_ERROR) {
+        log_error(h, c, s);
         ret = s->error;
+    }
     pthread_mutex_unlock(&s->lock);
     return ret;
 }
@@ -624,11 +636,50 @@ static void icy_apply(WebioContext *c, WebioStream *s)
     }
 }
 
+/* A new request from target: a new generation, an empty ring. Lock not
+ * held. Returns target or an error. */
+static int64_t restart(URLContext *h, WebioContext *c, int64_t target)
+{
+    WebioStream *s = c->s;
+    pthread_mutex_lock(&s->lock);
+    s->gen++;
+    s->rpos = s->wpos = 0;
+    s->want_space = 0;
+    s->broken = 0;
+    s->req_off = target;
+    icy_clear(s);
+    c->pos = target;
+    c->error_logged = 0;
+    if (s->size >= 0 && target >= s->size) {
+        /* At or past the end: nothing to ask for. */
+        s->state = WEBIO_EOF;
+        pthread_mutex_unlock(&s->lock);
+        return target;
+    }
+    s->state = WEBIO_CONNECTING;
+    pthread_mutex_unlock(&s->lock);
+
+    int ret = request(h, c);
+    if (ret < 0) {
+        pthread_mutex_lock(&s->lock);
+        if (s->state == WEBIO_CONNECTING) {
+            /* Interrupted or timed out: the answer that comes later is
+             * stale, and the reads fail like the request did. */
+            s->gen++;
+            s->error = ret;
+            s->state = WEBIO_ERROR;
+        }
+        pthread_mutex_unlock(&s->lock);
+        return ret;
+    }
+    return target;
+}
+
 static int webio_read(URLContext *h, unsigned char *buf, int size)
 {
     WebioContext *c = h->priv_data;
     WebioStream *s = c->s;
-    int n, wake = 0;
+    int n, wake = 0, again = 0;
 
     pthread_mutex_lock(&s->lock);
     uint32_t avail = s->wpos - s->rpos;
@@ -654,6 +705,10 @@ static int webio_read(URLContext *h, unsigned char *buf, int size)
     } else if (s->state == WEBIO_EOF) {
         n = AVERROR_EOF;
     } else if (s->state == WEBIO_ERROR) {
+        /* A seekable body that broke off: ask again from the break, as
+         * http.c does with reconnect (mpv sets it). */
+        again = s->broken && s->seekable && c->seekable && c->reconnect &&
+                c->reconnects < WEBIO_RECONNECTS;
         n = s->error;
     } else if (c->timeout > 0 &&
                av_gettime_relative() - s->data_at > c->timeout) {
@@ -662,9 +717,21 @@ static int webio_read(URLContext *h, unsigned char *buf, int size)
     } else {
         n = AVERROR(EAGAIN);
     }
-    log_notes(h, c, s);
+    log_note(h, c, s);
+    if (again)
+        av_log(h, AV_LOG_WARNING, "%s; asked again from byte %"PRId64"\n",
+               s->errmsg ? s->errmsg : "webio: the connection broke", c->pos);
+    else if (n < 0 && s->state == WEBIO_ERROR)
+        log_error(h, c, s);
     pthread_mutex_unlock(&s->lock);
 
+    if (again) {
+        c->reconnects++;
+        int64_t r = restart(h, c, c->pos);
+        return r < 0 ? (int)r : AVERROR(EAGAIN);
+    }
+    if (n > 0)
+        c->reconnects = 0;
     if (wake)
         net_send(task_space, s);
     if (n > 0 && !c->first_logged) {
@@ -724,40 +791,10 @@ static int64_t webio_seek(URLContext *h, int64_t pos, int whence)
             net_send(task_space, s);
         return target;
     }
-    if (!seekable) {
-        pthread_mutex_unlock(&s->lock);
-        return AVERROR(ENOSYS);
-    }
-    s->gen++;
-    s->rpos = s->wpos = 0;
-    s->want_space = 0;
-    s->req_off = target;
-    icy_clear(s);
-    c->pos = target;
-    c->error_logged = 0;
-    if (size >= 0 && target >= size) {
-        /* At or past the end: nothing to ask for. */
-        s->state = WEBIO_EOF;
-        pthread_mutex_unlock(&s->lock);
-        return target;
-    }
-    s->state = WEBIO_CONNECTING;
     pthread_mutex_unlock(&s->lock);
-
-    int ret = request(h, c);
-    if (ret < 0) {
-        pthread_mutex_lock(&s->lock);
-        if (s->state == WEBIO_CONNECTING) {
-            /* Interrupted or timed out: the answer that comes later is
-             * stale, and the reads fail like the seek did. */
-            s->gen++;
-            s->error = ret;
-            s->state = WEBIO_ERROR;
-        }
-        pthread_mutex_unlock(&s->lock);
-        return ret;
-    }
-    return target;
+    if (!seekable)
+        return AVERROR(ENOSYS);
+    return restart(h, c, target);
 }
 
 static int webio_close(URLContext *h)
@@ -788,6 +825,7 @@ static const AVOption webio_options[] = {
     { "timeout", "no answer or no data for this long fails the read, in microseconds", OFFSET(timeout), AV_OPT_TYPE_INT64, { .i64 = -1 }, -1, INT64_MAX, D },
     { "offset", "initial byte offset", OFFSET(off), AV_OPT_TYPE_INT64, { .i64 = 0 }, 0, INT64_MAX, D },
     { "end_offset", "try to limit the request to bytes preceding this offset", OFFSET(end_off), AV_OPT_TYPE_INT64, { .i64 = 0 }, 0, INT64_MAX, D },
+    { "reconnect", "ask again from the break when a seekable body breaks off", OFFSET(reconnect), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, D },
     { "webio_buffer", "read-ahead ring of each stream, in bytes", OFFSET(buffer_size), AV_OPT_TYPE_INT, { .i64 = 1 << 20 }, 1 << 16, 1 << 26, D },
     { NULL }
 };

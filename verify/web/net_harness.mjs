@@ -160,12 +160,14 @@ export async function runNetHarness(factory, env, log) {
     check(l.ok, 'reconnect.loaded');
     const e = await l.ended;
     check(e && e.reason === END.EOF, 'reconnect.eof', `reason ${e && e.reason}`);
+    // From the last byte the reader got: Chrome hands over less than the
+    // server sent before it reports the break, at times nothing.
     const size = (await env.fixture('long_60s.flac')).length;
     const es = await tagged('drop');
-    check(es.length === 2 && es[0].dropped && rangeStart(es[1]) === 600000 && es[1].bytes === size - 600000,
+    const from = es.length === 2 ? rangeStart(es[1]) : -1;
+    check(es.length === 2 && es[0].dropped && from >= 0 && from <= 600000 && es[1].bytes === size - from,
       'reconnect.rest_of_file_from_the_break', JSON.stringify(es.map((x) => [x.range, x.bytes, !!x.dropped])));
-    check(logs(core, /connection broke/).filter((x) => /error/.test(x)).length === 0, 'reconnect.no_error',
-      logs(core, /webio/).slice(-3).join(' | '));
+    check(logs(core, /\] error: /).length === 0, 'reconnect.no_error', logs(core, /webio/).slice(-3).join(' | '));
   }, { extra: { cache: 'no' } });
 
   // ── server without Range ─────────────────────────────────────────────
