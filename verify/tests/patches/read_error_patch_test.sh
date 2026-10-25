@@ -4,7 +4,7 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 # Checks the FFmpeg side of read_error on pristine FFmpeg:
-# patch_ffmpeg_http_reconnect.py and patch_ffmpeg_segment_skips.py apply, on
+# patch_ffmpeg_http_read_errors.py and patch_ffmpeg_segment_skips.py apply, on
 # their own and after patch_ffmpeg_dash_keepalive.py as the build runs them,
 # and a second run changes nothing; and the option the HLS and DASH
 # demuxers export is the one patch_read_error.py reads, in both demuxers.
@@ -24,7 +24,7 @@ export PYTHONDONTWRITEBYTECODE=1
 fails=0
 check() { if [[ "$1" == 0 ]]; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails + 1)); fi; }
 tree() { mkdir -p "$T/$1/libavformat"; for f in $FILES; do cp "$REF/libavformat/$f" "$T/$1/libavformat/"; done; }
-apply() { python3 "$P/patch_ffmpeg_http_reconnect.py" "$1" && python3 "$P/patch_ffmpeg_segment_skips.py" "$1"; }
+apply() { python3 "$P/patch_ffmpeg_http_read_errors.py" "$1" && python3 "$P/patch_ffmpeg_segment_skips.py" "$1"; }
 
 for side in alone keepalive; do
   tree "$side"
@@ -34,7 +34,7 @@ for side in alone keepalive; do
   fi
   apply "$T/$side" > "$T/$side.log" 2>&1; check $? "$side: the patches apply"
   for f in $FILES; do
-    case "$f" in http.c) m=MAK_HTTP_RECONNECT_V1 ;; *) m=MAK_SEGMENT_SKIPS_V1 ;; esac
+    case "$f" in http.c) m=MAK_HTTP_READ_ERRORS_V1 ;; *) m=MAK_SEGMENT_SKIPS_V1 ;; esac
     grep -q "$m" "$T/$side/libavformat/$f"; check $? "$side: $f carries $m"
   done
   cp -a "$T/$side" "$T/$side.before"

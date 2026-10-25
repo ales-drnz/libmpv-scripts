@@ -36,7 +36,7 @@ before they were read (a client that fell behind, not an error).
 The count only grows: a seek does not reset it. It is per AVFormatContext,
 so per file in mpv.
 
-Applied with patch_ffmpeg_http_reconnect.py under the read_error toggle,
+Applied with patch_ffmpeg_http_read_errors.py under the read_error toggle,
 after patch_ffmpeg_dash_keepalive.py, whose anchors in dashdec.c it leaves
 alone; it also applies on a dashdec.c without it.
 

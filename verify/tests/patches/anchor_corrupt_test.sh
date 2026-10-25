@@ -136,13 +136,13 @@ BUILDS = {
     'ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', True) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
         'patch_ffmpeg_libsmb2.py', 'patch_ffmpeg_advanced_editlist.py',
-        'patch_ffmpeg_dash_keepalive.py', 'patch_ffmpeg_http_reconnect.py',
+        'patch_ffmpeg_dash_keepalive.py', 'patch_ffmpeg_http_read_errors.py',
         'patch_ffmpeg_segment_skips.py', 'patch_ffmpeg_embed_cacert.py')]),
     # The web build: no libsmb2 and no embed_cacert, then webio.
     'web-ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', False) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
         'patch_ffmpeg_advanced_editlist.py', 'patch_ffmpeg_dash_keepalive.py',
-        'patch_ffmpeg_http_reconnect.py', 'patch_ffmpeg_segment_skips.py')]
+        'patch_ffmpeg_http_read_errors.py', 'patch_ffmpeg_segment_skips.py')]
         + [('ffmpeg/patch_ffmpeg_webio.py', True)]),
 }
 

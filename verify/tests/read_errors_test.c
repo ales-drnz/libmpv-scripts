@@ -8,7 +8,7 @@
 //   http-refused  data.bin (466574 bytes) cut at half, the resume answered
 //                 503 with Content-Length 0. With reconnect=1 and
 //                 reconnect_delay_max=1 (mpv uses 7) the reads end with
-//                 EIO after the retries (patch_ffmpeg_http_reconnect.py);
+//                 EIO after the retries (patch_ffmpeg_http_read_errors.py);
 //                 upstream ends them with AVERROR_EOF, as a complete file.
 //   http-resume   the same cut, the resume served: every byte, then
 //                 AVERROR_EOF (control).
@@ -22,6 +22,16 @@
 //                 no reconnect, and http.c ends even the whole body with
 //                 EIO. An end of unknown place cannot be told from a cut:
 //                 the known limit, also upstream.
+//   chunked-ok    data.bin as a live chunked stream (no Range support),
+//                 closed by its last chunk: every byte, then AVERROR_EOF.
+//   chunked-between  the same stream closed between two chunks, at the
+//                 last boundary before 233287: EIO with the 14 chunks read
+//                 (upstream: AVERROR_EOF, http_get_line() at the close).
+//   chunked-mid   closed at 233287 inside a chunk, with Connection: close:
+//                 EIO (upstream: an empty read, AVERROR_EOF, no log).
+//                 In the three the bytes are those sent once: no reconnect
+//                 starts the stream again (reconnect_streamed is off), and
+//                 network_test.sh checks that the server got one request.
 //   hls-ok        hls.m3u8 (4 s of AAC in 1 s segments) to its end: the
 //                 skipped_segments option of the demuxer reads 0
 //                 (patch_ffmpeg_segment_skips.py; upstream has no option).
@@ -106,7 +116,7 @@ int main(int argc, char **argv)
     char url[128], msg[256];
     av_log_set_level(AV_LOG_WARNING);
 
-    if (!strncmp(mode, "http-", 5)) {
+    if (!strncmp(mode, "http-", 5) || !strncmp(mode, "chunked-", 8)) {
         int64_t bytes;
         snprintf(url, sizeof url, "http://127.0.0.1:%s/data.bin", argv[2]);
         int r = read_all(url, &bytes);
@@ -116,6 +126,14 @@ int main(int argc, char **argv)
                      av_err2str(r));
             check(r == AVERROR(EIO), msg);
             check(bytes == 233287, "the bytes up to the cut");
+        } else if (!strcmp(mode, "chunked-between") || !strcmp(mode, "chunked-mid")) {
+            int64_t want = !strcmp(mode, "chunked-mid") ? 233287 : 14 * 16384;
+            snprintf(msg, sizeof msg, "the chunked stream cut short ends with EIO (%s)",
+                     av_err2str(r));
+            check(r == AVERROR(EIO), msg);
+            snprintf(msg, sizeof msg, "the bytes sent once, up to the cut (%lld of %lld)",
+                     (long long)bytes, (long long)want);
+            check(bytes == want, msg);
         } else if (!strcmp(mode, "http-nolength-norange")) {
             snprintf(msg, sizeof msg, "the whole body of unknown size ends with EIO (%s)",
                      av_err2str(r));

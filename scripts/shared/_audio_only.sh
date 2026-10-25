@@ -703,15 +703,15 @@ apply_ffmpeg_patches() {
     warn "Skipping disabled patch: dash_keepalive"
   fi
 
-  # The FFmpeg side of read_error, one toggle with the mpv side: a reconnect
-  # that gets an error reply keeps the size of the body it resumes, so a cut
-  # body ends with EIO and not as a complete file (http.c), and the HLS and
-  # DASH demuxers count the segments they lose in the read-only
+  # The FFmpeg side of read_error, one toggle with the mpv side: http.c ends
+  # a body cut short with EIO and not as a complete file (a reconnect that
+  # gets an error reply, a chunked body without its last chunk), and the
+  # HLS and DASH demuxers count the segments they lose in the read-only
   # skipped_segments option mpv reads. After dash_keepalive, whose anchors
   # in dashdec.c it leaves alone.
   if patch_on read_error; then
     log "Patching FFmpeg http, HLS and DASH to report read errors..."
-    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_http_reconnect.py" "$ffmpeg_dir"
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_http_read_errors.py" "$ffmpeg_dir"
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_segment_skips.py" "$ffmpeg_dir"
     record_patch read_error
   else
