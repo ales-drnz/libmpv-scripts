@@ -154,6 +154,20 @@ export async function runNetHarness(factory, env, log) {
     check(starts.some((s) => s > 1500000 && s < 3900000), 'range_seek.range_request', `Range starts ${starts.join(',')}`);
   }, { extra: PAUSED });
 
+  // ── a connection that breaks off: read again from where it broke ─────
+  await run('reconnect', async (core) => {
+    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&tag=drop`);
+    check(l.ok, 'reconnect.loaded');
+    const e = await l.ended;
+    check(e && e.reason === END.EOF, 'reconnect.eof', `reason ${e && e.reason}`);
+    const size = (await env.fixture('long_60s.flac')).length;
+    const es = await tagged('drop');
+    check(es.length === 2 && es[0].dropped && rangeStart(es[1]) === 600000 && es[1].bytes === size - 600000,
+      'reconnect.rest_of_file_from_the_break', JSON.stringify(es.map((x) => [x.range, x.bytes, !!x.dropped])));
+    check(logs(core, /connection broke/).filter((x) => /error/.test(x)).length === 0, 'reconnect.no_error',
+      logs(core, /webio/).slice(-3).join(' | '));
+  }, { extra: { cache: 'no' } });
+
   // ── server without Range ─────────────────────────────────────────────
   await run('norange', async (core) => {
     const l = await load(core, `${env.base}/media/norange/long_60s.mp3?tag=nr`);

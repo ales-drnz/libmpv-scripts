@@ -23,6 +23,8 @@ Media: /media/<mode>/<file under --media>?<query>
   slow      no answer for delay seconds (default 30), then as range
   trickle   the answer at once, then the body at 64 bytes/s
   status    the query's code (default 404)
+  drop      as range, but the first answer of each tag breaks off after
+            after bytes (default 500000): the connection closes
 Query on any mode: cors=0 (no CORS headers), cors=1 (the default:
 Access-Control-Allow-Origin, nothing exposed), cors=expose (Content-Range
 and icy-* exposed too); hdrs=deny answers the preflight without
@@ -259,6 +261,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         with open(p, 'rb') as f:
             self.send_body(f, start, length, e, rate)
 
+    def media_drop(self, rel, q, e):
+        key = (q.get('tag'), rel)
+        with LOG_LOCK:
+            first = key not in self.server.dropped
+            self.server.dropped.add(key)
+        if not first:
+            return self.media_range(rel, q, e)
+        p = self.file(rel)
+        if not p:
+            return self.media_status(rel, {**q, 'code': '404'}, e)
+        size = os.path.getsize(p)
+        after = int(q.get('after', '500000'))
+        self.send_response(206 if self.headers.get('Range') else 200)
+        e['status'] = 206 if self.headers.get('Range') else 200
+        self.common(q)
+        self.send_header('Content-Type', self.ctype(p))
+        self.send_header('Content-Length', str(size))
+        self.send_header('Accept-Ranges', 'bytes')
+        if self.headers.get('Range'):
+            self.send_header('Content-Range', f'bytes 0-{size - 1}/{size}')
+        super().end_headers()
+        with open(p, 'rb') as f:
+            self.send_body(f, 0, after, e)
+        e['dropped'] = True
+        self.wfile.flush()
+        self.connection.shutdown(socket.SHUT_RDWR)
+        self.close_connection = True
+
     def media_norange(self, rel, q, e):
         self.media_range(rel, q, e, ignore_range=True)
 
@@ -367,6 +397,7 @@ def main():
         s.media_root = a.media
         s.result_path = a.result
         s.stop_all = stop_all
+        s.dropped = set()
     threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in servers]
     for t in threads:
         t.start()
