@@ -1,8 +1,9 @@
 #!/bin/bash
 # android_emulator.sh <api>: runs test_app's Android integration tests on the
 # booted emulator, from kit/test_app: the audiotrack ones (F277, F276,
-# F278), the players of an exiting isolate or engine (F170) and the media
-# session through Media3 (media_session_test).
+# F278), the players of an exiting isolate or engine (F170), the media
+# session through Media3 (media_session_test) and its service through a
+# call (android_focus_foreground_test, F172).
 # The F278 test needs audioserver killed from the host while it plays: it
 # prints "[f278] playing" when it is ready, this script then kills
 # audioserver, writes f278_killed in the app's cache once a new one is up,
@@ -96,6 +97,7 @@ run android_audiotrack_pause_test.dart
 run android_owner_exit_test.dart
 run android_engine_exit_test.dart
 run media_session_test.dart
+run android_focus_foreground_test.dart
 # F278: the test waits for the kill. One try: the kill is part of it.
 f278=android_audiotrack_dead_object_test.dart
 log="emu-logs/dead-object-$api.log"
