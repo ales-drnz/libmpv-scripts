@@ -63,7 +63,9 @@ try {
     const { default: factory } = await import('./lib/libmpv.mjs');
     const inputs = [];
     for (const f of files) inputs.push({ name: f, bytes: await fetchBytes(f) });
-    const r = await runLibHarness(factory, inputs, log);
+    // The record beside the module, when the build wrote one.
+    const rec = await fetch('lib/build_web.json');
+    const r = await runLibHarness(factory, inputs, log, rec.ok ? await rec.json() : null);
     await post({ code: r.fail ? 1 : 0, busyTicks });
   } else {
     const t0 = performance.now();

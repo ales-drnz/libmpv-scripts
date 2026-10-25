@@ -5,8 +5,8 @@
 
 # The media of the webio harness: the W1 fixtures (make_fixtures.sh), a
 # radio-like MP3 for the live stream, a 300 s WAV for the read speed, and
-# 30 s of the 60 s file as HLS (AAC in MPEG-TS, 5 s segments) and as DASH
-# (AAC in fragmented MP4).
+# 30 s of the 60 s file as HLS (AAC in MPEG-TS, 5 s segments; gap.m3u8 names
+# a segment that is not there) and as DASH (AAC in fragmented MP4).
 #
 #   make_net_fixtures.sh <mpv_audio_kit checkout> <out dir>
 set -euo pipefail
@@ -28,6 +28,8 @@ if [[ ! -s "$out/hls/index.m3u8" ]]; then
   "${ff[@]}" -i "$out/long_60s.flac" -t 30 -c:a aac -b:a 128k -f hls -hls_time 5 \
     -hls_playlist_type vod -hls_segment_filename "$out/hls/seg%02d.ts" "$out/hls/index.m3u8"
 fi
+# The same playlist with its third segment missing, for a skipped segment.
+sed 's/^seg02\.ts$/missing02.ts/' "$out/hls/index.m3u8" > "$out/hls/gap.m3u8"
 if [[ ! -s "$out/dash/manifest.mpd" ]]; then
   mkdir -p "$out/dash"
   "${ff[@]}" -i "$out/long_60s.flac" -t 30 -c:a aac -b:a 128k -f dash -seg_duration 5 \

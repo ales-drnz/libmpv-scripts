@@ -12,7 +12,8 @@
 # make_net_fixtures.sh. The page, the harness, the module and the fixtures
 # are staged into a fresh directory next to the fixtures. Prints the lines of
 # the harness; the exit status is its. CHROME=<binary> picks the Chrome
-# (default: chrome-headless-shell on PATH), PORT (default 8130) the page
+# (default: chrome-headless-shell on PATH; a full Chrome runs with
+# --headless=new), PORT (default 8130) the page
 # port (PORT + 1 is the other origin), TIMEOUT=<s> (default 900).
 set -euo pipefail
 
@@ -69,8 +70,11 @@ PREFS
   chrome)
     chrome="${CHROME:-$(command -v chrome-headless-shell || true)}"
     [[ -x "$chrome" ]] || { echo "no Chrome: set CHROME" >&2; exit 2; }
+    # chrome-headless-shell is headless by itself; a full Chrome needs the flag.
+    flags=()
+    [[ "$(basename "$chrome")" == chrome-headless-shell ]] || flags+=(--headless=new)
     "$chrome" --user-data-dir="$profile" --no-first-run --disable-gpu \
-      --remote-debugging-port=0 "$url" >"$stage/browser.log" 2>&1 &
+      --remote-debugging-port=0 "${flags[@]}" "$url" >"$stage/browser.log" 2>&1 &
     bpid=$!
     ;;
   *) echo "unknown environment: $env_name" >&2; exit 2 ;;

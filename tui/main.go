@@ -411,7 +411,7 @@ type selColumn struct {
 
 // selBands lays the OS sections out as bands of side-by-side columns:
 //
-//	band 0: macOS · iOS
+//	band 0: macOS · iOS · Web
 //	band 1: Windows · Linux · Android
 //	band 2: Publish
 func (m model) selBands() [][]selColumn {
@@ -425,7 +425,7 @@ func (m model) selBands() [][]selColumn {
 		return selColumn{g, idx}
 	}
 	return [][]selColumn{
-		{col("macOS"), col("iOS")},
+		{col("macOS"), col("iOS"), col("Web")},
 		{col("Windows"), col("Linux"), col("Android")},
 		{col("Tools")},
 	}

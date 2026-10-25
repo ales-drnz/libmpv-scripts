@@ -3,11 +3,11 @@
 // Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 // Runs lib_harness.mjs on the module (libmpv.mjs) in Node, from the main
-// thread.
+// thread, with the build_web.json beside it when there is one.
 //
 //   node run_lib_node.mjs <libmpv.mjs> file...
-import { readFileSync } from 'node:fs';
-import { basename } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runLibHarness } from './lib_harness.mjs';
 
@@ -18,7 +18,9 @@ if (!modPath) {
 }
 const { default: factory } = await import(pathToFileURL(modPath).href);
 const files = paths.map((p) => ({ name: basename(p), bytes: readFileSync(p) }));
-const r = await runLibHarness(factory, files, (s) => console.log(s));
+const recordPath = join(dirname(modPath), 'build_web.json');
+const record = existsSync(recordPath) ? JSON.parse(readFileSync(recordPath, 'utf8')) : null;
+const r = await runLibHarness(factory, files, (s) => console.log(s), record);
 console.log(`measure node_rss_bytes ${process.memoryUsage().rss}`);
 // The pthread workers keep the event loop alive.
 process.exit(r.fail ? 1 : 0);

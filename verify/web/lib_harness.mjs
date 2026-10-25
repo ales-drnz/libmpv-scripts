@@ -10,8 +10,10 @@
 // hook_continue, terminate_destroy), which W4 moves to a service thread.
 //
 // Shared by run_lib_node.mjs (Node) and harness.html (browser):
-//   const result = await runLibHarness(factory, files, log);
+//   const result = await runLibHarness(factory, files, log, record);
 // files: [{name, bytes}], the first one also goes through the af chain.
+// record: build_web.json next to the module, when there is one; the
+// versions of the module must be the ones it states.
 
 const FMT = { NONE: 0, STRING: 1, FLAG: 3, INT64: 4, DOUBLE: 5, NODE: 6, ARRAY: 7, MAP: 8, BYTES: 9 };
 const EV = {
@@ -19,6 +21,9 @@ const EV = {
   START_FILE: 6, END_FILE: 7, FILE_LOADED: 8, PROPERTY_CHANGE: 22, HOOK: 25,
 };
 const AF_CHAIN = 'lavfi=[equalizer=f=1000:t=q:w=1:g=3],lavfi=[afftdn],lavfi=[loudnorm]';
+// MAK_WEB_ABI of scripts/web/mak_web.c this harness is written for, as a
+// client of the module checks it.
+const EXPECTED_WEB_ABI = 1;
 
 // The struct layout W0 derived from client.h for wasm32 (DESIGN.md 6.3), in
 // the order of mak_web_layout().
@@ -29,11 +34,12 @@ const EXPECTED_LAYOUT = [
   24, 4, 8, 16, // mpv_event: size, error, reply_userdata, data
   12, 4, 8, // mpv_event_property: size, format, data
   16, 8, 12, // mpv_event_log_message: size, text, log_level
-  32, 4, 8, 16, 24, // mpv_event_end_file: size, error, entry, insert, num
+  40, 4, 8, 16, 24, // mpv_event_end_file: size, error, entry, insert, num,
+  28, 32, //           mak_read_error, mak_skipped_segments (patch_read_error.py)
   16, 8, // mpv_event_hook: size, id
 ];
 
-export async function runLibHarness(factory, files, log) {
+export async function runLibHarness(factory, files, log, record = null) {
   const res = { checks: [], measures: {} };
   const check = (ok, name, detail) => {
     res.checks.push({ ok, name, detail });
@@ -105,6 +111,16 @@ export async function runLibHarness(factory, files, log) {
   const layout = [];
   for (let i = 0; i32(lp + 4 * i) !== -1; i++) layout.push(i32(lp + 4 * i));
   check(JSON.stringify(layout) === JSON.stringify(EXPECTED_LAYOUT), 'layout', JSON.stringify(layout));
+
+  // The versions of the module: MAK_WEB_ABI from mak_web_abi_version(), and
+  // MAK_WA_ABI, the first word of the webaudio output's table.
+  const abi = typeof m._mak_web_abi_version === 'function' ? m._mak_web_abi_version() : null;
+  const waAbi = u32(m._mak_wa_table_get());
+  const want = record && record.module ? record.module : null;
+  check(abi === EXPECTED_WEB_ABI && (!record || (want && want.abi === abi)), 'abi',
+    `mak_web_abi_version ${abi}, expected ${EXPECTED_WEB_ABI}, record ${record ? want && want.abi : 'none'}`);
+  check(!record || (want && want.webaudioAbi === waAbi), 'webaudio-abi',
+    `table ${waAbi}, record ${record ? want && want.webaudioAbi : 'none'}`);
 
   m.FS.mkdir('/in');
   for (const f of files) m.FS.writeFile(`/in/${f.name}`, f.bytes);

@@ -11,7 +11,7 @@
 [![](https://img.shields.io/badge/Patreon-F96854?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/cw/ales_drnz)
 [![](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/ales.drnz)
 
-The build scripts for the libmpv inside [`mpv_audio_kit`](https://pub.dev/packages/mpv_audio_kit). They compile [mpv](https://mpv.io) and FFmpeg without video, with a set of patches the package relies on (waveform, loudness scan, audio taps and more), for macOS, iOS, Android, Windows and Linux.
+The build scripts for the libmpv inside [`mpv_audio_kit`](https://pub.dev/packages/mpv_audio_kit). They compile [mpv](https://mpv.io) and FFmpeg without video, with a set of patches the package relies on (waveform, loudness scan, audio taps and more), for macOS, iOS, Android, Windows, Linux and the browser.
 
 Everything runs from `./build`, a terminal menu where you pick the targets and follow the builds.
 
@@ -25,7 +25,7 @@ cd libmpv-scripts
 ./build
 ```
 
-On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Android, and Xcode for Apple targets.
+On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Android, Xcode for Apple targets, and the emsdk for the web.
 
 ---
 
@@ -38,8 +38,11 @@ On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Andr
 | Android | arm64-v8a, armeabi-v7a, x86_64 | `libmpv_android-<abi>.so` |
 | Linux | x86_64, aarch64 | `libmpv_linux-<arch>.so` |
 | Windows | x86_64, arm64 | `libmpv_windows-<arch>.dll` |
+| Web | wasm32 with threads | `libmpv_web.zip` |
 
 Each library exports only the `mpv_*` C API, plus the `mak_pcm_*` functions that feed live PCM to the `mak-pcm` protocol, and carries no video decoders. On Linux and Android its SONAME is `libmpv_audio_kit.so`, so it can live next to another plugin's libmpv. The Linux one needs glibc 2.31 or later and ALSA (`libasound.so.2`). It loads PipeWire and PulseAudio only when they are installed, through stubs made with Implib.so (vendored in `tools/implib`), and skips a PipeWire older than 0.3.57 in favour of PulseAudio, then ALSA.
+
+The web module is WebAssembly built with Emscripten 6.0.12 and pthreads. `libmpv_web.zip` holds `libmpv.mjs` (the ES module that loads `libmpv.wasm` from beside itself), `libmpv.wasm`, `mak_webaudio_processor.js` (the AudioWorklet of its `webaudio` output, loaded from beside `libmpv.mjs`) and its record `build_web.json`. It has the shared patches, the decoders and the filters of the libraries, without the render API, SMB and the embedded CA bundle: http, https and `blob:` URLs go through the browser's fetch, so a server of another origin must send CORS headers. A page that loads it must be cross-origin isolated (COOP and COEP headers on every file). `mak_web_abi_version()` returns the version of what a client relies on (exports, struct layout, the wakeup bridge, `Module.makWebAudio`); `build_web.json` and the manifest list it.
 
 The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and `scripts/shared/_sources.sha256` pins each source tarball by its SHA-256 and each git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. Each build leaves next to its library a record of the patches it applied and the audio filters it compiled (`builds/release/build_<target>.json`). The Manifest action turns them into `builds/release/manifest.json`, with the versions, the filters, the patches of every target, the commit and run of the build and the hash of every library. It fails when the libraries disagree on the filters or one has no record.
 
@@ -75,8 +78,9 @@ The versions of mpv, FFmpeg and every other dependency are set in `scripts/share
     * [3.1 macOS and iOS](#31-macos-and-ios)
     * [3.2 Linux and Windows](#32-linux-and-windows)
     * [3.3 Android](#33-android)
-    * [3.4 From the command line](#34-from-the-command-line)
-    * [3.5 On GitHub Actions](#35-on-github-actions)
+    * [3.4 Web](#34-web)
+    * [3.5 From the command line](#35-from-the-command-line)
+    * [3.6 On GitHub Actions](#36-on-github-actions)
 
     </details>
 
@@ -117,6 +121,7 @@ The versions of mpv, FFmpeg and every other dependency are set in `scripts/share
 | [Go](https://go.dev/dl/) | always, it runs `./build` |
 | [Docker](https://docs.docker.com/get-docker/) | Linux, Windows and Android (Android on macOS builds without it) |
 | Xcode | macOS and iOS |
+| [emsdk](https://emscripten.org/docs/getting_started/downloads.html) 6.0.12, meson and ninja | the web |
 
 The Android NDK is downloaded by the build, you don't need to install it.
 
@@ -126,13 +131,13 @@ The Android NDK is downloaded by the build, you don't need to install it.
 | :--- | :--- |
 | macOS | all of them |
 | Linux | all except macOS and iOS |
-| Windows | all except macOS and iOS |
+| Windows | all except macOS, iOS and the web |
 
-Apple targets need a Mac, and Linux builds only for the host's own architecture. [GitHub Actions](#35-on-github-actions) builds everything, whatever you have.
+Apple targets need a Mac, Linux builds only for the host's own architecture, and the web builds on the host with the emsdk. [GitHub Actions](#36-on-github-actions) builds everything, whatever you have.
 
 #### 1.3 Folder layout
 
-Building needs only this repo. Everything it produces lands in `builds/`: the libraries and `manifest.json` in `builds/release/`, the logs in `builds/logs/`.
+Building needs only this repo. Everything it produces lands in `builds/`: the libraries, `libmpv_web.zip` and `manifest.json` in `builds/release/`, the logs in `builds/logs/`.
 
 ---
 
@@ -188,7 +193,17 @@ On macOS it builds directly on the host, which is the fastest option. Elsewhere 
 ./build android-arm64-v8a        # one ABI
 ```
 
-#### 3.4 From the command line
+#### 3.4 Web
+
+On a Linux or macOS host, with the emsdk at 6.0.12 (`./emsdk install 6.0.12 && ./emsdk activate 6.0.12`) and meson and ninja on the `PATH`:
+
+```bash
+EMSDK=path/to/emsdk ./build web
+```
+
+It builds FFmpeg, mpv and their dependencies as WebAssembly archives in `builds/work/Web/`, then links the module into `builds/release/libmpv_web/` and packs it into `builds/release/libmpv_web.zip`. `scripts/build_libmpv_web.sh` takes the same variables as the other builds, plus `STAGE=link` to relink only. The checks of [4.3](#43-verifying) run it in Node and in a browser.
+
+#### 3.5 From the command line
 
 `./build` accepts targets as arguments and runs them in order, stopping at the first failure:
 
@@ -212,9 +227,9 @@ These variables are passed to the Docker builds:
 
 To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` and so on (see `scripts/shared/_versions.sh`).
 
-#### 3.5 On GitHub Actions
+#### 3.6 On GitHub Actions
 
-Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries, their build records and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio, and runs the patch tests of [4.3](#43-verifying). A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
+Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries and the web module on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries, `libmpv_web.zip`, their build records and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio, runs the patch tests of [4.3](#43-verifying), and runs the checks of the web module in Node and in Chrome. The release waits for the patch tests and the web checks. A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
 
 ---
 
@@ -246,7 +261,9 @@ The Manifest action in the Tools tab writes `builds/release/manifest.json` for a
 
 #### 4.3 Verifying
 
-`./build verify` checks every library in `builds/release/`: architecture, exported API, the patched mpv properties, the included decoders and filters, the spdif muxer and the httpproxy, https and tls protocols, that no video code slipped in, and the libraries it depends on. On Linux and Android it also checks the SONAME, that there is no `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries and the glibc 2.31 floor. Where the host can load it, it also opens the library and calls into it. The report has one row per library, and Enter shows the full log.
+`./build verify` checks every library in `builds/release/`: architecture, exported API, the patched mpv properties, the included decoders and filters, the spdif muxer and the httpproxy, https and tls protocols, that no video code slipped in, and the libraries it depends on. On Linux and Android it also checks the SONAME, that there is no `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries and the glibc 2.31 floor. Where the host can load it, it also opens the library and calls into it. For `libmpv_web.zip` it checks the files of the zip, its record, a shared memory wasm under 12 MB, the exported functions, the patched properties, the FFmpeg patches, decoders and filters and mpv's version. The report has one row per library, and Enter shows the full log.
+
+The web module runs in `verify/web/run_checks.sh <module dir> <spike dir> <fixtures dir> <work dir>`: Node and each browser of `BROWSERS` (Chrome, Firefox) decode, filter, play through the `webaudio` output and read over http, as [`verify/web/README.md`](verify/web/README.md) describes.
 
 The patches have tests of their own: `bash verify/tests/native/run.sh <work dir>` builds a debug libmpv with AddressSanitizer against the system FFmpeg and runs the C tests of the patched mpv, then the tests of the patch scripts. It needs meson, ninja, the `ffmpeg` command and the FFmpeg development files, and takes a few minutes.
 
@@ -254,15 +271,15 @@ The patches have tests of their own: `bash verify/tests/native/run.sh <work dir>
 
 #### 4.4 Publishing a release
 
-1. Build all nine libraries, usually by pushing a `release/` branch (see [3.5](#35-on-github-actions)).
-2. Create the `libmpv-rN` release on `mpv_audio_kit` and upload the libraries and `manifest.json`.
+1. Build all nine libraries and the web module, usually by pushing a `release/` branch (see [3.6](#36-on-github-actions)).
+2. Create the `libmpv-rN` release on `mpv_audio_kit` and upload the libraries, `libmpv_web.zip` and `manifest.json`.
 3. In `mpv_audio_kit`, run `scripts/update_libmpv.sh rN`.
 
 ---
 
 ### 5. How it works
 
-`./build` is a small Go program ([Bubble Tea](https://github.com/charmbracelet/bubbletea)) that runs the shell scripts in `scripts/`, one per platform. Apple targets build with Xcode on the host. Linux, Windows and Android build inside a Docker image from `docker/Dockerfile`, which has one stage per platform, so you only keep the toolchains you use.
+`./build` is a small Go program ([Bubble Tea](https://github.com/charmbracelet/bubbletea)) that runs the shell scripts in `scripts/`, one per platform. Apple targets build with Xcode on the host, the web with the emsdk on the host. Linux, Windows and Android build inside a Docker image from `docker/Dockerfile`, which has one stage per platform, so you only keep the toolchains you use.
 
 Each build downloads the pinned sources, applies the patches in `patches/` to mpv and FFmpeg, compiles only the audio parts, and strips the library down to the `mpv_*` and `mak_pcm_*` API. Every patch finds its place by exact text and stops the build if upstream has changed underneath it.
 

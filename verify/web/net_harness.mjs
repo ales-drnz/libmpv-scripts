@@ -168,7 +168,32 @@ export async function runNetHarness(factory, env, log) {
     check(es.length === 2 && es[0].dropped && from >= 0 && from <= 600000 && es[1].bytes === size - from,
       'reconnect.rest_of_file_from_the_break', JSON.stringify(es.map((x) => [x.range, x.bytes, !!x.dropped])));
     check(logs(core, /\] error: /).length === 0, 'reconnect.no_error', logs(core, /webio/).slice(-3).join(' | '));
+    check(e && e.readError === false && e.skippedSegments === 0, 'reconnect.no_read_error',
+      JSON.stringify(e && { readError: e.readError, skipped: e.skippedSegments }));
   }, { extra: { cache: 'no' } });
+
+  // ── a body that breaks off and whose resume is refused: a read error ──
+  // END_FILE tells it from a complete file (patch_read_error.py, through
+  // the error webio returns).
+  await run('truncated', async (core) => {
+    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&again=503&tag=trunc`);
+    check(l.ok, 'truncated.loaded');
+    const e = await l.ended;
+    check(e && e.reason === END.EOF && e.readError === true && e.skippedSegments === 0, 'truncated.read_error',
+      JSON.stringify(e && { reason: e.reason, readError: e.readError, skipped: e.skippedSegments }));
+    const es = await tagged('trunc');
+    check(es.length >= 2 && es[0].dropped && es.slice(1).every((x) => x.status === 503), 'truncated.resume_refused',
+      JSON.stringify(es.map((x) => [x.range, x.status, !!x.dropped])));
+  }, { extra: { cache: 'no' } });
+
+  // ── HLS with a segment that is not there: one segment skipped ─────────
+  await run('hls_gap', async (core) => {
+    const l = await load(core, `${env.base}/media/range/hls/gap.m3u8?tag=gap`);
+    check(l.ok, 'hls_gap.loaded');
+    const e = await l.ended;
+    check(e && e.reason === END.EOF && e.skippedSegments === 1 && e.readError === false, 'hls_gap.skipped_segment',
+      JSON.stringify(e && { reason: e.reason, readError: e.readError, skipped: e.skippedSegments }));
+  });
 
   // ── server without Range ─────────────────────────────────────────────
   await run('norange', async (core) => {

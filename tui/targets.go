@@ -137,6 +137,7 @@ func allTargets() []Target {
 		sAndroid = "scripts/build_libmpv_android.sh"
 		sLinux   = "scripts/build_libmpv_linux.sh"
 		sWin     = "scripts/build_libmpv_windows.sh"
+		sWeb     = "scripts/build_libmpv_web.sh"
 	)
 	const apple = "needs macOS + Xcode"
 	return []Target{
@@ -171,6 +172,10 @@ func allTargets() []Target {
 		// as it finishes — not one combined run. (macOS/iOS "all" stay single
 		// because they lipo into one universal xcframework.)
 		{Key: "android", Label: "all", Group: "Android", InMenu: true, kind: kAggregate, members: []string{"android-arm64-v8a", "android-armeabi-v7a", "android-x86_64"}},
+
+		// ── Web (host bash script with the emsdk: emcc on PATH or EMSDK set,
+		//    meson and ninja on PATH). Not in "all", which needs no emsdk. ──
+		{Key: "web", Label: "wasm32", Group: "Web", InMenu: true, Note: "needs emsdk 6.0.12 and meson", kind: kNative, script: sWeb},
 
 		// ── Publish / validate ──
 		{Key: "manifest", Label: "Manifest", Group: "Tools", InMenu: true, kind: kNative, script: "scripts/write_manifest.sh",
