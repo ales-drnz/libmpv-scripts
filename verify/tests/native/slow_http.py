@@ -24,10 +24,17 @@ with Content-Length 0 (a download cut short for good). The options:
   nolength        the size is never told: no Content-Length, the body ends
                   when the connection closes, a range from 0 gets 200 and a
                   range past the end 416 without Content-Range
-
-A range that starts at or past the end of the file gets 416.
+  chunked         a live stream: 200 with Transfer-Encoding: chunked (chunks
+                  of 16384 bytes, then the last chunk of size 0), no
+                  Content-Length, no Range support; cut stops every
+                  response inside the chunk that holds it
+  between         with chunked, cut stops at the last chunk boundary before
+                  it instead
+  close           with chunked, the response says Connection: close
   missing=<name>  that file answers 404
   cutfile=<name>  every response for that file stops at half of it
+
+A range that starts at or past the end of the file gets 416.
 """
 import http.server, os, sys, time, re
 ROOT, PORT, RATE = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
@@ -41,6 +48,7 @@ for a in sys.argv[4:]:
         OPTS[k] = v
 RESUME, NORANGE, NOLENGTH = 'resume' in OPTS, 'norange' in OPTS, 'nolength' in OPTS
 DROP, DOWN = 'drop' in OPTS, 'down' in OPTS
+CHUNKED, BETWEEN, CLOSE = 'chunked' in OPTS, 'between' in OPTS, 'close' in OPTS
 TYPES = {'.flac': 'audio/flac', '.mp3': 'audio/mpeg', '.m3u8': 'application/vnd.apple.mpegurl',
          '.ts': 'video/mp2t', '.mpd': 'application/dash+xml', '.m4s': 'audio/mp4'}
 cut_done = False
@@ -54,6 +62,9 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers()
             return
         size = os.path.getsize(p)
+        if CHUNKED:
+            self.send_chunked(p, size)
+            return
         start, end = 0, size - 1
         m = None if NORANGE else re.match(r'bytes=(\d+)-(\d*)', self.headers.get('Range', ''))
         if m and NOLENGTH and int(m.group(1)) == 0:
@@ -106,6 +117,30 @@ class H(http.server.BaseHTTPRequestHandler):
                             os._exit(0)
                         break
                     b = f.read(n); self.wfile.write(b); left -= len(b); pos += len(b); time.sleep(len(b) / RATE)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+    def send_chunked(self, p, size):
+        self.protocol_version = 'HTTP/1.1'
+        self.close_connection = True
+        self.send_response(200); self.send_header('Transfer-Encoding', 'chunked')
+        if CLOSE:
+            self.send_header('Connection', 'close')
+        self.send_header('Content-Type', TYPES.get(os.path.splitext(p)[1], 'application/octet-stream'))
+        self.end_headers()
+        sys.stderr.write(f'GET {self.path} chunked\n')
+        with open(p, 'rb') as f:
+            try:
+                pos = 0
+                while pos < size:
+                    b = f.read(16384)
+                    if CUT and pos + len(b) > CUT:
+                        if not BETWEEN:
+                            self.wfile.write(b'%x\r\n' % len(b) + b[:CUT - pos])
+                        sys.stderr.write(f'CUT at {CUT if not BETWEEN else pos}\n')
+                        return
+                    self.wfile.write(b'%x\r\n' % len(b) + b + b'\r\n')
+                    pos += len(b); time.sleep(len(b) / RATE)
+                self.wfile.write(b'0\r\n\r\n')
             except (BrokenPipeError, ConnectionResetError):
                 pass
     def log_message(self, *a): pass

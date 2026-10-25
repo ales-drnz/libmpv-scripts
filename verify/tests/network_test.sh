@@ -10,7 +10,7 @@
 # builds) and a minimal FFmpeg: the file, tcp, udp, tls (system OpenSSL),
 # http and libsmb2 protocols, the wav, hls, mpegts, dash (libxml2) and mov
 # demuxers and the aac decoder, with patch_ffmpeg_libsmb2.py,
-# patch_ffmpeg_embed_cacert.py, patch_ffmpeg_http_reconnect.py and
+# patch_ffmpeg_embed_cacert.py, patch_ffmpeg_http_read_errors.py and
 # patch_ffmpeg_segment_skips.py applied.
 # Then it runs, each mode in its own process:
 #   - smb_url_test: the URL handling of libsmb2.c, password and percent
@@ -21,8 +21,9 @@
 #     (smb_server.py, one per mode, stopped with SIGSTOP), and a TCP connect
 #     slowed by slow_connect.py (F83, F84, F85);
 #   - read_errors_test: an HTTP body cut short ends with EIO when the
-#     reconnect gets an error reply, and the HLS and DASH demuxers count the
-#     segments they lose, against native/slow_http.py (one per mode).
+#     reconnect gets an error reply or a chunked stream stops before its
+#     last chunk, and the HLS and DASH demuxers count the segments they
+#     lose, against native/slow_http.py (one per mode).
 # A mode passes when its process exits 0: it printed RESULT PASS and
 # AddressSanitizer and LeakSanitizer found nothing. open-hang and pause-read
 # wait about 35 s each and run in the background meanwhile. The logs stay
@@ -42,7 +43,7 @@
 # names a local copy of the tarball (checked against the same pin), JOBS
 # sets the build jobs (default 4), CC and FFMPEG_TOOLCHAIN the compiler
 # (default gcc and gcc-asan, or clang and clang-asan), and
-# DISABLED_PATCHES=read_error leaves out patch_ffmpeg_http_reconnect.py and
+# DISABLED_PATCHES=read_error leaves out patch_ffmpeg_http_read_errors.py and
 # patch_ffmpeg_segment_skips.py, to see read_errors_test fail without them.
 # About two minutes at JOBS=4, half of it building.
 #
@@ -78,7 +79,7 @@ CASES=(
   "smb_url_test strip decode parse"
   "tls_roots_test verify"
   "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read"
-  "read_errors_test http-refused http-resume http-nolength http-nolength-norange hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
+  "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
 LONG_MODES=" open-hang pause-read "
@@ -157,7 +158,7 @@ fi
   for f in tls_openssl.c http.c hls.c dashdec.c; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$SRC" &&
   if patch_on read_error; then
-    python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_http_reconnect.py" "$SRC" &&
+    python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_http_read_errors.py" "$SRC" &&
       python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_segment_skips.py" "$SRC"
   fi
 } > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "the FFmpeg patches failed"; }
@@ -320,6 +321,9 @@ read_errors_mode() {
     http-resume) opts=(233287 resume) ;;
     http-nolength) opts=(nolength) ;;
     http-nolength-norange) opts=(nolength norange) ;;
+    chunked-ok) opts=(chunked) ;;
+    chunked-between) opts=(233287 chunked between) ;;
+    chunked-mid) opts=(233287 chunked close) ;;
     hls-404) opts=(missing=seg2.ts) ;;
     hls-cut) opts=(cutfile=seg2.ts) ;;
     dash-404) opts=(missing=chunk3.m4s) ;;
@@ -332,6 +336,11 @@ read_errors_mode() {
   wait_port "$port" || echo "slow_http.py did not start on port $port" >> "$log.http"
   timeout 120 "$BIN/read_errors_test" "$m" "$port" > "$log" 2>&1; r=$?
   kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null
+  # A live chunked stream is read with one request: no reconnect starts it
+  # again.
+  if [[ "$m" == chunked-* ]] && (( $(grep -c '^GET' "$log.http") != 1 )); then
+    echo "FAIL one request to the live stream ($(grep -c '^GET' "$log.http"))" >> "$log"; r=1
+  fi
   report "read_errors_test $m" "$r" "$log"
 }
 

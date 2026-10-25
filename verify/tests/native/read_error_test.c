@@ -44,9 +44,11 @@
 //             by network_test.sh): av_opt_get_int below stands in for it on
 //             an HLS demuxer, with the 1 segment the server dropped. Where
 //             the option exists the real count is read.
-// A reply with an error status to the resume (503, 403) ends as EOF in
-// upstream http.c whatever mpv does: patch_ffmpeg_http_reconnect.py, checked
-// by network_test.sh.
+// A reply with an error status to the resume (503, 403), and a chunked
+// stream that stops before its last chunk, end as EOF in upstream http.c
+// whatever mpv does: patch_ffmpeg_http_read_errors.py, checked by
+// network_test.sh. No mode here reads a chunked stream: the FFmpeg of
+// run.sh decides those ends alone (9.0 ends even a whole one with EIO).
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <libavutil/error.h>
