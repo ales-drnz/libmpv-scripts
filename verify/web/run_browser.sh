@@ -95,7 +95,7 @@ esac
 
 start=$SECONDS
 cpu_note=""
-until [[ -s "$result" ]]; do
+signals() {
   if [[ -f "$result.click" ]]; then
     rm -f "$result.click"
     if [[ "$browser" == chrome ]]; then
@@ -113,6 +113,9 @@ until [[ -s "$result" ]]; do
     cpu1="$(python3 -I "$HERE/proc_cpu.py" "$bpid")"; wall1="$(date +%s.%N)"
     cpu_note="$(python3 -I -c 'import sys; c0, c1, w0, w1 = map(float, sys.argv[1:]); print(f"measure browser_cpu_percent {100 * (c1 - c0) / (w1 - w0):.1f} (every process of the browser, {c1 - c0:.2f} s of CPU in {w1 - w0:.2f} s)")' "$cpu0" "$cpu1" "$wall0" "$wall1")"
   fi
+}
+until [[ -s "$result" ]]; do
+  signals
   if (( SECONDS - start > timeout_s )); then
     echo "run_browser: no result after ${timeout_s}s" >&2
     tail -20 "$build/browser.log" >&2 || true
@@ -123,8 +126,9 @@ until [[ -s "$result" ]]; do
     tail -20 "$build/browser.log" >&2 || true
     exit 3
   fi
-  sleep 0.5
+  sleep 0.1
 done
+signals
 python3 -I - "$result" "$cpu_note" <<'EOF'
 import json, sys
 r = json.load(open(sys.argv[1]))

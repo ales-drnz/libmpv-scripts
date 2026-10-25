@@ -17,6 +17,8 @@
 //             gesture and the output must start
 //   signal    async (name) => void, tells the runner (click, cpu-start,
 //             cpu-end)
+//   resumeOnGesture  false: makWebAudio does not resume on a gesture, the
+//             run gesture=1 must fail on
 //
 // Fixtures (make_fixtures.sh): long_60s.flac (48 kHz), tone_48k_20s.flac and
 // tone_44k_20s.flac (1 kHz at -12 dBFS), sine_stereo_48k_5s.flac.
@@ -43,7 +45,7 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   const m = await factory({ print: log, printErr: log });
   const wa = m.makWebAudio;
   if (!check(!!wa, 'glue', `makWebAudio ${wa ? 'present' : 'missing'}`)) return finish();
-  await wa.init({ channels: 2 });
+  await wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false });
   const ctx = wa.context;
   const rate = ctx.sampleRate;
   measure('context_rate', rate);
@@ -159,23 +161,33 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
 
   // Latency: time-pos against the frames the worklet played. mpv's time-pos
   // is the last written frame minus ao_get_delay (queued frames plus the
-  // published latency), so it must equal consumed / rate - latency. Read
-  // before any seek: consumed counts from the open, at the file's start.
+  // published latency), worked out at its last playloop pass, so it equals
+  // consumed / rate - latency right after a pass and falls behind until the
+  // next one: by at most the output's refill period (buffer.c wakes every
+  // quarter of the ring, 50 ms) plus one render burst of the browser (the
+  // worklet reads several quanta at once). 30 samples at uneven intervals;
+  // read before any seek: consumed counts from the open, at the file's
+  // start.
   const errs = [];
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 30; i++) {
     const cb = consumed();
+    const t0 = performance.now();
     const p = await timePos();
+    const rtt = performance.now() - t0;
     const ca = consumed();
     errs.push(p - ((cb + ca) / 2 / rate - wa.latency));
-    await sleep(150);
+    if (i < 5) log(`latency sample ${(errs.at(-1) * 1000).toFixed(2)} ms (get in ${rtt.toFixed(2)} ms)`);
+    await sleep(17 + ((i * 37) % 71));
   }
   const meanErr = errs.reduce((x, y) => x + y, 0) / errs.length;
   const maxErr = Math.max(...errs.map(Math.abs));
+  const minErr = Math.min(...errs.map(Math.abs));
   measure('declared_latency_ms', wa.latency * 1000);
   measure('latency_error_mean_ms', meanErr * 1000);
+  measure('latency_error_min_ms', minErr * 1000);
   measure('latency_error_max_ms', maxErr * 1000);
-  check(Math.abs(meanErr) < 0.015 && maxErr < 0.05, 'latency',
-    `time-pos minus (consumed/rate - ${(wa.latency * 1000).toFixed(1)} ms): mean ${(meanErr * 1000).toFixed(2)} ms, max ${(maxErr * 1000).toFixed(2)} ms`);
+  check(minErr < 0.002 && maxErr < 0.1 && Math.max(...errs) < 0.002, 'latency',
+    `time-pos minus (consumed/rate - ${(wa.latency * 1000).toFixed(1)} ms): from ${(Math.min(...errs) * 1000).toFixed(2)} to ${(Math.max(...errs) * 1000).toFixed(2)} ms, exact at ${errs.filter((e) => Math.abs(e) < 0.002).length} of ${errs.length} samples`);
 
   // Real time: the worklet consumes rate frames per second and time-pos
   // moves one second per second, with no underrun.
