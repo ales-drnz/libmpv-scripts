@@ -307,7 +307,9 @@ jobs:
           cp -R ../kit/test_app/integration_test ../kit/test_app/assets .
           # The android_ files run on the emulators. One imports test_app's
           # own library, which this app does not have, so it cannot build.
-          rm integration_test/android_*_test.dart
+          # The linux_ and windows_ ones run in the kit's CI: here they would
+          # only build the app to skip. -f: a kit before them has none.
+          rm -f integration_test/android_*_test.dart integration_test/linux_*_test.dart integration_test/windows_*_test.dart
           python3 - <<'PY2'
           p = 'pubspec.yaml'
           s = open(p).read()
@@ -327,13 +329,17 @@ jobs:
       # simulator sometimes launches the app and flutter test never attaches
       # (seen with several libmpv builds and an unchanged app): a timeout
       # before any test started is retried, twice at most. A test that
-      # fails, or a timeout once tests are running, fails the job.
+      # fails, or a timeout once tests are running, fails the job. A file
+      # that never started in three tries is infrastructure, not a result:
+      # a warning and a line of the summary, and a release needs it run
+      # again.
       - name: flutter test integration_test, one file at a time
         working-directory: freshapp
         timeout-minutes: 130
         run: |
           mkdir -p ../logs
           failed=()
+          infra=()
           for f in $(ls integration_test/*_test.dart | sort); do
             name=$(basename "$f" .dart)
             result=fail
@@ -356,18 +362,34 @@ jobs:
               xcrun simctl uninstall "$UDID" com.example.freshapp >/dev/null 2>&1 || true
               if [ $rc -eq 142 ]; then
                 xcrun simctl spawn "$UDID" log show --last 12m --style compact --predicate 'process == "Runner"' > "../logs/$name.$attempt.sim.log" 2>&1 || true
-                if grep -qE '[0-9]+:[0-9]+ \+[0-9]+.*: \(setUpAll\)' "$log"; then
-                  echo "::error::$f timed out with tests running"; break
+                # Tests running: a progress line past the loading of the file.
+                if grep -E '[0-9]+:[0-9]+ \+[0-9]+[^:]*: ' "$log" | grep -qv ': loading '; then
+                  echo "::error::$f timed out with tests running"; result=fail; break
                 fi
                 echo "::warning::$f timed out before any test started (attempt $attempt)"
                 result=launch-timeout
                 continue
               fi
-              echo "::error::$f failed (exit $rc)"; tail -60 "$log"; break
+              echo "::error::$f failed (exit $rc)"; tail -60 "$log"; result=fail; break
             done
             echo "--- $f: $result" | tee -a ../logs/summary.txt
-            [ "$result" = pass ] || [ "$result" = skip ] || failed+=("$f")
+            case $result in
+              pass | skip) ;;
+              launch-timeout)
+                infra+=("$f")
+                echo "::warning::$f never started on the simulator: infrastructure, not a test result. Run it again before a release."
+                ;;
+              *) failed+=("$f") ;;
+            esac
           done
+          {
+            echo "### iOS simulator"
+            echo
+            echo "| file | outcome |"
+            echo "|---|---|"
+            sed -n 's/^--- \(.*\): \(.*\)$/| \1 | \2 |/p' ../logs/summary.txt
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ ${#infra[@]} -gt 0 ]; then printf 'NEVER STARTED: %s\n' "${infra[@]}"; fi
           if [ ${#failed[@]} -gt 0 ]; then printf 'FAILED: %s\n' "${failed[@]}"; exit 1; fi
       - uses: actions/upload-artifact@v7
         if: always()
@@ -525,14 +547,19 @@ jobs:
   # google_apis, x86_64) against the Android libraries of LIBS_RUN. It
   # carries the audiotrack checks (F277 thread at rest during a pause or an
   # underrun, F276 no audio lost at pause, F278 output reopened after
-  # audioserver dies), which no runner without an emulator can see, and the
-  # players of an isolate or an engine that goes away (F170).
+  # audioserver dies), which no runner without an emulator can see, the
+  # players of an isolate or an engine that goes away (F170) and the media
+  # session through Media3 (media_session_test). Each file ends pass, fail
+  # or infra (android_emulator.sh): only fail fails the job, infra is a
+  # warning and a line of the summary, and a release needs zero fail and
+  # its infra files run again.
   android-emu:
     if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') || contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[full check]') }}
     name: Android emulator API ${{ matrix.api }}
     runs-on: ubuntu-24.04
-    # Five files of at most two 8 minute tries each, plus the boot.
-    timeout-minutes: 100
+    # Six files of at most two 8 minute tries each, plus the boot: a job cut
+    # by its timeout could not tell infra from fail.
+    timeout-minutes: 130
     strategy:
       fail-fast: false
       matrix:
