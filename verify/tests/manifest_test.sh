@@ -9,8 +9,11 @@
 # build, and takes the filters from the records, not from the override present
 # when it runs (F211). It fails and writes nothing when the records disagree
 # on the filters, when a binary has no record and when a record belongs to
-# another release. Then the side that writes the records: write_build_record
-# of scripts/shared/_audio_only.sh, on what the patch steps left in the prefixes.
+# another release. The web module: libmpv_web.zip as scripts/web/
+# package_web.py packs it, whose files and versions the manifest lists, and
+# the zips it refuses. Then the side that writes the records:
+# write_build_record of scripts/shared/_audio_only.sh, on what the patch
+# steps left in the prefixes.
 #
 # Usage: bash verify/tests/manifest_test.sh
 
@@ -24,8 +27,9 @@ RELEASE="$(bash -c "source '$ROOT/scripts/shared/_versions.sh'; echo \"\$LIBMPV_
 # A copy of the scripts in a git repository of its own, so an override can
 # sit next to them and the local commit is known.
 REPO="$TMP/repo"
-mkdir -p "$REPO/scripts"
+mkdir -p "$REPO/scripts/web"
 cp -r "$ROOT/scripts/write_manifest.sh" "$ROOT/scripts/shared" "$REPO/scripts/"
+cp "$ROOT/scripts/web/package_web.py" "$REPO/scripts/web/"
 rm -f "$REPO/scripts/shared/_user_overrides.sh"
 git -C "$REPO" init -q
 git -C "$REPO" add -A
@@ -121,6 +125,95 @@ d="$(release_dir older)"
 record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap' r1
 refused older 'r1'
+
+# ── The web module ──────────────────────────────────────────────────────────
+# web_module <dir> [record fields as JSON]: what build_libmpv_web.sh leaves
+# in its RELEASE_DIR, with the record's module versions unless overridden.
+web_module() {
+  local d="$1"
+  mkdir -p "$d"
+  printf 'glue' > "$d/libmpv.mjs"
+  printf '\0asm\1\0\0\0' > "$d/libmpv.wasm"
+  printf 'worklet' > "$d/mak_webaudio_processor.js"
+  python3 - "$d" "$RELEASE" "${2:-{\}}" <<'PY'
+import json, sys
+d, release, extra = sys.argv[1:]
+r = {"release": release, "target": "web", "patches": ["pcm_tap", "read_error"],
+     "audioFilters": ["volume"],
+     "module": {"abi": 1, "webaudioAbi": 1, "emscripten": "6.0.12"}}
+r.update(json.loads(extra))
+open(f"{d}/build_web.json", "w").write(json.dumps(r, indent=2) + "\n")
+PY
+}
+package() { python3 "$REPO/scripts/web/package_web.py" "$@" > "$TMP/package.log" 2>&1; }
+sha() { sha256sum "$1" | cut -d' ' -f1; }
+
+d="$(release_dir web)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+web_module "$TMP/web-module"
+package "$TMP/web-module" "$d"; check $? "web: package_web.py packs the module"
+package "$TMP/web-module" "$TMP/web-again"
+cmp -s "$d/libmpv_web.zip" "$TMP/web-again/libmpv_web.zip"; check $? "web: the same files give the same zip"
+manifest "$d"; check $? "web: write_manifest.sh succeeds"
+python3 - "$d/manifest.json" "$(sha "$TMP/web-module/libmpv.mjs")" \
+  "$(sha "$TMP/web-module/libmpv.wasm")" "$(sha "$TMP/web-module/mak_webaudio_processor.js")" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert "libmpv_web.zip" in m["assets"], m["assets"]
+assert m["patches"]["web"] == ["pcm_tap", "read_error"], m["patches"]
+assert m["web"] == {
+    "asset": "libmpv_web.zip", "abi": 1, "webaudioAbi": 1, "emscripten": "6.0.12",
+    "files": {"libmpv.mjs": sys.argv[2], "libmpv.wasm": sys.argv[3],
+              "mak_webaudio_processor.js": sys.argv[4]},
+}, m["web"]
+PY
+check $? "web: the asset, its patches, the module versions and the hash of each file"
+[[ "$(wc -l < "$d/SHA256SUMS")" == 3 ]]; check $? "web: SHA256SUMS lists the zip"
+python3 -c 'import json,sys; sys.exit("web" in json.load(open(sys.argv[1])))' "$TMP/local/manifest.json"
+check $? "web: no web section without the zip"
+
+# A module without its versions is not packed.
+web_module "$TMP/web-noabi-module" '{"module": null}'
+package "$TMP/web-noabi-module" "$TMP/web-noabi-out"; r=$?
+[[ $r != 0 && ! -e "$TMP/web-noabi-out/libmpv_web.zip" ]]; check $? "web: package_web.py refuses a record without versions (exit $r)"
+
+# A zip without the worklet, as from an older build.
+d="$(release_dir web-files)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+cp "$TMP/web-module/build_web.json" "$d/"
+python3 - "$TMP/web-module" "$d/libmpv_web.zip" <<'PY'
+import sys, zipfile
+src, out = sys.argv[1:]
+with zipfile.ZipFile(out, "w") as z:
+    for n in ("libmpv.mjs", "libmpv.wasm", "build_web.json"):
+        z.write(f"{src}/{n}", n)
+PY
+refused web-files 'mak_webaudio_processor.js'
+
+# The record next to the zip is not the one inside it.
+d="$(release_dir web-record)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+package "$TMP/web-module" "$d"
+web_module "$TMP/web-other" '{"patches": ["pcm_tap"]}'
+cp "$TMP/web-other/build_web.json" "$d/build_web.json"
+refused web-record 'not the one next to it'
+
+# A record without the module versions, the zip packed by hand.
+d="$(release_dir web-noabi)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+cp "$TMP/web-noabi-module/build_web.json" "$d/"
+python3 - "$TMP/web-noabi-module" "$d/libmpv_web.zip" <<'PY'
+import sys, zipfile
+src, out = sys.argv[1:]
+with zipfile.ZipFile(out, "w") as z:
+    for n in ("libmpv.mjs", "libmpv.wasm", "mak_webaudio_processor.js", "build_web.json"):
+        z.write(f"{src}/{n}", n)
+PY
+refused web-noabi 'module versions'
 
 # ── write_build_record, on the records of the stages ────────────────────────
 # stage <prefix> <tree> <ids...>: what the patch steps of a stage on a fresh

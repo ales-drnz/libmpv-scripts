@@ -18,6 +18,10 @@
 #                                                     of the webaudio output
 # builds/release/libmpv_web/build_web.json            the patch record, with
 #                                                     the module's ABI
+# builds/release/libmpv_web.zip                       the four files above,
+#                                                     the release asset
+# builds/release/build_web.json                       its record, for
+#                                                     write_manifest.sh
 # $BUILD_DIR/spike/spike.mjs, spike.wasm              the W1 harness module
 #                                                     (verify/web/mak_spike.c)
 #
@@ -50,6 +54,8 @@
 #   WEB_INITIAL_MEMORY=128MB (wasm memory at start; it grows up to 2GB)
 #   BUILD_DIR=<dir>         (default: builds/work/Web/<variant>)
 #   RELEASE_DIR=<dir>       (default: builds/release/libmpv_web)
+#   PACKAGE_DIR=<dir>       (where libmpv_web.zip and build_web.json go;
+#                           default: builds/release)
 #   KEEP_BUILD=0            (wipe build/ and prefix/ at the end; by default
 #                           they stay, so STAGE=link can relink)
 #   STAGE=all|libs|link     (libs builds the archives only, link relinks)
@@ -97,6 +103,7 @@ WEB_VARIANT="${WEB_OPT#-}"
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Web/$WEB_VARIANT}"
 PREFIX="$BUILD_DIR/prefix"
 RELEASE_DIR="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release/libmpv_web}"
+PACKAGE_DIR="${PACKAGE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
 
 # ── Toolchain ────────────────────────────────────────────────────────────────
 if ! command -v emcc >/dev/null 2>&1 && [[ -n "${EMSDK:-}" ]]; then
@@ -448,6 +455,14 @@ print(f"{path}: abi {abi}, webaudio abi {wa}, emscripten {emsdk}")
 PY
 }
 
+# libmpv_web.zip: the module, its worklet and its record, one release asset
+# next to the native binaries, with build_web.json beside it for
+# write_manifest.sh (scripts/web/package_web.py).
+package_web() {
+  python3 "$LIBMPV_SCRIPTS_ROOT/scripts/web/package_web.py" "$RELEASE_DIR" "$PACKAGE_DIR"
+  ok "libmpv_web.zip ✓"
+}
+
 report_sizes() {
   local f
   for f in "$RELEASE_DIR/libmpv.wasm" "$RELEASE_DIR/libmpv.mjs" \
@@ -479,6 +494,7 @@ main() {
     # next to the module (write_build_record in shared/_audio_only.sh).
     RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
     record_web_module
+    package_web
     report_sizes
   fi
   if [[ "${KEEP_BUILD:-1}" != "1" ]]; then

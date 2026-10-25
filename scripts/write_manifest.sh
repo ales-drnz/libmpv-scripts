@@ -19,12 +19,19 @@
 #   source         the commit of this repo the binaries were built from, and
 #                  the CI run that built them (null for a local build)
 #   assets         SHA-256 of every binary in builds/release/, keyed by name
+#   web            the web module, when libmpv_web.zip is there: its asset,
+#                  the module's versions from its record (abi, the
+#                  MAK_WEB_ABI a client checks with mak_web_abi_version();
+#                  webaudioAbi; emscripten) and the SHA-256 of each file a
+#                  client installs from the zip
 #
 # Filters and patches come from the record each build leaves next to its
 # binary, builds/release/build_<target>.json (write_build_record in
 # shared/_audio_only.sh), not from the settings of today (F211). It fails,
 # writing nothing, when a binary has no record, when a record belongs to
-# another release or when the records disagree on the filters.
+# another release or when the records disagree on the filters, and when
+# libmpv_web.zip holds other files than the module's or a record other than
+# build_web.json, or that record has no module versions.
 #
 # It also writes builds/release/SHA256SUMS, the same hashes in the
 # `sha256sum -c` format, published next to the binaries.
@@ -47,7 +54,7 @@ SOURCE_COMMIT="${GITHUB_SHA:-$(git -C "$SCRIPT_DIR/.." rev-parse HEAD 2>/dev/nul
 SOURCE_RUN="${GITHUB_RUN_ID:-}"
 
 RELEASE_DIR="$RELEASE_DIR" SOURCE_COMMIT="$SOURCE_COMMIT" SOURCE_RUN="$SOURCE_RUN" python3 - <<'PY'
-import hashlib, json, os, pathlib
+import hashlib, json, os, pathlib, zipfile
 
 release_dir = pathlib.Path(os.environ["RELEASE_DIR"])
 release = os.environ["LIBMPV_RELEASE"]
@@ -75,6 +82,34 @@ if len({tuple(f) for f in filters.values()}) != 1:
     raise SystemExit("The builds disagree on audioFilters:\n" +
                      "\n".join(f"  {t}: {','.join(f)}" for t, f in sorted(filters.items())))
 
+# The web module: the files a client installs (libmpv.mjs imports
+# libmpv.wasm and loads the worklet from beside itself) and the record of
+# the build, which must be the one next to the zip.
+WEB_FILES = ["libmpv.mjs", "libmpv.wasm", "mak_webaudio_processor.js"]
+web = None
+if "web" in records:
+    asset = next(n for n in assets if n.startswith("libmpv_web."))
+    try:
+        with zipfile.ZipFile(release_dir / asset) as z:
+            members = {i.filename: z.read(i) for i in z.infolist()}
+    except zipfile.BadZipFile as e:
+        raise SystemExit(f"{asset} is not a zip: {e}")
+    if sorted(members) != sorted(WEB_FILES + ["build_web.json"]):
+        raise SystemExit(f"{asset} holds {sorted(members)}, not "
+                         f"{sorted(WEB_FILES + ['build_web.json'])}")
+    if json.loads(members["build_web.json"]) != records["web"]:
+        raise SystemExit(f"The build_web.json in {asset} is not the one next to it")
+    module = records["web"].get("module") or {}
+    if not all(isinstance(module.get(k), int) for k in ("abi", "webaudioAbi")):
+        raise SystemExit("build_web.json has no module versions (abi, webaudioAbi): build it again")
+    web = {
+        "asset": asset,
+        "abi": module["abi"],
+        "webaudioAbi": module["webaudioAbi"],
+        "emscripten": module.get("emscripten"),
+        "files": {n: hashlib.sha256(members[n]).hexdigest() for n in WEB_FILES},
+    }
+
 manifest = {
     "release": release,
     "mpv": os.environ["MPV_VERSION"],
@@ -87,6 +122,8 @@ manifest = {
     },
     "assets": assets,
 }
+if web:
+    manifest["web"] = web
 out = release_dir / "manifest.json"
 out.write_text(json.dumps(manifest, indent=2) + "\n")
 print(f"Wrote {out} ({len(assets)} assets, {len(manifest['audioFilters'])} filters)")
