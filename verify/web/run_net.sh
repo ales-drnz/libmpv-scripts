@@ -14,7 +14,8 @@
 # the harness; the exit status is its. CHROME=<binary> picks the Chrome
 # (default: chrome-headless-shell on PATH; a full Chrome runs with
 # --headless=new), PORT (default 8130) the page
-# port (PORT + 1 is the other origin), TIMEOUT=<s> (default 900).
+# port (PORT + 1 is the other origin), TIMEOUT=<s> (default 900),
+# MAK_NET_VERBOSE=1 every log line of mpv.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -52,6 +53,7 @@ if [[ "$env_name" == node ]]; then
 fi
 
 url="http://127.0.0.1:$port/net.html?repeat=$repeat${cases:+&cases=$cases}"
+[[ "${MAK_NET_VERBOSE:-}" == 1 ]] && url+="&verbose=1"
 profile="$stage/profile"
 mkdir -p "$profile"
 case "$env_name" in
@@ -73,7 +75,8 @@ PREFS
     # chrome-headless-shell is headless by itself; a full Chrome needs the flag.
     flags=()
     [[ "$(basename "$chrome")" == chrome-headless-shell ]] || flags+=(--headless=new)
-    "$chrome" --user-data-dir="$profile" --no-first-run --disable-gpu \
+    # The http cases play with ao=null: nothing for the speakers.
+    "$chrome" --user-data-dir="$profile" --no-first-run --disable-gpu --mute-audio \
       --remote-debugging-port=0 "${flags[@]}" "$url" >"$stage/browser.log" 2>&1 &
     bpid=$!
     ;;
