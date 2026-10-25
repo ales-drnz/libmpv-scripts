@@ -19,6 +19,8 @@
 //             cpu-end)
 //   resumeOnGesture  false: makWebAudio does not resume on a gesture, the
 //             run gesture=1 must fail on
+//   slowProcessorUrl the worklet module served late, for the context that
+//             replaces the first one
 //
 // Fixtures (make_fixtures.sh): long_60s.flac (48 kHz), tone_48k_20s.flac and
 // tone_44k_20s.flac (1 kHz at -12 dBFS), sine_stereo_48k_5s.flac.
@@ -353,6 +355,45 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
     'underrun.silence', `in the gap: queued ${gap?.queued}, peak ${gapPeak}, silent frames ${gap?.starved} then ${gap2?.starved}`);
   check(pend && st.ended.reason === 0 && after && after.underruns === 1 && logged,
     'underrun.counted', `${after?.underruns} underrun(s) once the source fed again, mpv logged it: ${logged}, END_FILE ${st.ended?.reason}`);
+
+  // ── A new AudioContext at another rate: the output reopens at it ─────
+  await loadAndStart('/in/tone_48k_20s.flac');
+  await sleep(300);
+  const old = slot();
+  const rate2 = rate === 48000 ? 44100 : 48000;
+  // The worklet module comes late: the outputs must wait for the new
+  // context, not reopen on no context at all.
+  await wa.init({ channels: 2, sampleRate: rate2, resumeOnGesture: opts.resumeOnGesture !== false,
+    ...(opts.slowProcessorUrl ? { processorUrl: opts.slowProcessorUrl } : {}) });
+  const moved = await poll(() => {
+    const s = slot();
+    return s && (s.slot !== old.slot || s.gen !== old.gen) && s.consumed > 0;
+  }, 5000);
+  await sleep(300);
+  const e0 = { c: consumed(), t: performance.now() };
+  await sleep(1500);
+  const e1 = { c: consumed(), t: performance.now() };
+  const aop2 = (await core.get('audio-out-params/samplerate')).v;
+  const fps2 = (e1.c - e0.c) / ((e1.t - e0.t) / 1000);
+  check(moved && wa.context.sampleRate === rate2 && +aop2 === rate2 && Math.abs(fps2 / rate2 - 1) < 0.03,
+    'context.replace', `context at ${wa.context.sampleRate}, audio-out-params ${aop2} Hz, ${fps2.toFixed(0)} frames/s`);
+
+  // The output node is a plain AudioNode: the media session route of W4
+  // (a MediaStreamAudioDestinationNode into an <audio>) takes it.
+  const dest = wa.context.createMediaStreamDestination();
+  wa.output(0).connect(dest);
+  const tracks = dest.stream.getAudioTracks();
+  check(tracks.length === 1 && tracks[0].readyState === 'live', 'route.media-stream',
+    `${tracks.length} audio track, ${tracks[0]?.readyState}`);
+  wa.output(0).disconnect(dest);
+
+  // ── No context any more: the output fails and mpv says why ───────────
+  st.warnings.length = 0;
+  st.outState.length = 0;
+  await wa.close();
+  const failed = await core.until(() => st.outState.at(-1) === 'failed', 5000);
+  const said = st.warnings.find((w) => /No AudioContext/.test(w));
+  check(failed && !!said, 'context.closed', `audio-output-state ${st.outState.join(' > ')}, mpv: ${said}`);
 
   return finish();
 

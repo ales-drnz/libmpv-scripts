@@ -87,9 +87,9 @@ Module['makWebAudio'] = (() => {
   // destination's), processorUrl, connect (false leaves output 0
   // unconnected), resumeOnGesture (false leaves resuming to the page). A
   // second call replaces the context: every open output reopens at the new
-  // rate.
+  // rate, once it is ready (they wait meanwhile, with no reader).
   async function init(opts = {}) {
-    if (ctx) await close();
+    if (ctx) await teardown();
     table = Module['_mak_wa_table_get']();
     const u = u32();
     if (Atomics.load(u, word(T.ABI)) !== ABI) {
@@ -154,7 +154,9 @@ Module['makWebAudio'] = (() => {
     return out;
   }
 
-  async function close() {
+  // The nodes and the context go; the table keeps the device, so a new
+  // context replaces it with a single reload of the open outputs.
+  async function teardown() {
     clearInterval(timer);
     if (offGesture) offGesture();
     offGesture = null;
@@ -168,6 +170,10 @@ Module['makWebAudio'] = (() => {
       if (ownContext && ctx.state !== 'closed') await ctx.close();
     }
     ctx = null;
+  }
+
+  async function close() {
+    await teardown();
     if (table) {
       // No device: open outputs reopen and fail until the next init.
       const u = u32();

@@ -10,7 +10,8 @@ needs; Chrome and Firefox take credentialless too), so SharedArrayBuffer and
 the pthread workers are available. The page POSTs its JSON result to
 /result; the server writes it to --result and exits. A POST to
 /signal?name=<name> creates <result>.<name> for the runner (a user gesture
-to make, a CPU sample to take).
+to make, a CPU sample to take). A GET with ?delay=<ms> waits that long
+before it answers (a slow network for one file).
 
     python3 -I serve_coi.py --root <dir> --port 8123 --result <file>
 """
@@ -19,6 +20,7 @@ import functools
 import http.server
 import re
 import threading
+import time
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -28,6 +30,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '.js': 'text/javascript',
         '.wasm': 'application/wasm',
     }
+
+    def do_GET(self):
+        m = re.search(r'[?&]delay=(\d{1,5})', self.path)
+        if m:
+            time.sleep(int(m.group(1)) / 1000)
+        super().do_GET()
 
     def end_headers(self):
         self.send_header('Cross-Origin-Opener-Policy', 'same-origin')

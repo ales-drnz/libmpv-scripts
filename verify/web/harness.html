@@ -55,7 +55,8 @@ try {
     const signal = async (name) => { await fetch(`/signal?name=${name}`, { method: 'POST' }); };
     const r = await runAudioHarness(factory, inputs, log,
       { ao: q.get('ao') || 'webaudio', gesture: q.get('gesture') === '1', signal,
-        resumeOnGesture: q.get('resume') !== '0' });
+        resumeOnGesture: q.get('resume') !== '0',
+        slowProcessorUrl: new URL('lib/mak_webaudio_processor.js?delay=400', location.href).href });
     await post({ code: r.fail ? 1 : 0, busyTicks, measures: r.measures });
   } else if (mode === 'lib') {
     const { runLibHarness } = await import('./lib_harness.mjs');
