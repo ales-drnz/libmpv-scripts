@@ -9,10 +9,14 @@
 # Compiles mpv as a WebAssembly module for the browser, with Emscripten and
 # pthreads: FFmpeg audio-only and libmpv as static archives, then one module
 # (ES6 glue plus .wasm) that exports the mpv_* client API and the mak_pcm_*
-# live PCM API.
+# live PCM API, with mpv's webaudio output and its page side.
 #
 # === OUTPUT ===
-# builds/release/libmpv_web/libmpv.mjs, libmpv.wasm   the module (no main)
+# builds/release/libmpv_web/libmpv.mjs, libmpv.wasm   the module (no main),
+#                                                     with Module.makWebAudio
+# builds/release/libmpv_web/mak_webaudio_processor.js the AudioWorklet module
+#                                                     of the webaudio output
+# builds/release/libmpv_web/build_web.json            the patch record
 # $BUILD_DIR/spike/spike.mjs, spike.wasm              the W1 harness module
 #                                                     (verify/web/mak_spike.c)
 #
@@ -24,7 +28,8 @@
 # What differs from the native builds:
 # - no OpenSSL, no libsmb2, no network protocols: the browser does TLS and
 #   the transport (DISABLED_PATCHES gets libsmb2 and embed_cacert);
-# - no audio output yet besides ao=null (ao_webaudio is the next step);
+# - the audio output is webaudio (patches/mpv/web/patch_ao_webaudio.py): mpv
+#   writes rings in wasm memory that an AudioWorklet plays;
 # - every shared mpv patch is applied as on the other platforms.
 #
 # Usage (from project root):
@@ -259,6 +264,7 @@ build_ffmpeg() {
   download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
   rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
+  patch_record_start ffmpeg "$PREFIX"
   apply_ffmpeg_patches "$dir"
 
   local bdir="$BUILD_DIR/build/ffmpeg"; rm -rf "$bdir"; mkdir -p "$bdir"
@@ -295,7 +301,10 @@ build_mpv() {
   # A pristine tree on every build: the mpv patches assume an unpatched tree.
   rm -rf "$BUILD_DIR/src/mpv-$MPV_VERSION"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
+  patch_record_start mpv "$PREFIX"
   apply_mpv_patches_common "$dir"
+  # The browser's audio output. Not a toggle: without it there is no sound.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/web/patch_ao_webaudio.py" "$dir"
 
   local bdir="$BUILD_DIR/build/mpv"; rm -rf "$bdir"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -306,7 +315,8 @@ build_mpv() {
     --prefix="$PREFIX" --libdir=lib \
     --buildtype=release \
     --default-library=static \
-    $(mpv_common_args | sed "s/^-Db_lto=.*/-Db_lto=$lto/")
+    $(mpv_common_args | sed "s/^-Db_lto=.*/-Db_lto=$lto/") \
+    -Dwebaudio=enabled
   verify_mpv_config "$bdir" "web"
   ninja -j"$JOBS"; ninja install
   popd >/dev/null
@@ -355,7 +365,7 @@ write_web_exports() {
     awk '/^EXPORTS/ {on=1; next} on && NF {print $1}' "$SCRIPT_DIR/shared/mpv.def" \
       | grep -Ev '^(mpv_render_|mpv_get_wakeup_pipe$)' | sed 's/^/_/'
     printf '%s\n' _mak_web_wakeup_attach _mak_web_wakeup_detach \
-      _mak_web_layout _malloc _free
+      _mak_web_layout _mak_wa_table_get _malloc _free
   } > "$f"
   WEB_EXPORTS_FILE="$f"
 }
@@ -368,6 +378,8 @@ link_web() {
   write_web_exports
 
   log "Linking libmpv.mjs..."
+  # The page side of the webaudio output goes into the glue (post-js:
+  # Module.makWebAudio); its AudioWorklet module is a file next to it.
   # shellcheck disable=SC2046
   em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" -L"$PREFIX/lib" "${WEB_LIBS[@]}" \
     $(web_link_common) \
@@ -375,7 +387,9 @@ link_web() {
     -sEXPORT_NAME=createLibmpv \
     -sEXPORTED_FUNCTIONS=@"$WEB_EXPORTS_FILE" \
     -sEXPORTED_RUNTIME_METHODS=FS,UTF8ToString,stringToNewUTF8,HEAPU8,HEAP32,HEAPF64,wasmMemory \
+    --post-js "$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_webaudio.js" \
     -o "$RELEASE_DIR/libmpv.mjs"
+  cp "$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_webaudio_processor.js" "$RELEASE_DIR/"
   ok "libmpv.mjs ✓"
 
   log "Linking the harness (spike.mjs)..."
@@ -398,7 +412,7 @@ link_web() {
 report_sizes() {
   local f
   for f in "$RELEASE_DIR/libmpv.wasm" "$RELEASE_DIR/libmpv.mjs" \
-           "$BUILD_DIR/spike/spike.wasm"; do
+           "$RELEASE_DIR/mak_webaudio_processor.js" "$BUILD_DIR/spike/spike.wasm"; do
     [[ -f "$f" ]] || continue
     printf '%-60s raw %9d  gzip %9d  brotli %9d\n' "${f#"$LIBMPV_SCRIPTS_ROOT"/}" \
       "$(stat -c %s "$f")" "$(gzip -9c "$f" | wc -c)" \
@@ -422,6 +436,9 @@ main() {
   fi
   if [[ "$STAGE" != "libs" ]]; then
     link_web
+    # The record of the patches and filters the archives were built with,
+    # next to the module (write_build_record in shared/_audio_only.sh).
+    RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
     report_sizes
   fi
   if [[ "${KEEP_BUILD:-1}" != "1" ]]; then

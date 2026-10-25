@@ -15,9 +15,9 @@
 # line it no longer found stay in the build. Then every anchor that a script
 # on the engine lists with --list-anchors, in the order of each build script
 # with every patch on: the shared mpv patches on the Linux order, the
-# platform ones on theirs, and FFmpeg's. An anchor that may be found any
-# number of times, or more than once where the first or all count, is left
-# out: breaking one occurrence is not a failure there.
+# platform ones (the web one too) on theirs, and FFmpeg's. An anchor that may
+# be found any number of times, or more than once where the first or all
+# count, is left out: breaking one occurrence is not a failure there.
 #
 # Usage: bash verify/tests/patches/anchor_corrupt_test.sh <pristine mpv source dir> <pristine ffmpeg source dir> <work dir>
 
@@ -124,6 +124,7 @@ untested = [(s, False) for s, _ in shared]
 BUILDS = {
     'linux': (MPV, shared + [('mpv/linux/patch_optional_audio_libs.py', True)]),
     'android': (MPV, untested + [('mpv/android/patch_audiotrack.py', True)]),
+    'web': (MPV, untested + [('mpv/web/patch_ao_webaudio.py', True)]),
     'windows': (MPV, [('mpv/windows/patch_windows_deps.py', True),
                       ('mpv/windows/patch_timer_resolution.py', True)]),
     'ios': (MPV, [('mpv/ios/patch_ios_platform.py', True),
