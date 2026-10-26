@@ -81,7 +81,8 @@ Two strategies, one property
 ============================
 
 The coordinator probes the source with libav and picks the strategy
-automatically (no URL-scheme heuristic, no caller hint), exposing the
+automatically (no URL-scheme heuristic; the one caller hint is the length
+of a stream that tells none, below), exposing the
 result through the single `waveform-data` property so the wrapper never
 has to care which path produced the envelope:
 
@@ -121,6 +122,22 @@ has to care which path produced the envelope:
     `progressive`). See `mak_waveform_fold_samples` and
     `patch_filter_label_tap.py` → `mak_waveform_tap_in`.
 
+  * **HTTP stream that cannot seek and tells no length, with a hint** (a
+    transcode from a music server: chunked, no byte ranges, no
+    Content-Length). The client sets the per-file option
+    `waveform-duration-hint` (seconds, 0 for none) to the length it knows,
+    and the cache feed above decodes the stream with that length as its
+    axis, `decoding` while the cache fills. The pass ends at the first of
+    the end of the stream and the hinted length, so a wrong hint still ends
+    `ready`: a short one covers the hint and leaves the rest of the stream
+    out; a long one ends at the end of the stream, its bins trimmed after
+    the last one filled as for a duration that overshoots (the reader
+    leaves them out, `total_bins` keeps the hinted axis). A pass that
+    cannot be clean grows from playback on the hinted axis instead of
+    opening the stream again, which would start a second transcode. Not
+    read for any other source; without a hint the stream goes to one of
+    the two strategies below.
+
   * **Unknown duration** (true live): no fixed `[0, total]` axis exists, so
     state `rolling` — a sliding window of ABSOLUTE media-time bins, grown by
     the same af-tap fold and retained in lockstep with the demuxer's seekable
@@ -156,6 +173,7 @@ Files patched
                            `mak_scan_file_closed` when the file closes
     player/command.c       property registration + getter/setter
     player/main.c          setup in mp_create, teardown in mp_destroy
+    options/options.h/.c   the waveform-duration-hint option
     meson.build            new source files added to the build
 
 Layout
@@ -231,6 +249,7 @@ LOADFILE_NOTIFY_PATCHED = (
     '    /* ' + MARKER + ' */\n'
     '    mak_scan_start(mpctx->stream_open_filename, '
     'get_time_length(mpctx),\n'
+    '                   mpctx->opts->mak_waveform_duration_hint,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->filetype : NULL,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->is_network : false,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->seekable : false,\n'
@@ -259,6 +278,32 @@ LOADFILE_CLOSE_PATCHED = (
     '    /* ' + MARKER + ' */\n'
     '    mak_scan_file_closed();\n'
     '    uninit_demuxer(mpctx);\n'
+)
+
+
+# ─── options/options.h, options/options.c ─────────────────────────────
+
+# The per-file option waveform-duration-hint: the length a client already
+# knows for a network stream that tells none (a transcode from a music
+# server), read by mak_scan_start at FILE_LOADED. Next to prefetch-playlist,
+# whose opener never reads it (patch_prefetch.py ignores it when it compares
+# the per-file options of two entries). Pristine lines lifted from mpv
+# 0.41.0.
+OPTIONS_H_PRISTINE = '    bool prefetch_open;\n'
+
+OPTIONS_H_PATCHED = (
+    '    bool prefetch_open;\n'
+    '    /* ' + MARKER + ' ─── waveform-duration-hint */\n'
+    '    double mak_waveform_duration_hint;\n'
+)
+
+OPTIONS_C_PRISTINE = '    {"prefetch-playlist", OPT_BOOL(prefetch_open)},\n'
+
+OPTIONS_C_PATCHED = (
+    '    {"prefetch-playlist", OPT_BOOL(prefetch_open)},\n'
+    '    /* ' + MARKER + ' */\n'
+    '    {"waveform-duration-hint", OPT_DOUBLE(mak_waveform_duration_hint),\n'
+    '        M_RANGE(0, DBL_MAX)},\n'
 )
 
 
@@ -546,6 +591,12 @@ def apply(p):
          COMMAND_TABLE_PATCHED),
         ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
          p.asset('bulk_analysis/waveform_command_insert.c')),
+    ])
+    p.edits('options/options.h', [
+        ('MPOpts field', OPTIONS_H_PRISTINE, OPTIONS_H_PATCHED),
+    ])
+    p.edits('options/options.c', [
+        ('option table entry', OPTIONS_C_PRISTINE, OPTIONS_C_PATCHED),
     ])
     p.edits('player/main.c', [
         ('main.c includes', MAIN_INCLUDE_PRISTINE, MAIN_INCLUDE_PATCHED),

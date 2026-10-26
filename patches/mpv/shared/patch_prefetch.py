@@ -65,7 +65,9 @@ The opener reads the global options, which during playback hold the
 per-file options of the playing entry. prefetch_next skips an entry whose
 per-file options differ from the playing one's (same names and values in
 the same order), so its HTTP headers never reach another host. That
-transition opens the entry from scratch.
+transition opens the entry from scratch. waveform-duration-hint
+(patch_bulk_analysis.py) does not count: the opener never reads it, and the
+analysis reads the entry's own after the transition.
 
 ===== Entry lifetime and players =====
 

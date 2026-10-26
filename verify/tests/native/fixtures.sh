@@ -24,6 +24,8 @@
 #             3600 s later, gaplate.ogg in Vorbis starting at 100 s
 #   over.aac  ADTS AAC, 3 s of silence then pink noise, 40 s, whose
 #             estimated duration overshoots
+#   hint.opus Ogg Opus at 128 kb/s, 30 s of pink noise (about 330 KB): read
+#             as a chunked stream, mpv knows no length for it
 # playback/ (pcm_*, chapter_list_test, af_command_args_test): constant (DC)
 # files, so a sample tells which file it came from, 3 s each unless said
 #   p_st48.flac   +0.25, stereo, 48 kHz     p_mono48.flac +0.25, mono, 48 kHz
@@ -91,6 +93,9 @@ fi
 # longer than its 40 s.
 [[ -f "$d/over.aac" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=44100:duration=40" \
   -af "volume=enable='lt(t,3)':volume=0" -ac 2 -c:a aac -q:a 2 -f adts "$d/over.aac"
+# A transcode served without a length (mpv_audio_kit #29).
+[[ -f "$d/hint.opus" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=48000:duration=30" \
+  -ac 2 -c:a libopus -b:a 128k "$d/hint.opus"
 
 d="$D/playback"; mkdir -p "$d"
 dc() { [[ -f "$d/$1" ]] || ff -f lavfi -i "aevalsrc=$2:s=$3:d=$4" -c:a flac "$d/$1"; }
