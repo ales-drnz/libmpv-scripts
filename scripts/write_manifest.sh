@@ -10,7 +10,7 @@
 # the libmpv-<release> GitHub release. It states what the release contains,
 # so consumers never re-derive it from this repo's scripts:
 #
-#   release        the release tag suffix (LIBMPV_RELEASE, e.g. "r19")
+#   release        the release tag suffix (LIBMPV_RELEASE, e.g. "r20")
 #   mpv, ffmpeg    the pinned upstream versions
 #   audioFilters   the lavfi audio filters compiled in, which mpv_audio_kit's
 #                  codegen turns into its typed effects API

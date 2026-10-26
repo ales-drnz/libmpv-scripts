@@ -240,8 +240,8 @@ Every push to a `release/` branch runs `.github/workflows/build.yml`, which buil
 From 0.5.0, `mpv_audio_kit` gets libmpv through a build hook (`hook/build.dart`). When an app builds, the hook downloads the library for the target from the package's `libmpv-rN` GitHub release and checks its SHA-256. To point the package at a release, run this in `mpv_audio_kit`:
 
 ```bash
-scripts/update_libmpv.sh r19                        # a published release
-scripts/update_libmpv.sh r19 path/to/manifest.json  # before publishing it
+scripts/update_libmpv.sh r20                        # a published release
+scripts/update_libmpv.sh r20 path/to/manifest.json  # before publishing it
 ```
 
 It writes the release and the hashes from `manifest.json` into the hook.

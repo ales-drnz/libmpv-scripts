@@ -751,7 +751,7 @@ _mpv_patch() {
 apply_mpv_patches_common() {
   local mpv_dir="$1"
   # Stamp the release into mpv's version (see LIBMPV_RELEASE). A tarball has no
-  # git history, so mpv's version.h falls back to this file: "v0.41.0+r19".
+  # git history, so mpv's version.h falls back to this file: "v0.41.0+r20".
   printf '%s+%s\n' "$MPV_VERSION" "$LIBMPV_RELEASE" > "$mpv_dir/MPV_VERSION"
   # Build infrastructure (libplacebo + libass made required:false) — never gated.
   # MUST run before strip_libass/strip_mpv_dead, which both assume this form.
