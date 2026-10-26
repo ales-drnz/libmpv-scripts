@@ -61,6 +61,7 @@ reads, set up by `Module.makWebAudio` (`scripts/web/mak_webaudio.js`).
 | `gesture.mjs` | a trusted click through the browser's remote protocol, for the AudioContext that waits for a gesture |
 | `proc_cpu.py` | the CPU time of the browser's processes |
 | `firefox_sound.sh` | the sound device of the test Firefox: the null sink `PULSE_SINK` names, JACK and ALSA cut off |
+| `browser_group.sh`, `browser_group_test.sh` | the browser of a run in a process group of its own: the cleanup removes the profile once every process of it is gone; the test checks it against stand-ins of a browser |
 
 No browser plays on the speakers. Chrome renders into its fake output
 (`--disable-audio-output`). Firefox plays into the null sink that
