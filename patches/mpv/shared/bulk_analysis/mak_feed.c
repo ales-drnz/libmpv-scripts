@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── cache-fed analysis of a seekable network file.
+/* MAK_WAVEFORM_PATCH ─── cache-fed analysis of an HTTP file.
  * See mak_feed.h. One detached thread per generation: it pops the demuxer
  * feed, decodes with libavcodec the way mpv's own audio decoder does, folds
  * the mono downmix into the waveform and, with the loudness patch in, feeds
@@ -6,7 +6,8 @@
  * file to its end. Anything else (a packet that does not come from the
  * start, a gap, a timestamp jump, an end of file short of the duration)
  * hands the generation to the re-open of mak_scan.c, as before the feed
- * existed. It also exits when the generation moves on or the demuxer goes
+ * existed, or for a stream on a hinted length to the waveform grown from
+ * playback. It also exits when the generation moves on or the demuxer goes
  * away. */
 #include <math.h>
 #include <stdbool.h>
@@ -74,6 +75,9 @@ struct feed_args {
     int64_t start;            /* timestamp of playback time 0, in samples */
     double duration_secs;
     int64_t total_samples;    /* the axis, as the bulk coordinator builds it */
+    /* The axis is a length the client gave for a stream that cannot seek
+     * and tells none (waveform-duration-hint): see mak_feed.h. */
+    bool hinted;
     char *url;                /* for the re-open */
     AVDictionary *net_opts;   /* mpv's network options, for the re-open */
     struct mak_scan_track track; /* the stream of [url] to re-open */
@@ -343,8 +347,12 @@ static MP_THREAD_VOID feed_main(void *p)
                 (int64_t)(MAK_FEED_END_SLACK_SECS * a->rate);
             bool at_size = size > 0 && d.byte_end > 0 &&
                 d.byte_end >= size - MAK_FEED_TAIL_BYTES;
+            /* A stream on a hinted length ends where it ends: the length is
+             * the client's, and a re-open could only download it again. A
+             * hint past the end leaves the bins after the last one filled,
+             * which the completion trims as for a duration that overshoots. */
             complete = d.from_bof && d.anchored && !d.rate_changed &&
-                (at_duration || at_size);
+                (a->hinted || at_duration || at_size);
             reopen = !complete;
             break;
         }
@@ -369,6 +377,12 @@ static MP_THREAD_VOID feed_main(void *p)
             reopen = true;
             break;
         }
+        /* A hinted length shorter than the stream ends the pass there:
+         * nothing past the axis folds. */
+        if (a->hinted && d.anchored && d.emitted >= a->total_samples) {
+            complete = true;
+            break;
+        }
     }
 
     if (complete && mak_waveform_fed_complete(a->gen)) {
@@ -388,9 +402,16 @@ static MP_THREAD_VOID feed_main(void *p)
     }
     /* The pass cannot cover the file: the re-open takes the generation over,
      * from a clean state, as it would have without the feed. */
-    if (reopen && mak_waveform_fed_abandon(a->gen))
-        mak_scan_reopen(a->gen, a->url, a->duration_secs, a->net_opts,
-                        &a->track);
+    /* A stream on a hinted length is not opened again (a second request
+     * would start a second transcode): it grows from playback on the same
+     * axis, as when the cache cannot be fed at all. */
+    if (reopen && mak_waveform_fed_abandon(a->gen)) {
+        if (a->hinted)
+            mak_waveform_arm_progressive(a->gen, a->duration_secs);
+        else
+            mak_scan_reopen(a->gen, a->url, a->duration_secs, a->net_opts,
+                            &a->track);
+    }
     /* The demuxer went away before the end (stop, next file): nothing will
      * finish this generation, so close it instead of leaving a partial
      * envelope on "decoding" and the loudness on "scanning". */
@@ -428,7 +449,7 @@ done:
 }
 
 bool mak_feed_start(int gen, struct demuxer *demuxer, struct sh_stream *audio,
-                    double duration_secs, const char *url,
+                    double duration_secs, bool hinted, const char *url,
                     const struct mak_scan_track *track,
                     struct mpv_global *global, struct mp_log *log)
 {
@@ -448,6 +469,7 @@ bool mak_feed_start(int gen, struct demuxer *demuxer, struct sh_stream *audio,
         return false;
     }
     a->gen = gen;
+    a->hinted = hinted;
     a->par = par;
     a->track = *track;
     a->url = strdup(url);
@@ -457,8 +479,9 @@ bool mak_feed_start(int gen, struct demuxer *demuxer, struct sh_stream *audio,
         return false;
     }
     /* Snapshot now, on the core thread, as mak_scan_start does for its own
-     * re-open: the file-local headers of this track ride along. */
-    if (global)
+     * re-open: the file-local headers of this track ride along. A hinted
+     * stream is never re-opened. */
+    if (global && !hinted)
         mp_setup_av_network_options(&a->net_opts, NULL, global, log);
     a->tb = mp_get_codec_timebase(audio->codec);
     a->rate = par->sample_rate;

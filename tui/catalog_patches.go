@@ -53,7 +53,7 @@ func patchesCatalog() []PatchItem {
 		{ID: "audio_output_state", Title: "Audio-output state", Desc: "Observable 'audio-output-state' (connecting/failed)", Category: "mpv runtime", DefaultOn: true},
 		{ID: "embedded_cover_art", Title: "Embedded cover art", Desc: "Expose embedded album-art bytes + MIME as properties", Category: "mpv runtime", DefaultOn: true},
 		{ID: "pcm_tap", Title: "PCM tap (visualizer)", Desc: "'pcm-tap-frame' post-DSP samples for spectrum visualizers", Category: "mpv runtime", DefaultOn: true},
-		{ID: "bulk_analysis", Title: "Bulk waveform analysis", Desc: "Whole-file min/max waveform envelope on load", Category: "mpv runtime", DefaultOn: true},
+		{ID: "bulk_analysis", Title: "Bulk waveform analysis", Desc: "Whole-file min/max waveform envelope on load, decoded from the cache for an HTTP file, and for a stream of unknown length with 'waveform-duration-hint'", Category: "mpv runtime", DefaultOn: true},
 		{ID: "loudness_scan", Title: "Offline loudness scan", Desc: "EBU R128 integrated/LRA/true-peak on load (ReplayGain for untagged files). Rides Bulk waveform analysis — disabled with it.", Category: "mpv runtime", DefaultOn: true},
 		{ID: "filter_label_tap", Title: "Per-filter audio tap", Desc: "Pre/post tap per filter for plug-in–style meters", Category: "mpv runtime", DefaultOn: true},
 		{ID: "chain_eof", Title: "Keep EOF on filter changes", Desc: "Refresh-seek when an af change frees a filter holding the end of file, so playback does not stall at the end", Category: "mpv runtime", DefaultOn: true},

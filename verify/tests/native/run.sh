@@ -84,6 +84,8 @@ CASES=(
   "lib analysis_tail_test analysis 2000000 over"
   "lib analysis_tail_test analysis 2000000:400000 overcut"
   "lib analysis_feed_test analysis 600000 grow"
+  "lib analysis_hint_test analysis 60000::chunked exact short long none full nocache"
+  "lib analysis_hint_test analysis 600000 range"
   "unit loudness_lock_test - - run"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek"

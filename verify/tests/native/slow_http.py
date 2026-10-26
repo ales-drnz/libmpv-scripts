@@ -52,7 +52,7 @@ for a in sys.argv[4:]:
 RESUME, NORANGE, NOLENGTH = 'resume' in OPTS, 'norange' in OPTS, 'nolength' in OPTS
 DROP, DOWN, OUTAGE = 'drop' in OPTS, 'down' in OPTS, 'outage' in OPTS
 CHUNKED, BETWEEN, CLOSE = 'chunked' in OPTS, 'between' in OPTS, 'close' in OPTS
-TYPES = {'.flac': 'audio/flac', '.mp3': 'audio/mpeg', '.m3u8': 'application/vnd.apple.mpegurl',
+TYPES = {'.flac': 'audio/flac', '.mp3': 'audio/mpeg', '.opus': 'audio/ogg', '.m3u8': 'application/vnd.apple.mpegurl',
          '.ts': 'video/mp2t', '.mpd': 'application/dash+xml', '.m4s': 'audio/mp4'}
 cut_done = False
 outage_over = False

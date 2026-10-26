@@ -1317,6 +1317,7 @@ static int scan_dup_fd(const char *num, struct mp_log *log)
 #endif
 
 void mak_scan_start(const char *url, double duration_secs,
+                    double duration_hint,
                     const char *format_name, bool is_network,
                     bool seekable, struct mpv_global *global,
                     struct mp_log *log, struct demuxer *demuxer,
@@ -1399,6 +1400,26 @@ void mak_scan_start(const char *url, double duration_secs,
     bool name_adaptive = strstr(fn, "dash") ||
                          strstr(fn, "hls")  ||
                          strstr(fn, "applehttp");
+    const char *sep = strstr(url, "://");
+    bool is_http = is_network && sep && (mak_url_scheme_is(url, sep, "http") ||
+                                         mak_url_scheme_is(url, sep, "https"));
+
+    /* ── HTTP stream with a length hint: decode it from the cache ─────────
+     * A transcode a music server sends chunked, without byte ranges or a
+     * length, cannot seek and has no duration at FILE_LOADED, although mpv
+     * caches the whole of it in seconds (mpv_audio_kit #29). With the length
+     * the client knows (the per-file option waveform-duration-hint), the
+     * cache feed decodes it on that axis, as for a seekable HTTP file below,
+     * instead of growing it from playback. Never re-opened: a second request
+     * would start a second transcode. When the cache cannot be fed, the
+     * waveform grows from playback on the same axis. */
+    if (is_http && !name_adaptive && !seekable && duration_hint > 0) {
+        if (!mak_feed_start(new_gen, demuxer, audio, duration_hint, true, url,
+                            &track, global, log))
+            mak_waveform_arm_progressive(new_gen, duration_hint);
+        return;
+    }
+
     if (is_network && (name_adaptive || !seekable)) {
         if (duration_secs > 0)
             mak_waveform_arm_progressive(new_gen, duration_secs);
@@ -1412,11 +1433,9 @@ void mak_scan_start(const char *url, double duration_secs,
      * to the re-open when the cache cannot cover the whole file (see
      * mak_demux_feed_attach). SMB and other file-like schemes keep the
      * parallel decode, which is faster than their download. */
-    const char *sep = strstr(url, "://");
-    if (is_network && sep && (mak_url_scheme_is(url, sep, "http") ||
-                              mak_url_scheme_is(url, sep, "https")) &&
-        mak_feed_start(new_gen, demuxer, audio, duration_secs, url, &track,
-                       global, log))
+    if (is_http &&
+        mak_feed_start(new_gen, demuxer, audio, duration_secs, false, url,
+                       &track, global, log))
         return;
 
     /* Local file, or a seekable HTTP byte-range part (direct-play): hand to the

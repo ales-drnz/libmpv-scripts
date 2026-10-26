@@ -89,6 +89,7 @@ static int mp_property_waveform_enabled(void *ctx, struct m_property *prop,
             if (start && mpctx->playback_initialized)
                 mak_scan_start(mpctx->stream_open_filename,
                                get_time_length(mpctx),
+                               mpctx->opts->mak_waveform_duration_hint,
                                mpctx->demuxer ? mpctx->demuxer->filetype : NULL,
                                mpctx->demuxer ? mpctx->demuxer->is_network : false,
                                mpctx->demuxer ? mpctx->demuxer->seekable : false,

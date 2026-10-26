@@ -48,6 +48,12 @@ struct mak_scan_track {
  * the server kills+restarts it on each init-segment request, so the probe and
  * the player's own open kill each other → HTTP 500 → no waveform + desync.
  * Strategy:
+ *   - **HTTP + non-seekable + not adaptive, with [duration_hint] > 0** (a
+ *     transcode that tells no length, the per-file option
+ *     waveform-duration-hint): decoded from [demuxer]'s cache like a
+ *     seekable HTTP file below, on an axis of [duration_hint] seconds, and
+ *     never re-opened (see mak_feed.h). Grown from playback on that axis
+ *     when the cache cannot be fed.
  *   - **network + adaptive** ([format_name] hls/dash/applehttp) OR
  *     **network + non-seekable**: arm PROGRESSIVE ([duration_secs] > 0) or
  *     ROLLING (unknown) DIRECTLY — grown from playback by the af-tap, NO
@@ -85,6 +91,7 @@ struct mp_log;
 struct demuxer;
 struct sh_stream;
 void mak_scan_start(const char *url, double duration_secs,
+                    double duration_hint,
                     const char *format_name, bool is_network,
                     bool seekable, struct mpv_global *global,
                     struct mp_log *log, struct demuxer *demuxer,
