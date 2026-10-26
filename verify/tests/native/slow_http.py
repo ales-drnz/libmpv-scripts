@@ -19,6 +19,9 @@ with Content-Length 0 (a download cut short for good). The options:
                   connection closes before the status line
   down            the server exits once the cut is sent, so every reconnect
                   is refused (the network is gone)
+  outage          once the cut is sent, every request gets no reply, as with
+                  drop, until a request for /up (answered 204) ends the
+                  outage: a server that comes back
   norange         no Accept-Ranges, and a Range header is ignored (200 with
                   the whole file); cut stops every response
   nolength        the size is never told: no Content-Length, the body ends
@@ -47,15 +50,25 @@ for a in sys.argv[4:]:
         k, _, v = a.partition('=')
         OPTS[k] = v
 RESUME, NORANGE, NOLENGTH = 'resume' in OPTS, 'norange' in OPTS, 'nolength' in OPTS
-DROP, DOWN = 'drop' in OPTS, 'down' in OPTS
+DROP, DOWN, OUTAGE = 'drop' in OPTS, 'down' in OPTS, 'outage' in OPTS
 CHUNKED, BETWEEN, CLOSE = 'chunked' in OPTS, 'between' in OPTS, 'close' in OPTS
 TYPES = {'.flac': 'audio/flac', '.mp3': 'audio/mpeg', '.m3u8': 'application/vnd.apple.mpegurl',
          '.ts': 'video/mp2t', '.mpd': 'application/dash+xml', '.m4s': 'audio/mp4'}
 cut_done = False
+outage_over = False
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        global cut_done
+        global cut_done, outage_over
         name = os.path.basename(self.path)
+        if OUTAGE and self.path == '/up':
+            outage_over = True
+            sys.stderr.write('GET /up: outage over\n')
+            self.send_response(204); self.send_header('Content-Length', '0'); self.end_headers()
+            return
+        if OUTAGE and cut_done and not outage_over:
+            sys.stderr.write(f'GET {self.path} {self.headers.get("Range", "")} dropped (outage)\n')
+            self.close_connection = True
+            return
         p = os.path.join(ROOT, name)
         if name == OPTS.get('missing') or not os.path.isfile(p):
             sys.stderr.write(f'GET {self.path} 404\n')

@@ -843,9 +843,9 @@ apply_mpv_patches_common() {
   _mpv_patch af_command_args    patch_af_command_args.py    "$mpv_dir"
   # read_error: the demuxer-read-error and demuxer-skipped-segments
   # properties and the END_FILE fields that tell a file cut short by a read
-  # error from one that ended. The FFmpeg side of the same toggle
-  # (apply_ffmpeg_patches) fixes the EIO of http.c and counts the segments;
-  # without it the count stays 0.
+  # error from one that ended, and a seek after the error tries the read
+  # again. The FFmpeg side of the same toggle (apply_ffmpeg_patches) fixes
+  # the EIO of http.c and counts the segments; without it the count stays 0.
   _mpv_patch read_error         patch_read_error.py         "$mpv_dir"
   # NOTE: the `timer_resolution` patch is Windows-only (it edits the
   # win32-only osdep/timer-win32.c), so it lives in patches/mpv/windows/ and
