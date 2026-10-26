@@ -314,7 +314,7 @@ addToLibrary({
         const t0 = performance.now();
         let resp;
         try {
-          resp = await fetch(url, init);
+          resp = await (blob ? MakWebio.fetchBlob(e, gen, url, init) : fetch(url, init));
         } catch (err) {
           if (!MakWebio.live(e, gen)) return;
           if (req.extra && !e.dropExtra) {
@@ -388,6 +388,27 @@ addToLibrary({
         return MakWebio.pump(e, gen, part.stream().getReader(), null);
       } catch (err) {
         if (MakWebio.live(e, gen)) MakWebio.fail(e, gen, 1, 0, `webio: ${url}: the blob cannot be read: ${err && err.message || err}`);
+      }
+    },
+
+    // A fetch of a blob: URL from this thread that Firefox leaves without an
+    // answer, at times for good; asked again, it answers. The data is the
+    // page's, so the answer otherwise comes in a few ms. Each try waits
+    // BLOB_ANSWER_MS, the last one as long as webio.c lets it.
+    BLOB_ANSWER_MS: 300,
+    BLOB_TRIES: 4,
+
+    async fetchBlob(e, gen, url, init) {
+      for (let i = 1; ; i++) {
+        const ctrl = new AbortController();
+        e.ctrl = ctrl;
+        const req = fetch(url, { ...init, signal: ctrl.signal });
+        if (i === MakWebio.BLOB_TRIES) return req;
+        let timer;
+        const late = new Promise((resolve) => { timer = setTimeout(resolve, MakWebio.BLOB_ANSWER_MS, null); });
+        const resp = await Promise.race([req, late]).finally(() => clearTimeout(timer));
+        if (resp || !MakWebio.live(e, gen)) return resp || req;
+        ctrl.abort();
       }
     },
 

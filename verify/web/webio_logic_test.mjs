@@ -4,7 +4,8 @@
 
 // The pure helpers of scripts/web/mak_webio.js in plain Node, without the
 // module: header rules of the browser, the answer of a Range request, the
-// ICY splitter at every chunk boundary, the messages of a refused fetch.
+// ICY splitter at every chunk boundary, the messages of a refused fetch,
+// the second try of a blob fetch left without an answer.
 //
 //   node verify/web/webio_logic_test.mjs
 import { readFileSync } from 'node:fs';
@@ -172,6 +173,65 @@ test('fetchError names CORS, network and mixed content', () => {
   } finally {
     delete globalThis.location;
   }
+});
+
+// fetchBlob against a fetch that answers from the given try on (0: never),
+// and rejects when its request is aborted, as the browser's does.
+const blobFetch = async (answerFrom, { stale = false } = {}) => {
+  const calls = [];
+  const saved = [globalThis.fetch, W.BLOB_ANSWER_MS, W.streams];
+  globalThis.fetch = (url, init) => {
+    calls.push(init.signal);
+    if (answerFrom && calls.length >= answerFrom) return Promise.resolve({ status: 206, try: calls.length });
+    return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
+  };
+  W.BLOB_ANSWER_MS = 20;
+  W.streams = new Map();
+  const e = { s: 1, gen: 5 };
+  W.streams.set(1, e);
+  if (stale) setTimeout(() => { e.gen = 6; }, 5);
+  try {
+    const p = W.fetchBlob(e, 5, 'blob:x', { headers: [] });
+    const r = await Promise.race([p, new Promise((res) => setTimeout(res, 500, 'pending'))]);
+    return { r, calls, aborted: calls.map((c) => c.aborted), ctrlIsLast: e.ctrl && e.ctrl.signal === calls.at(-1) };
+  } finally {
+    [globalThis.fetch, W.BLOB_ANSWER_MS, W.streams] = saved;
+  }
+};
+const testAsync = async (name, fn) => {
+  try {
+    await fn();
+    pass++;
+    console.log(`ok ${name}`);
+  } catch (e) {
+    console.log(`FAIL ${name}\n${e.stack}`);
+    process.exitCode = 1;
+  }
+};
+
+await testAsync('fetchBlob: an answer at once is taken, one request', async () => {
+  const x = await blobFetch(1);
+  assert.equal(x.r.try, 1);
+  assert.deepEqual(x.aborted, [false]);
+});
+
+await testAsync('fetchBlob: a blob fetch without an answer is asked again', async () => {
+  const x = await blobFetch(2);
+  assert.equal(x.r.try, 2);
+  assert.deepEqual(x.aborted, [true, false]);
+  assert.ok(x.ctrlIsLast, 'stop() aborts the request in flight');
+});
+
+await testAsync('fetchBlob: the last try waits as long as webio.c lets it', async () => {
+  const x = await blobFetch(0);
+  assert.equal(x.r, 'pending');
+  assert.equal(x.calls.length, W.BLOB_TRIES);
+  assert.deepEqual(x.aborted, [...Array(W.BLOB_TRIES - 1).fill(true), false]);
+});
+
+await testAsync('fetchBlob: a stale request is not asked again', async () => {
+  const x = await blobFetch(0, { stale: true });
+  assert.equal(x.calls.length, 1);
 });
 
 console.log(`RESULT pass=${pass} fail=${process.exitCode ? 'some' : 0}`);

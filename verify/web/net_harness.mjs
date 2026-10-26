@@ -478,20 +478,29 @@ export async function runNetHarness(factory, env, log) {
   }
 
   // ── blob: URLs ────────────────────────────────────────────────────────
+  // A file of the page: it answers in a few ms, a seek included. Repeated,
+  // a new blob each time: in Firefox a blob fetch of the net thread could
+  // stay unanswered (the open's seek to the tail, until webio's timeout).
   if (env.blobUrl) {
-    await run('blob', async (core) => {
-      const url = await env.blobUrl('long_60s.flac');
-      const l = await load(core, `makblob://${url.slice('blob:'.length)}`);
-      check(l.ok, 'blob.loaded', `${l.ms.toFixed(1)} ms`);
-      const sk = await core.get('seekable', FMT.FLAG);
-      check(sk.value === true, 'blob.seekable', String(sk.value));
-      const s = await seekTo(core, 50);
-      check(s.ok && Math.abs(s.pos - 50) < 1.5, 'blob.seek', `time-pos ${s.pos}`);
-      await resume(core);
-      const e = await l.ended;
-      check(e && e.reason === END.EOF, 'blob.eof');
-      measure('blob.answer', JSON.stringify(logs(core, /webio: blob/).map((x) => /HTTP \d+/.exec(x)?.[0])));
-    }, { extra: PAUSED });
+    for (let i = 1; i <= repeat; i++) {
+      const name = `blob#${i}`;
+      await run(name, async (core) => {
+        const url = await env.blobUrl('long_60s.flac');
+        const l = await load(core, `makblob://${url.slice('blob:'.length)}`);
+        check(l.ok && l.ms < 5000, `${name}.loaded`, `${l.ms.toFixed(1)} ms`);
+        const sk = await core.get('seekable', FMT.FLAG);
+        check(sk.value === true, `${name}.seekable`, String(sk.value));
+        const t0 = now();
+        const s = await seekTo(core, 50);
+        const ms = now() - t0;
+        check(s.ok && Math.abs(s.pos - 50) < 1.5 && ms < 5000, `${name}.seek`, `time-pos ${s.pos} in ${ms.toFixed(1)} ms`);
+        await resume(core);
+        const e = await l.ended;
+        check(e && e.reason === END.EOF, `${name}.eof`);
+        check(logs(core, /no answer within/).length === 0, `${name}.answered`, logs(core, /no answer|webio: blob/).slice(0, 3).join(' | '));
+        measure(`${name}.answer`, JSON.stringify(logs(core, /webio: blob/).map((x) => /HTTP \d+/.exec(x)?.[0])));
+      }, { extra: PAUSED });
+    }
   }
 
   // ── open and close cycles ─────────────────────────────────────────────
