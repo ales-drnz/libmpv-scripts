@@ -37,6 +37,7 @@
 #include <mpv/client.h>
 
 #ifdef __EMSCRIPTEN__
+#include <emscripten/em_asm.h>
 #include <emscripten/heap.h>
 #else
 #include <sys/resource.h>
@@ -101,6 +102,32 @@ static double heap_size(void)
 #else
     return 0;
 #endif
+}
+
+/* Threads that hold a worker, this one included. A thread that ended
+ * frees its stack (2 MB, thread stacks come from malloc) when the main
+ * thread handles its cleanup message and takes the worker back into the
+ * pool, which can be after mpv_terminate_destroy returned. */
+static int running_threads(void)
+{
+#ifdef __EMSCRIPTEN__
+    return MAIN_THREAD_EM_ASM_INT({ return Object.keys(PThread.pthreads).length; });
+#else
+    return 0;
+#endif
+}
+
+/* Waits up to 5 s for the threads over `base` to give their workers back,
+ * so the heap is read without a stack the main thread has yet to free.
+ * Returns how many are still over. */
+static int settle_threads(int base, double *waited_ms)
+{
+    double t0 = now_ms();
+    int n;
+    while ((n = running_threads()) > base && now_ms() - t0 < 5000)
+        usleep(1000);
+    *waited_ms = now_ms() - t0;
+    return n - base;
 }
 
 /* The most memory the process held: dlmalloc's max footprint on the web
@@ -520,6 +547,8 @@ int main(int argc, char **argv)
     printf("spike: %d loop(s), %d file(s), %d long file(s)\n", loops, nfiles, nlong);
 
     double in_use_after[64] = {0};
+    int base_threads = running_threads(), threads_left = 0;
+    double settle_max_ms = 0;
     for (int loop = 0; loop < loops && loop < 64; loop++) {
         double t_loop = now_ms(), init_ms = 0;
         struct run r = {0};
@@ -595,10 +624,16 @@ int main(int argc, char **argv)
 
         double t_destroy = now_ms();
         mpv_terminate_destroy(r.h);
-        double destroy_ms = now_ms() - t_destroy;
+        double destroy_ms = now_ms() - t_destroy, settle_ms;
+        double in_use_at_return = heap_in_use();
+        int left = settle_threads(base_threads, &settle_ms);
+        threads_left = left > threads_left ? left : threads_left;
+        settle_max_ms = fmax(settle_max_ms, settle_ms);
         in_use_after[loop] = heap_in_use();
-        printf("loop %d: %.1f ms, init %.1f ms, destroy %.1f ms, logs %d, heap in use %.0f, heap size %.0f\n",
-               loop, now_ms() - t_loop, init_ms, destroy_ms, r.logs, in_use_after[loop], heap_size());
+        printf("loop %d: %.1f ms, init %.1f ms, destroy %.1f ms, logs %d, heap in use %.0f "
+               "(%.0f when mpv_terminate_destroy returned, threads back %.1f ms later), heap size %.0f\n",
+               loop, now_ms() - t_loop, init_ms, destroy_ms, r.logs, in_use_after[loop],
+               in_use_at_return, settle_ms, heap_size());
         fflush(stdout);
         if (loop == 0)
             measure("terminate_destroy_ms", destroy_ms);
@@ -616,6 +651,12 @@ int main(int argc, char **argv)
                a, loops - 1, b);
 #endif
     }
+#ifdef __EMSCRIPTEN__
+    check(threads_left <= 0, "threads",
+          "the threads of every core gave their worker back, at most %.1f ms after "
+          "mpv_terminate_destroy%s",
+          settle_max_ms, threads_left > 0 ? " (some still running after 5 s)" : "");
+#endif
     measure("heap_size_end", heap_size());
     measure("peak_memory_bytes", peak_memory());
     printf("RESULT pass=%d fail=%d\n", g_pass, g_fail);
