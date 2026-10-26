@@ -1,9 +1,10 @@
 /* MAK_READ_ERROR_PATCH_V1 ─── read-only flag: the reading of the current
  * file stopped on a read error (a connection that dropped, a server that
  * closed before the length it announced) and not at the file's real end.
- * It turns yes when the demuxer stops reading, ahead of eof-reached, and
- * back to no when the reading resumes after a seek. Unavailable without a
- * file. MPV_EVENT_END_FILE carries the same value in mak_read_error. */
+ * It turns yes when the demuxer stops reading, ahead of eof-reached. A
+ * seek after it tries the read again: back to no when the reading resumes,
+ * yes again when it fails again. Unavailable without a file.
+ * MPV_EVENT_END_FILE carries the same value in mak_read_error. */
 static int mp_property_demuxer_read_error(void *ctx, struct m_property *prop,
                                           int action, void *arg)
 {

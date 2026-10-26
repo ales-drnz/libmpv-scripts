@@ -35,6 +35,31 @@
 //             real end, since only the resume at the cut gets no reply. No
 //             error at the second park: the error avio kept from the cut
 //             must not come back at the real end.
+//   retry     n.flac cut at 2/3, then the server answers nothing until the
+//             test asks it for /up (slow_http.py outage); keep-open and the
+//             seekable cache. At the park a seek to 2.9 s, 25 KB past the
+//             cut, while the server is still down: the read is tried again
+//             and fails, the player parks again soon with
+//             demuxer-read-error yes. Then /up
+//             and the same seek: the read resumes there, reaches the real
+//             end, and demuxer-read-error is no at the second park. A cache
+//             range that ends on a read error is no end of the file: a seek
+//             past it is no seek into the cache.
+//   retryback the same with a seek back to 0.5 s, into the cache: the
+//             cache plays up to the cut, then the demuxer tries the read
+//             again from the end of the cached range; refused, the player
+//             parks at the cut again, and after /up it plays to the end.
+//   retrynocache, retrybacknocache  retry and retryback with
+//             demuxer-seekable-cache=no and the whole file in the stream
+//             buffer (stream-buffer-size 1 MiB, as a small file is): every
+//             seek goes to the demuxer and lands in the stream buffer, and
+//             the stream must open the connection again where the cut left
+//             it once the reading gets there. FFmpeg's reconnect is off
+//             (reconnect=0): the seek opens the connection all the same.
+//   retrymp3  retry with n.mp3 cut at 2/3: FFmpeg seeks a CBR MP3 by
+//             offset, and the seek to 2.9 s, 3 KB past the cut, is short
+//             enough to stay in the avio of the demuxer, which must not
+//             stop on the end it kept from the cut.
 //   hls       hls.m3u8 (n.flac in 1 s segments) whose seg2.ts answers 404,
 //             then short.flac: END_FILE of the stream has
 //             mak_skipped_segments 1 and mak_read_error 0 (a skipped
@@ -50,7 +75,11 @@
 // network_test.sh. No mode here reads a chunked stream: the FFmpeg of
 // run.sh decides those ends alone (9.0 ends even a whole one with EIO).
 #define _GNU_SOURCE
+#include <arpa/inet.h>
 #include <dlfcn.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <libavutil/error.h>
 #include <libavutil/opt.h>
 #include "playback_test.h"
@@ -234,6 +263,33 @@ static int64_t skipped_now(mpv_handle *h)
     return n;
 }
 
+// GET path from the server on port, the outage switch of slow_http.py;
+// returns whether the server answered.
+static int http_get(const char *port, const char *path)
+{
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(atoi(port))};
+    inet_pton(AF_INET, "127.0.0.1", &a.sin_addr);
+    char buf[256];
+    int ok = fd >= 0 && connect(fd, (struct sockaddr *)&a, sizeof a) == 0;
+    if (ok) {
+        int n = snprintf(buf, sizeof buf, "GET %s HTTP/1.0\r\n\r\n", path);
+        ok = write(fd, buf, n) == n && read(fd, buf, sizeof buf - 1) > 0;
+    }
+    if (fd >= 0)
+        close(fd);
+    return ok;
+}
+
+// Seeks to pos and plays: pumps until eof-reached reads no (up to ms, a
+// seek that fails at once may skip it) and returns whether it did.
+static int seek_play(mpv_handle *h, struct st *s, const char *pos, int ms)
+{
+    mt_cmd(h, "seek", pos, "absolute", NULL);
+    mpv_set_property_string(h, "pause", "no");
+    return wait_eof(h, s, 1, 0, ms);
+}
+
 static void check_end(struct st *s, int i, int reason, int read_error, int64_t skipped,
                       const char *what)
 {
@@ -253,27 +309,34 @@ static void check_end(struct st *s, int i, int reason, int read_error, int64_t s
 int main(int argc, char **argv)
 {
     static const char *modes[] = {"cutlist", "cutpark", "norange", "whole", "vbr", "resume",
-                                  "seekback", "hls", NULL};
+                                  "seekback", "hls", "retry", "retryback", "retrynocache",
+                                  "retrybacknocache", "retrymp3", NULL};
     const char *mode = argc > 1 ? argv[1] : "";
     int known = 0;
     for (int n = 0; modes[n]; n++)
         known |= !strcmp(mode, modes[n]);
     if (argc < 4 || !known) {
-        fprintf(stderr, "usage: %s cutlist|cutpark|norange|whole|vbr|resume|seekback|hls"
-                " <fixtures> <tmpdir>\n", argv[0]);
+        fprintf(stderr, "usage: %s cutlist|cutpark|norange|whole|vbr|resume|seekback|hls|retry"
+                "|retryback|retrynocache|retrybacknocache|retrymp3 <fixtures> <tmpdir>\n", argv[0]);
         return 2;
     }
     int m_cutlist = !strcmp(mode, "cutlist"), m_cutpark = !strcmp(mode, "cutpark"),
         m_norange = !strcmp(mode, "norange"), m_whole = !strcmp(mode, "whole"),
         m_vbr = !strcmp(mode, "vbr"), m_resume = !strcmp(mode, "resume"),
         m_seekback = !strcmp(mode, "seekback"), m_hls = !strcmp(mode, "hls");
+    // The retry modes: the seek after the park goes back or past the cut,
+    // with or without the seekable cache.
+    int m_retry = !strncmp(mode, "retry", 5);
+    int retry_back = m_retry && strstr(mode, "back") != NULL;
+    int retry_nocache = m_retry && strstr(mode, "nocache") != NULL;
+    int retry_mp3 = !strcmp(mode, "retrymp3");
     const char *port = getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0";
     char url[256], local[1024];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s", port,
-             m_vbr ? "vbr.mp3" : m_hls ? "hls.m3u8" : "n.flac");
+             m_vbr ? "vbr.mp3" : m_hls ? "hls.m3u8" : retry_mp3 ? "n.mp3" : "n.flac");
     snprintf(local, sizeof local, "%s/short.flac", argv[2]);
     int playlist = m_cutlist || m_whole || m_hls;
-    int park = m_cutpark || m_whole || m_vbr || m_resume || m_seekback;
+    int park = m_cutpark || m_whole || m_vbr || m_resume || m_seekback || m_retry;
     if (m_hls)
         stand_in = 1;
 
@@ -281,6 +344,17 @@ int main(int argc, char **argv)
     mpv_set_option_string(h, "keep-open", park ? "yes" : "no");
     if (m_seekback)
         mpv_set_option_string(h, "cache", "no");
+    if (m_retry) {
+        mpv_set_option_string(h, "cache", "yes");
+        mpv_set_option_string(h, "demuxer-seekable-cache", retry_nocache ? "no" : "yes");
+        // The whole file in the stream buffer, as a small file is: the
+        // seeks of the nocache modes land in it. And FFmpeg's reconnect
+        // off, as a client may set it: the cut ends the reading at once.
+        if (retry_nocache) {
+            mpv_set_option_string(h, "stream-buffer-size", "1MiB");
+            mpv_set_option_string(h, "stream-lavf-o", "reconnect=0");
+        }
+    }
     mpv_initialize(h);
 
     struct st s = {.read_error = -1, .skipped = -1, .eof = -1};
@@ -338,7 +412,7 @@ int main(int argc, char **argv)
         mt_check(s.ends == last - 1, "no END_FILE at the park (%d)", s.ends);
         pos = park_pos(h, &s);
         printf("park: time-pos %.2f, demuxer-read-error %d\n", pos, now);
-        if (m_cutpark || m_seekback) {
+        if (m_cutpark || m_seekback || m_retry) {
             mt_check(now == 1, "demuxer-read-error yes at the park (%d)", now);
             mt_check(s.yes_seen, "demuxer-read-error notified yes");
             if (m_cutpark)
@@ -364,6 +438,31 @@ int main(int argc, char **argv)
             mt_cmd(h, "seek", "0.5", "absolute", NULL);
             mpv_set_property_string(h, "pause", "no");
             mt_check(wait_eof(h, &s, 1, 0, 5000), "playing again after the seek");
+            mt_check(wait_eof(h, &s, 1, 1, 30000), "parked again at the real end");
+            now = read_error_now(h);
+            pos = park_pos(h, &s);
+            printf("second park: time-pos %.2f, demuxer-read-error %d\n", pos, now);
+            mt_check(s.no_after_yes, "demuxer-read-error back to no once the read resumed");
+            mt_check(now == 0, "demuxer-read-error no at the real end (%d)", now);
+            mt_check(pos > 3.8, "the second park is at the real end (%.2f)", pos);
+        }
+        if (m_retry) {
+            const char *to = retry_back ? "0.5" : "2.9";
+            // The server is still down: the read is tried again and fails.
+            // A seek that fails at once may leave eof-reached yes throughout.
+            if (!seek_play(h, &s, to, 3000))
+                pump(h, 2000, &s);
+            mt_check(wait_eof(h, &s, 1, 1, 30000), "parked again with the server down");
+            now = read_error_now(h);
+            pos = park_pos(h, &s);
+            printf("park with the server down: time-pos %.2f, demuxer-read-error %d\n", pos, now);
+            mt_check(now == 1, "demuxer-read-error yes while the server is down (%d)", now);
+            if (retry_back && !retry_nocache)
+                mt_check(pos > 2.0 && pos < 3.2, "the cache played up to the cut, 2.7 s (%.2f)", pos);
+            mt_check(http_get(port, "/up"), "the server is back (/up)");
+            s.no_after_yes = 0;
+            s.yes_seen = now == 1;
+            mt_check(seek_play(h, &s, to, 5000), "playing again after the seek");
             mt_check(wait_eof(h, &s, 1, 1, 30000), "parked again at the real end");
             now = read_error_now(h);
             pos = park_pos(h, &s);
