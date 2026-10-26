@@ -99,6 +99,7 @@ CASES=(
   "lib read_error_test readerror 2000000:233000:resume resume"
   "lib read_error_test readerror 2000000:311000:drop seekback"
   "lib read_error_test readerror 2000000:311000:outage retry retryback retrynocache retrybacknocache"
+  "lib read_error_test readerror 2000000:43500:outage retrymp3"
   "lib read_error_test readerror 2000000::missing=seg2.ts hls"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}

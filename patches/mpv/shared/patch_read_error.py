@@ -23,15 +23,15 @@ same end, the same playlist advance, the same keep-open park.
     keeps, so a read that resumes and reaches the real end is not taken
     for the old error.
   - After a read error a seek of the demuxer tries the read again
-    (stream->mak_reopen, mak_retry); a read without one fails with the
-    error, as before. avio keeps its end until a seek that reads, serves
-    a seek into its buffer or a short one forward from the old
-    connection, and http.c answers a seek to the offset it stands at
-    without a new request. So stream_lavf.c seeks the protocol itself
-    (avio direct) until it opened again, and the first read after the
-    seek, where the error left it, opens it one byte before and drops
-    that byte; demux_lavf.c clears the end its own avio keeps. Refused
-    again, the reads fail at once, with the error, until the next seek.
+    (stream->mak_reopen, armed by demux_lavf.c with mak_retry); a read
+    without one fails with the error, as before. avio keeps its end
+    until a seek that reads, serves a seek into its buffer or a short one
+    forward from the old connection, and http.c answers a seek to the
+    offset it stands at without a new request. So stream_lavf.c seeks the
+    protocol itself (avio direct) until it opened again, and the first
+    read after the seek, where the error left it, opens it one byte
+    before and drops that byte. Refused again, the reads fail at once,
+    with the error, until the next seek.
   - demux_lavf.c remembers that av_read_frame() failed with an error
     (demuxer->mak_read_error), and reads the segments lost so far from the
     skipped_segments option of the HLS and DASH demuxers
@@ -79,7 +79,7 @@ Files patched
     demux/demux.c                 kept with eof, read by the reader state,
                                   the cached range of a read error
     demux/demux_lavf.c            av_read_frame() errors, skipped_segments,
-                                  the end of avio cleared before a seek
+                                  a seek arms the retry of the stream
     player/loadfile.c             the END_FILE fields
     player/command.c              the two properties and their notification
     player/client.c               the node form of END_FILE
@@ -387,13 +387,9 @@ LAVF_SEEK_START_NEW = (
     '\n'
     '    // ' + MARKER + ': after a read error of the stream, this seek tries\n'
     '    // the read again: the stream opens the protocol again at its next\n'
-    '    // read. avio keeps its end until a seek that reads, and a short seek\n'
-    '    // forward stops on it without a read: cleared, the seek reads.\n'
-    '    if (priv->stream && priv->stream->mak_reopen) {\n'
+    '    // read.\n'
+    '    if (priv->stream && priv->stream->mak_reopen)\n'
     '        priv->stream->mak_retry = true;\n'
-    '        if (priv->avfc->pb)\n'
-    '            priv->avfc->pb->eof_reached = 0;\n'
-    '    }\n'
     '\n'
     '    if (priv->any_ts_fixed)  {\n'
 )

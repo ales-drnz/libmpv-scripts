@@ -56,6 +56,10 @@
 //             the stream must open the connection again where the cut left
 //             it once the reading gets there. FFmpeg's reconnect is off
 //             (reconnect=0): the seek opens the connection all the same.
+//   retrymp3  retry with n.mp3 cut at 2/3: FFmpeg seeks a CBR MP3 by
+//             offset, and the seek to 2.9 s, 3 KB past the cut, is short
+//             enough to stay in the avio of the demuxer, which must not
+//             stop on the end it kept from the cut.
 //   hls       hls.m3u8 (n.flac in 1 s segments) whose seg2.ts answers 404,
 //             then short.flac: END_FILE of the stream has
 //             mak_skipped_segments 1 and mak_read_error 0 (a skipped
@@ -306,14 +310,14 @@ int main(int argc, char **argv)
 {
     static const char *modes[] = {"cutlist", "cutpark", "norange", "whole", "vbr", "resume",
                                   "seekback", "hls", "retry", "retryback", "retrynocache",
-                                  "retrybacknocache", NULL};
+                                  "retrybacknocache", "retrymp3", NULL};
     const char *mode = argc > 1 ? argv[1] : "";
     int known = 0;
     for (int n = 0; modes[n]; n++)
         known |= !strcmp(mode, modes[n]);
     if (argc < 4 || !known) {
         fprintf(stderr, "usage: %s cutlist|cutpark|norange|whole|vbr|resume|seekback|hls|retry"
-                "|retryback|retrynocache|retrybacknocache <fixtures> <tmpdir>\n", argv[0]);
+                "|retryback|retrynocache|retrybacknocache|retrymp3 <fixtures> <tmpdir>\n", argv[0]);
         return 2;
     }
     int m_cutlist = !strcmp(mode, "cutlist"), m_cutpark = !strcmp(mode, "cutpark"),
@@ -325,10 +329,11 @@ int main(int argc, char **argv)
     int m_retry = !strncmp(mode, "retry", 5);
     int retry_back = m_retry && strstr(mode, "back") != NULL;
     int retry_nocache = m_retry && strstr(mode, "nocache") != NULL;
+    int retry_mp3 = !strcmp(mode, "retrymp3");
     const char *port = getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0";
     char url[256], local[1024];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s", port,
-             m_vbr ? "vbr.mp3" : m_hls ? "hls.m3u8" : "n.flac");
+             m_vbr ? "vbr.mp3" : m_hls ? "hls.m3u8" : retry_mp3 ? "n.mp3" : "n.flac");
     snprintf(local, sizeof local, "%s/short.flac", argv[2]);
     int playlist = m_cutlist || m_whole || m_hls;
     int park = m_cutpark || m_whole || m_vbr || m_resume || m_seekback || m_retry;
