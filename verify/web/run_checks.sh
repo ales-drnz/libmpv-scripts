@@ -15,7 +15,8 @@
 # <work dir>     the staging of the browser runs and each check's output,
 #                <work dir>/<check>.txt
 #
-# The checks: the rules of mak_webio.js in plain Node, the webaudio ring
+# The checks: the rules of mak_webio.js in plain Node, the cleanup of the
+# browser runners against stand-ins of a browser, the webaudio ring
 # (needs emcc, or EMSDK), then in Node the C harness (10 cycles and the 60 s
 # files), the module driven from the calling thread and http through webio;
 # then, in each browser of BROWSERS (default: chrome; also firefox), the C
@@ -78,6 +79,7 @@ ring() {
 }
 
 check webio-logic node "$HERE/webio_logic_test.mjs"
+check browser-group "$HERE/browser_group_test.sh" "$work/browser-group"
 check ring ring
 check node-spike timeout 900 node "$HERE/run_node.mjs" "$spike/spike.mjs" -n 10 \
   -l "$fixtures/long_60s.flac" -l "$fixtures/long_60s.mp3" \

@@ -32,15 +32,20 @@ cp "$HERE/net.html" "$HERE/net_harness.mjs" "$HERE/mpv_net_client.mjs" "$stage/"
 ln -s "$module" "$stage/lib"
 ln -s "$fixtures" "$stage/fixtures"
 result="$stage/result.json"
+source "$HERE/browser_group.sh"
 
 python3 -I "$HERE/net_server.py" --root "$stage" --media "$fixtures" --port "$port" \
   --result "$result" >"$stage/server.log" 2>&1 &
 server=$!
+# The stage, with the profile, goes once every process of the browser is
+# gone; a failure here fails the run.
 cleanup() {
-  [[ -n "${bpid:-}" ]] && kill "$bpid" 2>/dev/null || true
+  local st=$? rc=0
+  browser_group_stop "${bpid:-}" || rc=1
   kill "$server" 2>/dev/null || true
   wait 2>/dev/null || true
-  rm -rf "$stage"
+  rm -rf "$stage" || rc=1
+  (( rc == 0 )) || exit $(( st ? st : 1 ))
 }
 trap cleanup EXIT
 sleep 0.5
@@ -56,6 +61,8 @@ url="http://127.0.0.1:$port/net.html?repeat=$repeat${cases:+&cases=$cases}"
 [[ "${MAK_NET_VERBOSE:-}" == 1 ]] && url+="&verbose=1"
 profile="$stage/profile"
 mkdir -p "$profile"
+# The browser leads a process group of its own (browser_group.sh).
+set -m
 case "$env_name" in
   firefox)
     cat > "$profile/user.js" <<'PREFS'
@@ -82,6 +89,8 @@ PREFS
     ;;
   *) echo "unknown environment: $env_name" >&2; exit 2 ;;
 esac
+set +m
+browser_group_check "$bpid"
 
 start=$SECONDS
 until [[ -s "$result" ]]; do
