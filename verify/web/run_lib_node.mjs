@@ -5,22 +5,30 @@
 // Runs lib_harness.mjs on the module (libmpv.mjs) in Node, from the main
 // thread, with the build_web.json beside it when there is one.
 //
-//   node run_lib_node.mjs <libmpv.mjs> file...
+//   node run_lib_node.mjs <libmpv.mjs> [-m <MiB>] file...
+//
+// -m: the module gets a shared memory of the client with that maximum.
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { runLibHarness } from './lib_harness.mjs';
 
-const [modPath, ...paths] = process.argv.slice(2);
+const [modPath, ...rest] = process.argv.slice(2);
 if (!modPath) {
-  console.error('usage: node run_lib_node.mjs <libmpv.mjs> file...');
+  console.error('usage: node run_lib_node.mjs <libmpv.mjs> [-m <MiB>] file...');
   process.exit(2);
+}
+let memoryMiB = 0;
+const paths = [];
+for (let i = 0; i < rest.length; i++) {
+  if (rest[i] === '-m') memoryMiB = Number(rest[++i]);
+  else paths.push(rest[i]);
 }
 const { default: factory } = await import(pathToFileURL(modPath).href);
 const files = paths.map((p) => ({ name: basename(p), bytes: readFileSync(p) }));
 const recordPath = join(dirname(modPath), 'build_web.json');
 const record = existsSync(recordPath) ? JSON.parse(readFileSync(recordPath, 'utf8')) : null;
-const r = await runLibHarness(factory, files, (s) => console.log(s), record);
+const r = await runLibHarness(factory, files, (s) => console.log(s), record, { memoryMiB });
 console.log(`measure node_rss_bytes ${process.memoryUsage().rss}`);
 // The pthread workers keep the event loop alive.
 process.exit(r.fail ? 1 : 0);

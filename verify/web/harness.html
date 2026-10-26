@@ -15,6 +15,8 @@
        files=a,b    fixtures/ names; longs=c,d the timed files (spike only)
        loops=N      core create and destroy cycles (spike only)
        busy=1       keeps the main thread busy 50 ms every 100 ms
+       memory=MiB   (spike, lib) the module gets a shared WebAssembly.Memory
+                    of the page with that maximum, 32 MiB at start
      The result goes to POST /result as JSON. -->
 <meta charset="utf-8">
 <title>mak spike</title>
@@ -44,6 +46,7 @@ if (q.get('busy') === '1') {
   setInterval(() => { const t = performance.now(); while (performance.now() - t < 50) {} busyTicks++; }, 100);
 }
 const fetchBytes = async (name) => new Uint8Array(await (await fetch(`fixtures/${name}`)).arrayBuffer());
+const memoryMiB = Number(q.get('memory') || 0);
 
 try {
   if (mode === 'audio') {
@@ -65,17 +68,25 @@ try {
     for (const f of files) inputs.push({ name: f, bytes: await fetchBytes(f) });
     // The record beside the module, when the build wrote one.
     const rec = await fetch('lib/build_web.json');
-    const r = await runLibHarness(factory, inputs, log, rec.ok ? await rec.json() : null);
+    const r = await runLibHarness(factory, inputs, log, rec.ok ? await rec.json() : null, { memoryMiB });
     await post({ code: r.fail ? 1 : 0, busyTicks });
   } else {
     const t0 = performance.now();
     const { default: factory } = await import('./spike/spike.mjs');
+    const memory = memoryMiB
+      ? new WebAssembly.Memory({ initial: 512, maximum: memoryMiB * 16, shared: true }) : null;
     const mod = await factory({
+      ...(memory ? { wasmMemory: memory } : {}),
       print: log, printErr: log,
       // The last lines of a pthread reach the page after onExit: wait a bit.
       onExit: (code) => setTimeout(() => { log(`page: harness exit ${code}`); post({ code, busyTicks }); }, 500),
     });
     log(`measure instantiate_ms ${(performance.now() - t0).toFixed(3)}`);
+    // Taken, it holds the module's data; left alone, it is all zeros.
+    if (memory && (mod.wasmMemory !== memory || !new Uint8Array(memory.buffer, 0, 4 << 20).some((b) => b))) {
+      throw new Error(`memory: the page's memory of ${memoryMiB} MiB is not the module's`);
+    }
+    if (memory) log(`ok memory: the module runs in the page's memory of at most ${memoryMiB} MiB`);
     mod.FS.mkdir('/in');
     for (const f of [...files, ...longs]) mod.FS.writeFile(`/in/${f}`, await fetchBytes(f));
     const args = [];

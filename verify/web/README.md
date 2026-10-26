@@ -44,7 +44,7 @@ without the patch). `scripts/verify_binaries.sh` checks the zip statically.
 |---|---|
 | `mak_spike.c` | the C harness: create, decode the fixtures to the end, filters, kit patches, cycles |
 | `run_node.mjs`, `run_browser.sh` with `harness.html` and `serve_coi.py` | runs it in Node, Firefox or Chrome, cross-origin isolated |
-| `lib_harness.mjs`, `run_lib_node.mjs` | drives the module (`libmpv.mjs`) from the calling thread |
+| `lib_harness.mjs`, `run_lib_node.mjs` | drives the module (`libmpv.mjs`) from the calling thread; with `-m <MiB>` (`memory=<MiB>` in the page) in a shared memory of the client with that maximum, which it then fills |
 | `run_native.sh` | the same C harness on a native libmpv, for the comparison |
 | `make_fixtures.sh` | the inputs: fixtures of mpv_audio_kit and two 60 s files |
 

@@ -10,10 +10,14 @@
 // hook_continue, terminate_destroy).
 //
 // Shared by run_lib_node.mjs (Node) and harness.html (browser):
-//   const result = await runLibHarness(factory, files, log, record);
+//   const result = await runLibHarness(factory, files, log, record, opts);
 // files: [{name, bytes}], the first one also goes through the af chain.
 // record: build_web.json next to the module, when there is one; the
 // versions of the module must be the ones it states.
+// opts.memoryMiB: the module gets a shared WebAssembly.Memory of the client
+// with that maximum (the profile of WebKit on phones): the module must use
+// it, decode in it, and at the end fill it to its maximum without passing
+// it. Without, the module makes its own, of INITIAL_PAGES.
 
 const FMT = { NONE: 0, STRING: 1, FLAG: 3, INT64: 4, DOUBLE: 5, NODE: 6, ARRAY: 7, MAP: 8, BYTES: 9 };
 const EV = {
@@ -24,6 +28,9 @@ const AF_CHAIN = 'lavfi=[equalizer=f=1000:t=q:w=1:g=3],lavfi=[afftdn],lavfi=[lou
 // MAK_WEB_ABI of scripts/web/mak_web.c this harness is written for, as a
 // client of the module checks it.
 const EXPECTED_WEB_ABI = 1;
+// The initial pages of the module's memory (INITIAL_MEMORY of
+// build_libmpv_web.sh, 32 MB): the least a memory of the client must have.
+const INITIAL_PAGES = 512;
 
 // The struct layout of client.h on wasm32, in the order of mak_web_layout().
 const EXPECTED_LAYOUT = [
@@ -38,7 +45,7 @@ const EXPECTED_LAYOUT = [
   16, 8, // mpv_event_hook: size, id
 ];
 
-export async function runLibHarness(factory, files, log, record = null) {
+export async function runLibHarness(factory, files, log, record = null, opts = {}) {
   const res = { checks: [], measures: {} };
   const check = (ok, name, detail) => {
     res.checks.push({ ok, name, detail });
@@ -49,9 +56,24 @@ export async function runLibHarness(factory, files, log, record = null) {
     log(`measure ${k} ${typeof v === 'number' ? v.toFixed(3) : v}`);
   };
 
+  let mem = null;
+  if (opts.memoryMiB) {
+    mem = new WebAssembly.Memory({ initial: INITIAL_PAGES, maximum: opts.memoryMiB * 16, shared: true });
+  }
   let t = performance.now();
-  const m = await factory({ print: log, printErr: log });
+  const m = await factory({ print: log, printErr: log, ...(mem ? { wasmMemory: mem } : {}) });
   measure('instantiate_ms', performance.now() - t);
+  const heapMiB = () => m.wasmMemory.buffer.byteLength / 1048576;
+  if (mem) {
+    // Taken, it holds the module's data from the instantiation; left alone,
+    // it is all zeros.
+    const taken = m.wasmMemory === mem && new Uint8Array(mem.buffer, 0, 4 << 20).some((b) => b);
+    check(taken, 'memory.imported', `the client's memory of at most ${opts.memoryMiB} MiB ` +
+      `${taken ? 'is' : 'is not'} the module's, ${heapMiB()} MiB`);
+  } else {
+    check(m.wasmMemory.buffer.byteLength === INITIAL_PAGES * 65536, 'memory.initial',
+      `the module's own memory starts at ${heapMiB()} MiB`);
+  }
 
   const dv = () => new DataView(m.wasmMemory.buffer);
   const u32 = (p) => dv().getUint32(p, true);
@@ -281,6 +303,26 @@ export async function runLibHarness(factory, files, log, record = null) {
   m._mpv_terminate_destroy(h);
   measure('terminate_destroy_ms', performance.now() - t);
   measure('memory_bytes', m.wasmMemory.buffer.byteLength);
+
+  if (mem) {
+    // Filled in blocks of 1 MiB: the heap grows up to the maximum of the
+    // client's memory and an allocation past it fails, it does not abort.
+    const blocks = [];
+    for (;;) {
+      const q = m._malloc(1 << 20);
+      if (!q) break;
+      blocks.push(q);
+    }
+    const full = heapMiB();
+    blocks.forEach((q) => m._free(q));
+    const again = m._malloc(1 << 20);
+    if (again) m._free(again);
+    measure('memory.filled_blocks', blocks.length);
+    measure('memory.filled_heap_mib', full);
+    check(m.wasmMemory === mem && full <= opts.memoryMiB && blocks.length > opts.memoryMiB * 0.8 && again,
+      'memory.bounded', `${blocks.length} blocks of 1 MiB, heap ${full} MiB of at most ${opts.memoryMiB}, ` +
+      `malloc after the free ${again ? 'works' : 'fails'}`);
+  }
 
   res.pass = res.checks.filter((c) => c.ok).length;
   res.fail = res.checks.length - res.pass;
