@@ -12,12 +12,17 @@
 //   only-b  a has no per-file options, b has X-Token: B. No prefetch.
 //   same    both have X-Token: A. The prefetch runs and is used.
 //   none    no per-file options. The prefetch runs and is used.
+//   hint    a has waveform-duration-hint 60, b has 30 (mpv_audio_kit
+//           #29). The opener never reads it: the prefetch runs and is used,
+//           and b plays with its own hint (r19 skips the prefetch).
+//   hintdiffer  the hints of hint with the X-Token headers of differ: the
+//           headers still differ, no prefetch.
 #include "mpv_test.h"
 
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s differ|only-b|same|none <fixtures> <tmpdir>\n", argv[0]);
+        fprintf(stderr, "usage: %s differ|only-b|same|none|hint|hintdiffer <fixtures> <tmpdir>\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
@@ -32,8 +37,16 @@ int main(int argc, char **argv)
         opt_b = "http-header-fields=X-Token: B";
     } else if (strcmp(mode, "same") == 0) {
         opt_a = opt_b = "http-header-fields=X-Token: A";
+    } else if (strcmp(mode, "hint") == 0) {
+        opt_a = "waveform-duration-hint=60";
+        opt_b = "waveform-duration-hint=30";
+    } else if (strcmp(mode, "hintdiffer") == 0) {
+        opt_a = "http-header-fields=X-Token: A,waveform-duration-hint=60";
+        opt_b = "http-header-fields=X-Token: B,waveform-duration-hint=30";
     }
-    int expect_prefetch = strcmp(mode, "same") == 0 || strcmp(mode, "none") == 0;
+    int hint = strncmp(mode, "hint", 4) == 0;
+    int expect_prefetch = strcmp(mode, "same") == 0 || strcmp(mode, "none") == 0 ||
+                          strcmp(mode, "hint") == 0;
 
     mpv_handle *h = mt_create();
     mpv_initialize(h);
@@ -66,7 +79,13 @@ int main(int argc, char **argv)
                          "transition %s the prefetch (prefetch-state %s)",
                          expect_prefetch ? "used" : "did not use", st ? st : "?");
                 mpv_free(st);
-                if (opt_b)
+                if (hint)
+                    mt_check(mt_str_is(h, "waveform-duration-hint", "30.000000"),
+                             "b plays with its own hint");
+                if (opt_b && !strcmp(mode, "hintdiffer"))
+                    mt_check(mt_str_is(h, "http-header-fields", "X-Token: B"),
+                             "b plays with its own per-file options");
+                else if (opt_b && !hint)
                     mt_check(mt_str_is(h, "http-header-fields", opt_b + strlen("http-header-fields=")),
                              "b plays with its own per-file options");
                 break;

@@ -27,19 +27,37 @@
  * Without a client on on_prefetch the hook is complete as it starts, and
  * the open starts at once, as upstream. */
 
-/* True when both entries carry the same per-file options, in the same
- * order. */
+/* Whether the opener reads the per-file option [p]. Not
+ * waveform-duration-hint (bulk_analysis): only the analysis reads it, at
+ * FILE_LOADED, by then from the entry's own options. The length a client
+ * gives each entry of a playlist differs from one to the next, and would
+ * keep every entry from opening ahead. */
+static bool mak_param_opens(const struct playlist_param *p)
+{
+    return !bstr_equals0(p->name, "waveform-duration-hint");
+}
+
+/* True when both entries carry the same per-file options that the opener
+ * reads, in the same order. */
 static bool mak_same_file_params(struct playlist_entry *a,
                                  struct playlist_entry *b)
 {
-    if (!a || a->num_params != b->num_params)
+    if (!a)
         return false;
-    for (int n = 0; n < a->num_params; n++) {
-        if (!bstr_equals(a->params[n].name, b->params[n].name) ||
-            !bstr_equals(a->params[n].value, b->params[n].value))
+    int i = 0, j = 0;
+    while (1) {
+        while (i < a->num_params && !mak_param_opens(&a->params[i]))
+            i++;
+        while (j < b->num_params && !mak_param_opens(&b->params[j]))
+            j++;
+        if (i == a->num_params || j == b->num_params)
+            return i == a->num_params && j == b->num_params;
+        if (!bstr_equals(a->params[i].name, b->params[j].name) ||
+            !bstr_equals(a->params[i].value, b->params[j].value))
             return false;
+        i++;
+        j++;
     }
-    return true;
 }
 
 /* Sets prefetch-state: 0 idle, 1 loading, 2 ready, 3 used, 4 failed.

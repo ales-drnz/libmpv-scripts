@@ -68,7 +68,7 @@ DISABLED_PATCHES="$WANT_DISABLED"
 CASES=(
   "lib prefetch_hook_test prefetch - stall transition rewrite props clear stop destroy noclient repeat"
   "lib prefetch_guard_test prefetch - two"
-  "lib prefetch_params_test prefetch - differ only-b same none"
+  "lib prefetch_params_test prefetch - differ only-b same none hint hintdiffer"
   "lib prefetch_state_test prefetch - fail stop failstop hookfail"
   "lib prefetch_state_test prefetch 2000 httpstop"
   "lib analysis_channels_test analysis - opus16 opus16wave opus16loud sm smloud ms"
