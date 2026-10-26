@@ -19,6 +19,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/firefox_sound.sh"
 env_name="${1:?node, firefox or chrome}"
 module="$(cd "${2:?module dir}" && pwd)"
 fixtures="$(cd "${3:?fixtures dir}" && pwd)"
@@ -73,7 +74,11 @@ user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
 user_pref("app.update.disabledForTesting", true);
 user_pref("browser.startup.homepage_override.mstone", "ignore");
 PREFS
-    firefox --headless --no-remote --profile "$profile" "$url" >"$stage/browser.log" 2>&1 &
+    # The http cases play with ao=null; Firefox gets the same muted device
+    # as in run_browser.sh all the same.
+    firefox_sound_env "$profile"
+    env "${FIREFOX_ENV[@]}" firefox --headless --no-remote --profile "$profile" "$url" \
+      >"$stage/browser.log" 2>&1 &
     bpid=$!
     ;;
   chrome)

@@ -60,6 +60,16 @@ reads, set up by `Module.makWebAudio` (`scripts/web/mak_webaudio.js`).
 | `audio_harness.mjs`, `mpv_client.mjs` | mpv plays in real time through the output: frames consumed, latency, underruns with the main thread busy, pause, seek, format change, volume, a new AudioContext |
 | `gesture.mjs` | a trusted click through the browser's remote protocol, for the AudioContext that waits for a gesture |
 | `proc_cpu.py` | the CPU time of the browser's processes |
+| `firefox_sound.sh` | the sound device of the test Firefox: the null sink `PULSE_SINK` names, JACK and ALSA cut off |
+| `browser_group.sh`, `browser_group_test.sh` | the browser of a run in a process group of its own: the cleanup removes the profile once every process of it is gone; the test checks it against stand-ins of a browser |
+
+No browser plays on the speakers. Chrome renders into its fake output
+(`--disable-audio-output`). Firefox plays into the null sink that
+`PULSE_SINK` names, on that sink's clock, so the AudioWorklet runs in real
+time; it must exist and not be the default output (with PipeWire or
+PulseAudio: `pactl load-module module-null-sink sink_name=mak_tests`).
+Without it Firefox gets no device, its AudioContext does not start and its
+audio checks fail.
 
 ```
 EMSDK=<emsdk> verify/web/ring_test.sh <out dir>
@@ -76,7 +86,7 @@ as `makblob://` followed by what comes after `blob:`.
 | file | what |
 |---|---|
 | `net_server.py` | the page, cross-origin isolated, and media served as the protocol must cope with: Range, no Range, live chunked with ICY, redirect, slow answer, slow body, broken connection, HTTP error; the same media from a second origin with or without CORS |
-| `net_harness.mjs`, `mpv_net_client.mjs` | mpv in the module opens each case and checks the end of file, seeks, ICY titles, stop and quit during a slow answer, timeouts, open errors, blob: URLs, open and close cycles, and the read errors END_FILE reports (a cut file whose resume is refused, a missing HLS segment); it measures read speed, first bytes against a direct fetch, memory and the main thread |
+| `net_harness.mjs`, `mpv_net_client.mjs` | mpv in the module opens each case and checks the end of file, seeks, the resume of a broken connection (while the file plays and right after the answer), ICY titles, stop and quit during a slow answer, timeouts, open errors, blob: URLs, open and close cycles, and the read errors END_FILE reports (a cut file whose resume is refused, a missing HLS segment); it measures read speed, first bytes against a direct fetch, memory and the main thread |
 | `run_net.sh` with `net.html` and `run_net_node.mjs` | runs it in Node, Firefox or Chrome |
 | `make_net_fixtures.sh` | the media: the fixtures above, a radio-like MP3, a 300 s WAV, HLS and DASH |
 | `webio_logic_test.mjs` | the rules of `mak_webio.js` (headers, Range answers, ICY splitter) in plain Node, without the module |
