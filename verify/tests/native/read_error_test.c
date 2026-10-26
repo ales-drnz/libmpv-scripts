@@ -97,8 +97,10 @@ int av_opt_get_int(void *obj, const char *name, int search_flags, int64_t *out_v
     if (!real)
         real = (int (*)(void *, const char *, int, int64_t *))dlsym(RTLD_NEXT, "av_opt_get_int");
     int r = real(obj, name, search_flags, out_val);
-    if (r == AVERROR_OPTION_NOT_FOUND && stand_in >= 0 &&
-        !strcmp(name, "skipped_segments"))
+    // FFmpeg 7 and later answer a missing option with
+    // AVERROR_OPTION_NOT_FOUND, earlier ones (the 6.1 of the CI runner)
+    // with -1: any error stands in.
+    if (r < 0 && stand_in >= 0 && !strcmp(name, "skipped_segments"))
     {
         int hls = is_hls(obj);
         if (!told++)
