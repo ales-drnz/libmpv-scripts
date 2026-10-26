@@ -16,13 +16,21 @@
 // - Range: bytes=N- is a safelisted header, so a plain request never needs a
 //   CORS preflight. A 206 answer says the file is seekable; Content-Range
 //   gives the size when the server exposes it, else Content-Length of the
-//   answer to bytes=0- is the size. A 200 answer is a stream: no seek.
-// - fetch follows redirects; later requests go to the final URL.
+//   answer to bytes=0- is the size. A 200 answer is a stream: no seek. A 206
+//   whose body ends before the size it gave (a server that caps a range)
+//   ends as a broken body, which webio.c asks again from where it stopped;
+//   without Content-Range exposed that cannot be told.
+// - fetch follows redirects; later requests go to the final URL. One of them
+//   answered 401, 403 or 410 (a signed URL that expired) is asked once more
+//   at the URL of the app, as http.c does on every seek.
 // - Headers fetch forbids (Cookie, Referer, Host...) are dropped and named in
 //   a warning. User-Agent goes to the page's own origin, and to another one
 //   only when the app set its own (mpv's default "libmpv" would cost a
 //   preflight everywhere). Other headers on another origin need a preflight:
-//   when the request fails with them, it is tried once without them.
+//   when the request fails with them, it is tried once without them, and
+//   only if that one gets an answer the origin is taken for one that refuses
+//   them, for REFUSED_MS (a request that fails for the network is not a
+//   refusal).
 // - ICY: Icy-MetaData goes to the page's origin, and to another one only with
 //   icy_cross_origin. There the answer must expose icy-metaint: without it
 //   the metadata blocks could not be told from the audio, so the request is
@@ -40,7 +48,8 @@ addToLibrary({
   $MakWebio: {
     streams: null, // stream pointer -> entry
     scratch: 0,
-    refused: null, // origins that refused the extra headers
+    refused: null, // origin -> until when it is taken for one that refuses the extra headers
+    REFUSED_MS: 60000,
 
     // ── pure helpers (webio_logic_test.mjs) ────────────────────────────
 
@@ -224,7 +233,7 @@ addToLibrary({
     init() {
       MakWebio.streams = new Map();
       MakWebio.scratch = _malloc(8);
-      MakWebio.refused = new Set();
+      MakWebio.refused = new Map();
     },
 
     cstr(s) {
@@ -288,15 +297,31 @@ addToLibrary({
       _mak_webio_end(e.s, gen, kind, status, MakWebio.cstr(msg));
     },
 
+    // Whether origin refused the extra headers lately.
+    refusing(origin) {
+      const until = MakWebio.refused.get(origin);
+      if (until === undefined) return false;
+      if (until > Date.now()) return true;
+      MakWebio.refused.delete(origin);
+      return false;
+    },
+
     async run(e, gen, headerText, off, end, flags) {
       const blob = (flags & 4) !== 0;
-      const url = e.finalUrl || e.url;
-      const same = blob || MakWebio.sameOrigin(url);
-      let origin = null;
-      try {
-        origin = new URL(url).origin;
-      } catch (err) {}
-      if (!same && MakWebio.refused.has(origin)) e.dropExtra = true;
+      let url, same, origin;
+      // The origin whose plain request is in flight after the one with extra
+      // headers failed: refusing them if that one gets an answer.
+      let probing = null;
+      const target = () => {
+        url = e.finalUrl || e.url;
+        same = blob || MakWebio.sameOrigin(url);
+        origin = null;
+        try {
+          origin = new URL(url).origin;
+        } catch (err) {}
+        if (!same && MakWebio.refusing(origin)) e.dropExtra = true;
+      };
+      target();
       for (let attempt = 0; attempt < 3; attempt++) {
         const req = MakWebio.buildHeaders(headerText, same, {
           off, end, icy: (flags & 1) !== 0 && !e.icyOff, icyCors: (flags & 2) !== 0,
@@ -318,11 +343,15 @@ addToLibrary({
         } catch (err) {
           if (!MakWebio.live(e, gen)) return;
           if (req.extra && !e.dropExtra) {
-            // Most likely the preflight: try once with the plain request.
+            // The preflight, or the network: try once with the plain request.
             e.dropExtra = true;
-            if (origin) MakWebio.refused.add(origin);
-            e.notes.push(`webio: ${url}: the request failed with headers that need a CORS preflight, sent again without them`);
+            probing = origin;
             continue;
+          }
+          if (probing) {
+            // The plain request failed too: the network, not the headers.
+            e.dropExtra = false;
+            probing = null;
           }
           MakWebio.fail(e, gen, 1, 0, MakWebio.fetchError(url, err, same));
           return;
@@ -330,6 +359,11 @@ addToLibrary({
         if (!MakWebio.live(e, gen)) {
           MakWebio.discard(resp);
           return;
+        }
+        if (probing) {
+          MakWebio.refused.set(probing, Date.now() + MakWebio.REFUSED_MS);
+          probing = null;
+          e.notes.push(`webio: ${url}: the request failed with headers that need a CORS preflight, sent again without them`);
         }
         const ms = performance.now() - t0;
         const h = resp.headers;
@@ -350,7 +384,20 @@ addToLibrary({
         const c = MakWebio.classify(resp.status, off, end, h.get('content-range'), h.get('content-length'));
         if (c.kind !== 'ok') {
           MakWebio.discard(resp);
-          if (c.kind === 'eof') return _mak_webio_end(e.s, gen, 5, resp.status, 0);
+          if (c.kind === 'eof') {
+            // webio.c tells the end from a refused resume by the size.
+            return _mak_webio_end(e.s, gen, 5, resp.status,
+              MakWebio.cstr(`webio: ${url}: HTTP 416 at byte ${off}`));
+          }
+          if (c.kind === 'http' && e.finalUrl && e.finalUrl !== e.url && !e.backToOrigin &&
+              MakWebio.EXPIRED.includes(resp.status)) {
+            // The URL a redirect gave may have expired: the app's again.
+            e.backToOrigin = true;
+            e.finalUrl = null;
+            e.notes.push(`webio: ${url}: HTTP ${resp.status}, asked again at ${e.url}`);
+            target();
+            continue;
+          }
           if (c.kind === 'http') {
             return MakWebio.fail(e, gen, 2, resp.status,
               `webio: ${url}: HTTP ${resp.status}${resp.statusText ? ' ' + resp.statusText : ''}`);
@@ -362,6 +409,7 @@ addToLibrary({
             `webio: ${url}: the answer does not start at byte ${off} (Content-Range ${h.get('content-range')})`);
         }
         e.finalUrl = resp.url || url;
+        e.backToOrigin = false;
         let icyHeaders = '';
         h.forEach((v, k) => {
           if (k.startsWith('icy-') && k !== 'icy-metaint') icyHeaders += `${k}: ${v}\n`;
@@ -372,7 +420,11 @@ addToLibrary({
           MakWebio.cstr(h.get('content-type')), MakWebio.cstr(resp.redirected ? resp.url : null),
           MakWebio.cstr(icyHeaders), MakWebio.cstr(note), ms);
         if (!resp.body) return _mak_webio_end(e.s, gen, 0, 0, 0);
-        return MakWebio.pump(e, gen, resp.body.getReader(), metaint > 0 && icyAsked ? MakWebio.icyParser(metaint) : null);
+        // A seekable answer must run to the end asked for, or to the size.
+        let until = -1;
+        if (c.seekable && c.size >= 0) until = end >= 0 ? Math.min(end, c.size) : c.size;
+        return MakWebio.pump(e, gen, resp.body.getReader(), metaint > 0 && icyAsked ? MakWebio.icyParser(metaint) : null,
+          off, until);
       }
       MakWebio.fail(e, gen, 1, 0, `webio: ${url}: no request worked`);
     },
@@ -385,7 +437,7 @@ addToLibrary({
         if (off >= size) return _mak_webio_end(e.s, gen, 5, 416, 0);
         _mak_webio_response(e.s, gen, 206, size, 1, MakWebio.cstr(e.blob.type), 0, 0, 0, ms);
         const part = e.blob.slice(off, end >= 0 ? end : size);
-        return MakWebio.pump(e, gen, part.stream().getReader(), null);
+        return MakWebio.pump(e, gen, part.stream().getReader(), null, off, -1);
       } catch (err) {
         if (MakWebio.live(e, gen)) MakWebio.fail(e, gen, 1, 0, `webio: ${url}: the blob cannot be read: ${err && err.message || err}`);
       }
@@ -412,18 +464,27 @@ addToLibrary({
       }
     },
 
+    // Statuses of a redirect target that may have expired.
+    EXPIRED: [401, 403, 410],
+
     discard(resp) {
       if (resp.body) resp.body.cancel().catch(() => {});
     },
 
-    // Copies the body into the ring, waiting for room when it is full.
-    async pump(e, gen, reader, icy) {
+    // Copies the body into the ring, waiting for room when it is full. off is
+    // the offset of the request, until where its body must end (-1 for
+    // anywhere): one that ends before is broken off.
+    async pump(e, gen, reader, icy, off, until) {
       let rel = 0; // data bytes of this request so far
       const end = () => reader.cancel().catch(() => {});
       try {
         for (;;) {
           const { value, done } = await reader.read();
           if (!MakWebio.live(e, gen)) return end();
+          if (done && until >= 0 && off + rel < until) {
+            return MakWebio.fail(e, gen, 3, 0,
+              `webio: ${e.finalUrl || e.url}: the answer ended at byte ${off + rel}, before byte ${until}`);
+          }
           if (done) return _mak_webio_end(e.s, gen, 0, 0, 0);
           const parts = icy ? icy.push(value) : [value];
           for (const part of parts) {
