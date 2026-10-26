@@ -22,8 +22,9 @@
 #     slowed by slow_connect.py (F83, F84, F85);
 #   - read_errors_test: an HTTP body cut short ends with EIO when the
 #     reconnect gets an error reply or a chunked stream stops before its
-#     last chunk, and the HLS and DASH demuxers count the segments they
-#     lose, against native/slow_http.py (one per mode).
+#     last chunk (with Accept-Ranges too, its resume refused), and the HLS
+#     and DASH demuxers count the segments they lose, against
+#     native/slow_http.py (one per mode).
 # A mode passes when its process exits 0: it printed RESULT PASS and
 # AddressSanitizer and LeakSanitizer found nothing. open-hang and pause-read
 # wait about 35 s each and run in the background meanwhile. The logs stay
@@ -79,7 +80,7 @@ CASES=(
   "smb_url_test strip decode parse"
   "tls_roots_test verify"
   "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read"
-  "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
+  "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid ranged-between ranged-mid ranged-resume ranged-ok ranged-seek hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
 LONG_MODES=" open-hang pause-read "
@@ -324,6 +325,10 @@ read_errors_mode() {
     chunked-ok) opts=(chunked) ;;
     chunked-between) opts=(233287 chunked between) ;;
     chunked-mid) opts=(233287 chunked close) ;;
+    ranged-between) opts=(233287 chunked between ranges) ;;
+    ranged-mid) opts=(233287 chunked ranges) ;;
+    ranged-resume) opts=(233287 chunked ranges resume) ;;
+    ranged-ok|ranged-seek) opts=(chunked ranges) ;;
     hls-404) opts=(missing=seg2.ts) ;;
     hls-cut) opts=(cutfile=seg2.ts) ;;
     dash-404) opts=(missing=chunk3.m4s) ;;
@@ -334,7 +339,7 @@ read_errors_mode() {
     2> "$log.http" &
   srv=$!; echo "$srv" >> "$PIDS"
   wait_port "$port" || echo "slow_http.py did not start on port $port" >> "$log.http"
-  timeout 120 "$BIN/read_errors_test" "$m" "$port" > "$log" 2>&1; r=$?
+  timeout 120 "$BIN/read_errors_test" "$m" "$port" "$WORK/errors/data.bin" > "$log" 2>&1; r=$?
   kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null
   # A live chunked stream is read with one request: no reconnect starts it
   # again.

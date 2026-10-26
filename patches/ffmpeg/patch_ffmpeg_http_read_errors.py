@@ -22,19 +22,27 @@ sees nothing premature and stops, and the file ends as if it were complete.
 A reconnect that fails before a reply (no network) keeps filesize, so the
 same cut ends with EIO after the retries.
 
-The patch saves that state with the old buffer, and puts it back with it
-when the new request fails, if the old response announced its size: then
-the cut body stays short whatever the failed reply said, the loop tries
-again as reconnect_delay_max allows, and returns AVERROR(EIO), which mpv
-reports as a read error (patch_read_error.py). A user seek whose request
-fails goes on with the old connection as it is, as upstream intended.
+The same happens to a chunked body from a server that says Accept-Ranges
+(a transcode or a live stream of a media server): the reconnect asks for a
+range, and the failed reply leaves filesize 0 and chunksize unset.
 
-A response of unknown size (no Content-Length) ends where its connection
-closes, and no cut can be told from its end: http.c reads every such end as
-premature, and on a server with Range support its reconnect past the end
-gets 416, whose reply then ends the file. That stays as upstream has it;
-putting the state back there would retry a complete body for seconds and
-end it with EIO.
+The patch saves that state with the old buffer, and puts it back with it
+when the new request fails, if the old response announced its size or was
+chunked and had not reached its last chunk: then the cut body stays short
+whatever the failed reply said, the loop tries again as
+reconnect_delay_max allows, and returns AVERROR(EIO), which mpv reports as
+a read error (patch_read_error.py). A user seek whose request fails goes on
+with the old connection, which the restored state reads as it was (upstream
+read the chunk sizes of a chunked body as data, or ended it).
+
+A response of unknown size (no Content-Length, not chunked) ends where its
+connection closes, and no cut can be told from its end: http.c reads every
+such end as premature, and on a server with Range support its reconnect
+past the end gets 416, whose reply then ends the file. That stays as
+upstream has it; putting the state back there would retry a complete body
+for seconds and end it with EIO. The same holds for a chunked body read
+with multiple_requests, which keeps its connection after the last chunk
+(chunkend): it is complete, and its state is not put back either.
 
 ===== A chunked body without its last chunk =====
 
@@ -103,8 +111,10 @@ RESTORE = (
 RESTORE_NEW = (
     '        s->hd      = old_hd;\n'
     '        s->off     = old_off;\n'
-    '        /* ' + MARKER + ': only a body of known size can be cut short. */\n'
-    '        if (old_filesize != UINT64_MAX) {\n'
+    '        /* ' + MARKER + ': a body of known size, or chunked and before\n'
+    '         * its last chunk, can be cut short. */\n'
+    '        if (old_filesize != UINT64_MAX ||\n'
+    '            (old_chunksize != UINT64_MAX && !s->chunkend)) {\n'
     '            s->filesize         = old_filesize;\n'
     '            s->chunksize        = old_chunksize;\n'
     '            s->icy_data_read    = old_icy_data_read;\n'

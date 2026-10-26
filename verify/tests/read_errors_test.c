@@ -32,6 +32,25 @@
 //                 In the three the bytes are those sent once: no reconnect
 //                 starts the stream again (reconnect_streamed is off), and
 //                 network_test.sh checks that the server got one request.
+//   ranged-between, ranged-mid  the cuts of chunked-between and chunked-mid
+//                 from a chunked stream that says Accept-Ranges: bytes, so
+//                 http.c resumes it with a range, and the resume answered 503
+//                 with Content-Length 0: EIO after the retries, as for a body
+//                 of known size (upstream: AVERROR_EOF, the state of the 503
+//                 kept).
+//   ranged-resume the mid cut with the resume served (206, chunked): every
+//                 byte, then AVERROR_EOF (control).
+//   ranged-ok     the whole stream with Accept-Ranges, read with
+//                 multiple_requests=1: the last chunk keeps the connection,
+//                 the read after it is taken for premature, and the resume
+//                 at the end gets 416: AVERROR_EOF, not EIO after retries.
+//   ranged-seek   the same stream without a cut: after 20000 bytes a seek
+//                 to 400000 gets 503 and the reading goes on on the old
+//                 connection, which must still be read as chunked: every
+//                 byte, the chunk sizes not taken for data (upstream: the
+//                 503 left chunksize unset).
+//                 Every http, chunked and ranged mode checks the bytes read
+//                 against data.bin.
 //   hls-ok        hls.m3u8 (4 s of AAC in 1 s segments) to its end: the
 //                 skipped_segments option of the demuxer reads 0
 //                 (patch_ffmpeg_segment_skips.py; upstream has no option).
@@ -41,7 +60,7 @@
 //   dash-ok, dash-404, dash-cut  the same with d.mpd, whose third fragment
 //                 is chunk3.m4s.
 //
-// Usage: read_errors_test <mode> <port>
+// Usage: read_errors_test <mode> <port> [data.bin]
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,14 +78,48 @@ static void check(int ok, const char *what)
         fails++;
 }
 
+// The file the server sends, to compare the bytes read with; NULL without.
+static unsigned char *data;
+static int64_t data_size;
+// The first offset where the bytes read differ from data, -1 for none.
+static int64_t first_bad = -1;
+
+static void load_data(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f)
+        return;
+    fseek(f, 0, SEEK_END);
+    data_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    data = malloc(data_size);
+    if (fread(data, 1, data_size, f) != (size_t)data_size) {
+        free(data);
+        data = NULL;
+    }
+    fclose(f);
+}
+
+static void compare(int64_t pos, const unsigned char *buf, int n)
+{
+    for (int i = 0; data && first_bad < 0 && i < n; i++) {
+        if (pos + i >= data_size || buf[i] != data[pos + i])
+            first_bad = pos + i;
+    }
+}
+
 // Reads url with avio to its end; *bytes gets the bytes read, the result
-// is the code that ended the reading.
-static int read_all(const char *url, int64_t *bytes)
+// is the code that ended the reading. With seek_to > 0, after seek_at
+// bytes it seeks there and goes on from where the seek leaves it.
+static int read_all(const char *url, int multiple_requests, int64_t seek_at, int64_t seek_to,
+                    int64_t *bytes)
 {
     AVIOContext *io = NULL;
     AVDictionary *opts = NULL;
     av_dict_set(&opts, "reconnect", "1", 0);
     av_dict_set(&opts, "reconnect_delay_max", "1", 0);
+    if (multiple_requests)
+        av_dict_set(&opts, "multiple_requests", "1", 0);
     int r = avio_open2(&io, url, AVIO_FLAG_READ, NULL, &opts);
     av_dict_free(&opts);
     *bytes = 0;
@@ -74,10 +127,20 @@ static int read_all(const char *url, int64_t *bytes)
         return r;
     unsigned char buf[16384];
     for (;;) {
-        r = avio_read_partial(io, buf, sizeof buf);
+        int64_t pos = avio_tell(io);
+        int want = sizeof buf;
+        if (seek_to > 0 && pos < seek_at && seek_at - pos < want)
+            want = seek_at - pos;
+        r = avio_read_partial(io, buf, want);
         if (r < 0)
             break;
+        compare(pos, buf, r);
         *bytes += r;
+        if (seek_to > 0 && pos + r == seek_at) {
+            int64_t sr = avio_seek(io, seek_to, SEEK_SET);
+            printf("seek to %lld: %s, at %lld\n", (long long)seek_to,
+                   sr < 0 ? av_err2str((int)sr) : "done", (long long)avio_tell(io));
+        }
     }
     avio_closep(&io);
     return r;
@@ -109,25 +172,34 @@ static int demux_all(const char *url, int *packets, int64_t *skipped)
 int main(int argc, char **argv)
 {
     if (argc < 3) {
-        fprintf(stderr, "usage: read_errors_test <mode> <port>\n");
+        fprintf(stderr, "usage: read_errors_test <mode> <port> [data.bin]\n");
         return 2;
     }
+    if (argc > 3)
+        load_data(argv[3]);
     const char *mode = argv[1];
     char url[128], msg[256];
     av_log_set_level(AV_LOG_WARNING);
 
-    if (!strncmp(mode, "http-", 5) || !strncmp(mode, "chunked-", 8)) {
+    if (!strncmp(mode, "http-", 5) || !strncmp(mode, "chunked-", 8) ||
+        !strncmp(mode, "ranged-", 7)) {
         int64_t bytes;
+        int seek = !strcmp(mode, "ranged-seek");
         snprintf(url, sizeof url, "http://127.0.0.1:%s/data.bin", argv[2]);
-        int r = read_all(url, &bytes);
+        int r = read_all(url, !strcmp(mode, "ranged-ok"), seek ? 20000 : 0, seek ? 400000 : 0,
+                         &bytes);
         printf("read %lld bytes, ended with %s\n", (long long)bytes, av_err2str(r));
+        snprintf(msg, sizeof msg, "the bytes read are those of data.bin (first wrong: %lld)",
+                 (long long)first_bad);
+        check(data && first_bad < 0, msg);
         if (!strcmp(mode, "http-refused")) {
             snprintf(msg, sizeof msg, "the cut body ends with EIO, not as a complete file (%s)",
                      av_err2str(r));
             check(r == AVERROR(EIO), msg);
             check(bytes == 233287, "the bytes up to the cut");
-        } else if (!strcmp(mode, "chunked-between") || !strcmp(mode, "chunked-mid")) {
-            int64_t want = !strcmp(mode, "chunked-mid") ? 233287 : 14 * 16384;
+        } else if (!strcmp(mode, "chunked-between") || !strcmp(mode, "chunked-mid") ||
+                   !strcmp(mode, "ranged-between") || !strcmp(mode, "ranged-mid")) {
+            int64_t want = strstr(mode, "-mid") ? 233287 : 14 * 16384;
             snprintf(msg, sizeof msg, "the chunked stream cut short ends with EIO (%s)",
                      av_err2str(r));
             check(r == AVERROR(EIO), msg);
