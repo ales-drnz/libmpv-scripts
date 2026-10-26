@@ -230,10 +230,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The version build_libmpv_web.sh pins (EMSDK_VERSION): it stops on
-      # another emcc.
+      # another emcc, or on a clang or an emcc.py whose SHA-256 is not the
+      # one in _sources.sha256. emsdk itself at the commit of its tag 6.0.12.
       - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
           version: 6.0.12
+          emsdk-version: 35ff8a6d150541276abbc6bae512ca90bcfbe220
           actions-cache-folder: builds/emsdk-cache
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

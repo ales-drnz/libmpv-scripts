@@ -42,7 +42,6 @@ env:
   LIBS_RUN: ${{ inputs.libs_run || '39769294284' }}
   KIT_REPO: ales-drnz/mpv_audio_kit
   KIT_REF: ${{ inputs.kit_ref || 'main' }}
-  GH_TOKEN: ${{ github.token }}
   # A missing libmpv or fixture fails the suite instead of skipping it.
   CI: 'true'
 
@@ -61,12 +60,14 @@ jobs:
         shell: bash
     steps:
       - name: Check out mpv_audio_kit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Fetch the libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
@@ -84,7 +85,7 @@ jobs:
         run: |
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../bin\n' >> kit/pubspec.yaml
           tail -5 kit/pubspec.yaml
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -101,7 +102,7 @@ jobs:
           grep -E '\[E\]$' test.log | sort -u > failures-test.txt || true
           echo "== test: $(tail -1 test.log)"
           echo "Failing tests:"; cat failures-test.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: test-${{ matrix.os }}
@@ -117,17 +118,19 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Fetch the libraries and point the build hook at them
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../bin\n' >> kit/pubspec.yaml
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -160,7 +163,7 @@ jobs:
           # 79 is "No tests ran": a file whose @TestOn excludes Windows.
           echo "Files that did not pass:"; grep -vE 'rc=(0|79) ' summary.txt || true
           ! grep -qvE 'rc=(0|79) ' summary.txt
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: windows-per-file
@@ -206,14 +209,16 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Fetch the libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -258,16 +263,18 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Fetch the libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json)" >> "$GITHUB_ENV"
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -367,7 +374,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           if [ ${#infra[@]} -gt 0 ]; then printf 'NEVER STARTED: %s\n' "${infra[@]}"; fi
           if [ ${#failed[@]} -gt 0 ]; then printf 'FAILED: %s\n' "${failed[@]}"; exit 1; fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ios-integration-${{ env.LIBS_RUN }}
@@ -385,21 +392,23 @@ jobs:
         shell: bash
     steps:
       - name: Check out mpv_audio_kit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Check out this repository for the diagnostic
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: scripts
       - name: Fetch the libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
       - name: Point the build hook at them
         run: |
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../bin\n' >> kit/pubspec.yaml
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -413,7 +422,7 @@ jobs:
           flutter pub get
           flutter test -r expanded test/runtime_extended/zz_underrun_diag_test.dart 2>&1 | tee ../diag.log
           grep 'DIAG SUMMARY' ../diag.log
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: underrun-diag
@@ -434,13 +443,13 @@ jobs:
         shell: bash
     steps:
       - name: Check out mpv_audio_kit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Check out this repository for the diagnostic
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: scripts
       - name: Packages
@@ -456,7 +465,7 @@ jobs:
           pactl load-module module-null-sink sink_name=null
           pactl set-default-sink null
           pactl info | grep 'Default Sink'
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -503,7 +512,7 @@ jobs:
         if: always()
         run: |
           grep -h '\[cpu_diag\]' cpu.log cpu_stub.log 2>/dev/null | sed 's/^.*\[cpu_diag\]/[cpu_diag]/' >> "$GITHUB_STEP_SUMMARY" || true
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: cpu-diag
@@ -541,13 +550,13 @@ jobs:
         shell: bash
     steps:
       - name: Check out mpv_audio_kit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPO }}
           ref: ${{ env.KIT_REF }}
           path: kit
       - name: Check out this repository for the scripts
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: scripts
       - name: KVM for the emulator
@@ -556,6 +565,8 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Fetch the libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json)" >> "$GITHUB_ENV"
@@ -563,11 +574,11 @@ jobs:
         run: |
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../../bin\n' >> kit/test_app/pubspec.yaml
           ls bin
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
-      - uses: subosito/flutter-action@v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
           cache: true
@@ -577,7 +588,7 @@ jobs:
           flutter pub get
           flutter build apk --debug
       - name: Integration tests on the emulator
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api }}
           target: google_apis
@@ -589,7 +600,7 @@ jobs:
           disable-animations: true
           script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}
           working-directory: kit/test_app
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: android-emu-${{ matrix.api }}
@@ -604,7 +615,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # mpv includes the libplacebo headers (video/csputils.h) even with
       # libplacebo optional: the release builds have them from source.
       - name: Install meson, ninja, FFmpeg and libplacebo
@@ -618,7 +629,7 @@ jobs:
       - name: mpv patches
         run: JOBS=4 bash verify/tests/native/run.sh builds/native-tests
       - if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-check-logs
           path: |

@@ -123,6 +123,21 @@ check_toolchain() {
   got="$(emcc --version | sed -n '1s/.* \([0-9][0-9.]*\) (.*/\1/p')"
   [[ "$got" == "$EMSDK_VERSION" ]] || \
     die "emcc $got found, the web build pins $EMSDK_VERSION (./emsdk activate $EMSDK_VERSION)"
+  # The compiler and the driver of the release, against their pins in
+  # _sources.sha256 ("emsdk:<version>/upstream/<file>"): emsdk downloads its
+  # binaries with no checksum, and the version string alone does not tell
+  # them apart.
+  local upstream f want have
+  upstream="$(cd "$(dirname "$(readlink -f "$(command -v emcc)")")/.." && pwd)"
+  for f in bin/clang emscripten/emcc.py; do
+    have="$(sha256_of "$(readlink -f "$upstream/$f")")"
+    want="$(pinned_source "emsdk:$EMSDK_VERSION/upstream/$f")"
+    if [[ -z "$want" ]]; then
+      unpinned_source "$have" "emsdk:$EMSDK_VERSION/upstream/$f"
+    elif [[ "$have" != "$want" ]]; then
+      die "emsdk $EMSDK_VERSION upstream/$f: SHA-256 $have, pinned $want"
+    fi
+  done
   ok "Toolchain OK (emcc $got)"
 }
 
