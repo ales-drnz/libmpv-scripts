@@ -38,6 +38,8 @@
 #   n.flac      4 s pink noise with a fixed seed, 44.1 kHz stereo (466574
 #               bytes, 116 KB a second, so a seek of a second goes past the
 #               read buffers); the cut offsets in run.sh are its own
+#   n.mp3       n.flac as CBR MP3 at 128 kb/s with an Info header (65220
+#               bytes, 16 KB a second), which FFmpeg seeks by offset
 #   short.flac  1 s sine, the second entry of the playlist modes
 #   vbr.mp3     VBR MP3 without Xing header, 1.5 s of silence then 2.5 s of
 #               pink noise: its duration is an estimate, about 6 s for 4
@@ -106,6 +108,7 @@ dc dcm20.flac "-0.25|-0.25" 48000 20
 d="$D/readerror"; mkdir -p "$d"
 [[ -f "$d/n.flac" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=44100:duration=4:seed=1" \
   -ac 2 -c:a flac "$d/n.flac"
+[[ -f "$d/n.mp3" ]] || ff -i "$d/n.flac" -bitexact -c:a libmp3lame -b:a 128k "$d/n.mp3"
 [[ -f "$d/short.flac" ]] || ff -f lavfi -i "sine=frequency=660:sample_rate=44100:duration=1" -ac 2 "$d/short.flac"
 [[ -f "$d/vbr.mp3" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=44100:duration=4:seed=1" \
   -af "volume=enable='lt(t,1.5)':volume=0" -ac 2 -c:a libmp3lame -q:a 6 -write_xing 0 "$d/vbr.mp3"
