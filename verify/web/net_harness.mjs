@@ -154,29 +154,57 @@ export async function runNetHarness(factory, env, log) {
     check(starts.some((s) => s > 1500000 && s < 3900000), 'range_seek.range_request', `Range starts ${starts.join(',')}`);
   }, { extra: PAUSED });
 
+  // The drop cases hold the break until the file is loaded (hold=1), as a
+  // network that breaks while the file plays. Chrome drops the part of a
+  // broken body the page has not read yet: with the bytes and the break
+  // together, the reader got nothing in most runs.
+  const release = (tag) => fetch(`${env.base}/release?tag=${tag}`);
+
   // ── a connection that breaks off: read again from where it broke ─────
   await run('reconnect', async (core) => {
-    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&tag=drop`);
+    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&hold=1&tag=drop`);
+    await release('drop');
     check(l.ok, 'reconnect.loaded');
     const e = await l.ended;
     check(e && e.reason === END.EOF, 'reconnect.eof', `reason ${e && e.reason}`);
-    // From the last byte the reader got: Chrome hands over less than the
-    // server sent before it reports the break, at times nothing.
+    // From the last byte the reader got, which can be less than the server
+    // sent: what the browser still held is gone with the break.
     const size = (await env.fixture('long_60s.flac')).length;
     const es = await tagged('drop');
     const from = es.length === 2 ? rangeStart(es[1]) : -1;
-    check(es.length === 2 && es[0].dropped && from >= 0 && from <= 600000 && es[1].bytes === size - from,
+    check(es.length === 2 && es[0].dropped && from > 0 && from <= 600000 && es[1].bytes === size - from,
       'reconnect.rest_of_file_from_the_break', JSON.stringify(es.map((x) => [x.range, x.bytes, !!x.dropped])));
     check(logs(core, /\] error: /).length === 0, 'reconnect.no_error', logs(core, /webio/).slice(-3).join(' | '));
     check(e && e.readError === false && e.skippedSegments === 0, 'reconnect.no_read_error',
       JSON.stringify(e && { readError: e.readError, skipped: e.skippedSegments }));
   }, { extra: { cache: 'no' } });
 
+  // ── a body that breaks off right after the answer: the open stands ───
+  // One byte: Firefox refuses the fetch of a body that breaks before its
+  // first byte, Chrome drops the byte. Whether the break comes before the
+  // opening thread wakes on the answer is a race, hence the repeats.
+  for (let i = 1; i <= repeat; i++) {
+    await run(`reconnect_at_answer#${i}`, async (core) => {
+      const name = `reconnect_at_answer#${i}`;
+      const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=1&tag=drop0_${i}`);
+      check(l.ok, `${name}.loaded`, l.ok ? '' : logs(core, /webio|Failed/).slice(-3).join(' | '));
+      const e = await l.ended;
+      check(e && e.reason === END.EOF && e.readError === false, `${name}.eof`,
+        JSON.stringify(e && { reason: e.reason, readError: e.readError }));
+      const size = (await env.fixture('long_60s.flac')).length;
+      const es = await tagged(`drop0_${i}`);
+      const from = es.length === 2 ? rangeStart(es[1]) : -1;
+      check(es.length === 2 && es[0].dropped && (from === 0 || from === 1) && es[1].bytes === size - from,
+        `${name}.from_the_start`, JSON.stringify(es.map((x) => [x.range, x.bytes, !!x.dropped])));
+    }, { extra: { cache: 'no' } });
+  }
+
   // ── a body that breaks off and whose resume is refused: a read error ──
   // END_FILE tells it from a complete file (patch_read_error.py, through
   // the error webio returns).
   await run('truncated', async (core) => {
-    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&again=503&tag=trunc`);
+    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&again=503&hold=1&tag=trunc`);
+    await release('trunc');
     check(l.ok, 'truncated.loaded');
     const e = await l.ended;
     check(e && e.reason === END.EOF && e.readError === true && e.skippedSegments === 0, 'truncated.read_error',

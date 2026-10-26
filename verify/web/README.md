@@ -85,7 +85,7 @@ as `makblob://` followed by what comes after `blob:`.
 | file | what |
 |---|---|
 | `net_server.py` | the page, cross-origin isolated, and media served as the protocol must cope with: Range, no Range, live chunked with ICY, redirect, slow answer, slow body, broken connection, HTTP error; the same media from a second origin with or without CORS |
-| `net_harness.mjs`, `mpv_net_client.mjs` | mpv in the module opens each case and checks the end of file, seeks, ICY titles, stop and quit during a slow answer, timeouts, open errors, blob: URLs, open and close cycles, and the read errors END_FILE reports (a cut file whose resume is refused, a missing HLS segment); it measures read speed, first bytes against a direct fetch, memory and the main thread |
+| `net_harness.mjs`, `mpv_net_client.mjs` | mpv in the module opens each case and checks the end of file, seeks, the resume of a broken connection (while the file plays and right after the answer), ICY titles, stop and quit during a slow answer, timeouts, open errors, blob: URLs, open and close cycles, and the read errors END_FILE reports (a cut file whose resume is refused, a missing HLS segment); it measures read speed, first bytes against a direct fetch, memory and the main thread |
 | `run_net.sh` with `net.html` and `run_net_node.mjs` | runs it in Node, Firefox or Chrome |
 | `make_net_fixtures.sh` | the media: the fixtures above, a radio-like MP3, a 300 s WAV, HLS and DASH |
 | `webio_logic_test.mjs` | the rules of `mak_webio.js` (headers, Range answers, ICY splitter) in plain Node, without the module |

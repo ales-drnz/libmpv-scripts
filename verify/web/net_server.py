@@ -25,13 +25,18 @@ Media: /media/<mode>/<file under --media>?<query>
   status    the query's code (default 404)
   drop      as range, but the first answer of each tag breaks off after
             after bytes (default 500000): the connection closes. With
-            again=<code>, every later answer of the tag is that status
+            again=<code>, every later answer of the tag is that status.
+            With hold=1 the break waits for GET /release?tag=<tag> (30 s at
+            most), so the reader takes the bytes first, as over a real
+            network: Chrome drops the part of a broken body it has not
+            handed to the page yet
 Query on any mode: cors=0 (no CORS headers), cors=1 (the default:
 Access-Control-Allow-Origin, nothing exposed), cors=expose (Content-Range
 and icy-* exposed too); hdrs=deny answers the preflight without
 Access-Control-Allow-Headers; tag=<name> marks the request in the log.
 
 GET /log returns the requests as JSON (/log?clear=1 empties it after).
+GET /release?tag=<tag> lets the held break of that tag happen.
 POST /result writes the body to --result and stops the server.
 """
 import argparse
@@ -48,6 +53,7 @@ import urllib.parse
 
 LOG = []
 LOG_LOCK = threading.Lock()
+RELEASED = set()
 ICY_METAINT = 8192
 
 
@@ -147,6 +153,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_header('Content-Length', str(len(body)))
             super().end_headers()
             self.wfile.write(body)
+            return
+        if path == '/release':
+            self.media = True
+            with LOG_LOCK:
+                RELEASED.add(q.get('tag'))
+            self.send_response(204)
+            self.common(q)
+            self.send_header('Content-Length', '0')
+            super().end_headers()
             return
         m = re.match(r'^/media/([a-z]+)/(.+)$', path)
         if not m:
@@ -287,8 +302,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
         with open(p, 'rb') as f:
             self.send_body(f, 0, after, e)
-        e['dropped'] = True
         self.wfile.flush()
+        if q.get('hold') == '1':
+            t0 = time.time()
+            while time.time() - t0 < 30 and not self.client_gone():
+                with LOG_LOCK:
+                    if q.get('tag') in RELEASED:
+                        break
+                time.sleep(0.01)
+            e['held_s'] = round(time.time() - t0, 3)
+        e['dropped'] = True
         self.connection.shutdown(socket.SHUT_RDWR)
         self.close_connection = True
 
