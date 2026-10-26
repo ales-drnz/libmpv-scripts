@@ -52,18 +52,25 @@ rm -f "$result" "$result".*
 
 python3 -I "$HERE/serve_coi.py" --root "$stage" --port "$port" --result "$result" &
 server=$!
+source "$HERE/browser_group.sh"
 profile="$(mktemp -d "$build/profile.XXXXXX")"
+# The profile goes once every process of the browser is gone; a failure
+# here fails the run.
 cleanup() {
-  [[ -n "${bpid:-}" ]] && kill "$bpid" 2>/dev/null || true
+  local st=$? rc=0
+  browser_group_stop "${bpid:-}" || rc=1
   kill "$server" 2>/dev/null || true
   wait 2>/dev/null || true
-  rm -rf "$profile"
+  rm -rf "$profile" || rc=1
+  (( rc == 0 )) || exit $(( st ? st : 1 ))
 }
 trap cleanup EXIT
 sleep 0.5
 
 url="http://127.0.0.1:$port/harness.html?$query"
 bidi_port=$((port + 1000))
+# The browser leads a process group of its own (browser_group.sh).
+set -m
 case "$browser" in
   firefox)
     cat > "$profile/user.js" <<'EOF'
@@ -98,6 +105,8 @@ EOF
     ;;
   *) echo "unknown browser: $browser" >&2; exit 2 ;;
 esac
+set +m
+browser_group_check "$bpid"
 
 start=$SECONDS
 cpu_note=""
