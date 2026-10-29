@@ -93,18 +93,20 @@ jobs:
         run: |
           flutter --version
           flutter pub get
-          # TEMPORARY (ci/read-error-flake): read_error_test alone, eight
-          # cold runs, the output of the failing ones kept whole.
+          # TEMPORARY (ci/read-error-flake): the whole suite, twice, as the
+          # Check runs it; the output of each failing test printed whole.
           fails=0
-          for i in 1 2 3 4 5 6 7 8; do
-            if flutter test -j 1 -r expanded test/runtime_extended/read_error_test.dart > run$i.log 2>&1; then
-              echo "run $i: $(tail -1 run$i.log)"
-            else
+          for i in 1 2; do
+            flutter test -j 1 -r expanded > run$i.log 2>&1 && ok=1 || ok=0
+            echo "run $i: $(tail -1 run$i.log)"
+            if [ "$ok" = 0 ]; then
               fails=$((fails + 1))
-              echo "::group::run $i FAILED"; cat run$i.log; echo "::endgroup::"
+              echo "::group::run $i failures"
+              awk '/\[E\]$/ {n = 150} n > 0 {print; n--}' run$i.log
+              echo "::endgroup::"
             fi
           done
-          echo "$fails of 8 runs failed" | tee ../test.log
+          echo "$fails of 2 runs failed" | tee ../test.log
           [ "$fails" = 0 ]
       # flutter test on macOS installs the code asset as a bare dylib,
       # build/native_assets/macos/libmpv_audio_kit, while
