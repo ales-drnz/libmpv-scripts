@@ -1,3 +1,30 @@
+## [0.3.0] - Unreleased
+
+### Breaking
+- The playlist prefetch runs a new hook, `on_prefetch`, before it opens the next entry ahead of time, while the current one plays, with `prefetch-open-filename` and `prefetch-playlist-entry-id` readable during it. `on_load` runs once per entry, when it starts, instead of a second time for the prefetch (`patch_prefetch_hook.py`).
+- `mpv_event_end_file` ends with two new fields, `mak_read_error` and `mak_skipped_segments`, so the struct is 8 bytes longer. A client that reads it through `mpv/client.h` needs nothing more.
+
+### Added
+- libmpv for the browser: `libmpv_web.zip`, a WebAssembly module built with Emscripten and pthreads that exports the mpv client API and `mak_pcm_*` (mpv_audio_kit [#26](https://github.com/ales-drnz/mpv_audio_kit/issues/26)). It reads `http://`, `https://` and `blob:` URLs through `fetch` (`patch_ffmpeg_webio.py`), plays through `ao=webaudio`, a ring an AudioWorklet plays, and states its ABI version and the layout of the client structs. The manifest lists it, and Verify and the Build check it in Chrome.
+- A file cut short by a read error says so: `END_FILE` and the new `demuxer-read-error` tell it from a file that ended, and `demuxer-skipped-segments` counts the HLS and DASH segments lost to an error. FFmpeg reports the read errors it hid from mpv: a resume refused with an error reply and a chunked body that stops before its last chunk end with EIO instead of a complete file (`read_error` toggle).
+- `waveform-duration-hint`, a per-file length in seconds: an HTTP stream that cannot seek and tells no length, such as a music server's transcode, decodes its waveform and loudness from mpv's cache (mpv_audio_kit [#29](https://github.com/ales-drnz/mpv_audio_kit/issues/29)). An entry whose per-file options differ only in it is still prefetched.
+
+### Fixed
+- The prefetch hook runs while the current file plays: the audio output no longer runs dry and `time-pos` no longer stands still while a client resolves the next URL, and `playlist-next` and `stop` no longer wait for it.
+- A seek after a read error tries the read again, instead of serving the end of the file from the cache or never resuming the demuxer.
+- A refused `http://` or `smb2://` connection fails at once on Windows, instead of after the network timeout: FFmpeg's poll over `select()` now waits for a failed connect in the exception set, where Winsock reports it (`patch_ffmpeg_winsock_poll.py`).
+- An `af-command` that took is kept in the arguments of its filter, so a seek, a loop, a track switch, the next file or an `af` set rebuild the filter with its live value.
+- The http reconnect puts its state back only for a body of known size: a body without `Content-Length` that ends at its connection's close no longer retries for seconds and ends with EIO.
+- A DASH keep-alive refused for another host, as every segment redirected to a CDN is, logs at verbose level instead of a warning every few seconds.
+- A patch script whose anchor moved leaves the tree as it was: every script now runs on one anchor engine, which checks all anchors before writing and reports each one that fails.
+- The manifest lists the toggleable patches and the audio filters each build recorded, instead of those of the settings present when it ran.
+
+### Build
+- The TUI builds the web module (`./build web`) and lists the `read_error` toggle; Verify checks the web module and the traces of `read_error`.
+- The native tests run the read error, hint and Windows poll cases, and stop when an mpv patch fails. The Android emulators run the media session tests of the kit, a call included.
+- The Build pins its actions by commit, and Check mpv_audio_kit tells the kit's tests which libmpv release they check.
+- Updated the stamp to `libmpv-r20`: `mpv-version` reads `mpv v0.41.0+r20`.
+
 ## [0.2.3] - 22-10-2026
 
 ### Fixed

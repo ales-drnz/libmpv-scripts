@@ -9,4 +9,4 @@ package main
 // al. in scripts/shared/_versions.sh) and of the mpv_audio_kit package it
 // installs into. Shown in the header; bumped together with CHANGELOG.md, which
 // TestVersionMatchesChangelog checks.
-const version = "0.2.3"
+const version = "0.3.0"
