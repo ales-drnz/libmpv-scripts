@@ -39,9 +39,9 @@ permissions:
   contents: read
 
 env:
-  LIBS_RUN: ${{ inputs.libs_run || '39769294284' }}
+  LIBS_RUN: ${{ inputs.libs_run || '40943202304' }}
   KIT_REPO: ales-drnz/mpv_audio_kit
-  KIT_REF: ${{ inputs.kit_ref || 'main' }}
+  KIT_REF: ${{ inputs.kit_ref || 'release/0.6.0' }}
   GH_TOKEN: ${{ github.token }}
   # A missing libmpv or fixture fails the suite instead of skipping it.
   CI: 'true'
@@ -93,7 +93,19 @@ jobs:
         run: |
           flutter --version
           flutter pub get
-          flutter test -j 1 -r expanded 2>&1 | tee ../test.log
+          # TEMPORARY (ci/read-error-flake): read_error_test alone, eight
+          # cold runs, the output of the failing ones kept whole.
+          fails=0
+          for i in 1 2 3 4 5 6 7 8; do
+            if flutter test -j 1 -r expanded test/runtime_extended/read_error_test.dart > run$i.log 2>&1; then
+              echo "run $i: $(tail -1 run$i.log)"
+            else
+              fails=$((fails + 1))
+              echo "::group::run $i FAILED"; cat run$i.log; echo "::endgroup::"
+            fi
+          done
+          echo "$fails of 8 runs failed" | tee ../test.log
+          [ "$fails" = 0 ]
       # flutter test on macOS installs the code asset as a bare dylib,
       # build/native_assets/macos/libmpv_audio_kit, while
       # test/_helpers/libmpv_resolver.dart looks for
@@ -102,7 +114,7 @@ jobs:
       # path to the dylib as soon as flutter installs it, so the rest of the
       # suite runs against the libraries. CI only; the package is unchanged.
       - name: flutter test with the framework path linked (macOS workaround)
-        if: always() && runner.os == 'macOS'
+        if: false
         working-directory: kit
         run: |
           d=build/native_assets/macos
