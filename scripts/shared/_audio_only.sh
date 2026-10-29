@@ -650,7 +650,7 @@ verify_mpv_config() {
   ok "mpv config audit passed ($platform)"
 }
 
-# ── ffmpeg patch application (8 patches, identical on every platform) ───────
+# ── ffmpeg patch application (9 patches, identical on every platform) ───────
 # Usage: apply_ffmpeg_patches <ffmpeg_source_dir>
 # Requires SCRIPT_DIR to be set to the directory containing this file.
 apply_ffmpeg_patches() {
@@ -671,6 +671,13 @@ apply_ffmpeg_patches() {
   # Every anchor checked before writing, MARKER-guarded. Safety fix, not
   # user-gated.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_filter_bounds.py" "$ffmpeg_dir"
+
+  # A refused connect fails at once on Windows: ff_poll(), FFmpeg's poll()
+  # over select() where there is no poll.h, waits for a failed connect in the
+  # exception set too, where Winsock reports it, instead of until the network
+  # timeout (http:// and smb2://). Builds only with winsock2.h. Defect fix,
+  # not user-gated.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_winsock_poll.py" "$ffmpeg_dir"
 
   # libsmb2 patch (toggleable): copies libavformat/libsmb2.c and edits
   # configure, Makefile and protocols.c. Idempotent, and every platform
