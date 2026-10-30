@@ -15,13 +15,14 @@
 - A refused `http://` or `smb2://` connection fails at once on Windows, instead of after the network timeout: FFmpeg's poll over `select()` now waits for a failed connect in the exception set, where Winsock reports it (`patch_ffmpeg_winsock_poll.py`).
 - An `af-command` that took is kept in the arguments of its filter, so a seek, a loop, a track switch, the next file or an `af` set rebuild the filter with its live value.
 - The http reconnect puts its state back only for a body of known size: a body without `Content-Length` that ends at its connection's close no longer retries for seconds and ends with EIO.
+- The end of a file with gapless audio is played to its last sample when a push output (ALSA, PulseAudio, the web output, `ao=null`) ran dry in its final buffer: mpv took the stopped output for played out, and `keep-open` parked with up to 0.4 s still queued, `time-pos` short of the end. The output is started again while audio waits in its queue, and before the drain at the end of a playlist (`gapless_tail` toggle).
 - A DASH keep-alive refused for another host, as every segment redirected to a CDN is, logs at verbose level instead of a warning every few seconds.
 - A patch script whose anchor moved leaves the tree as it was: every script now runs on one anchor engine, which checks all anchors before writing and reports each one that fails.
 - The manifest lists the toggleable patches and the audio filters each build recorded, instead of those of the settings present when it ran.
 
 ### Build
 - The TUI builds the web module (`./build web`) and lists the `read_error` toggle; Verify checks the web module and the traces of `read_error`.
-- The native tests run the read error, hint and Windows poll cases, and stop when an mpv patch fails. The Android emulators run the media session tests of the kit, a call included.
+- The native tests run the read error, hint, Windows poll and gapless tail cases, and stop when an mpv patch fails. The Android emulators run the media session tests of the kit, a call included.
 - The Build pins its actions by commit, and Check mpv_audio_kit tells the kit's tests which libmpv release they check.
 - Updated the stamp to `libmpv-r20`: `mpv-version` reads `mpv v0.41.0+r20`.
 

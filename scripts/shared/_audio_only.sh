@@ -840,6 +840,9 @@ apply_mpv_patches_common() {
   fi
   _mpv_patch filter_label_tap   patch_filter_label_tap.py   "$mpv_dir"
   _mpv_patch chain_eof          patch_chain_eof.py          "$mpv_dir"
+  # gapless_tail: an output underrun in the tail of a gapless end no
+  # longer leaves that tail unplayed (keep-open parked with it queued).
+  _mpv_patch gapless_tail       patch_gapless_tail.py       "$mpv_dir"
   _mpv_patch lavfi_eof_passthrough patch_lavfi_eof_passthrough.py "$mpv_dir"
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"

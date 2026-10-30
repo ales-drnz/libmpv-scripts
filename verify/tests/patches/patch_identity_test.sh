@@ -101,7 +101,7 @@ CASE_LIST=(
 )
 for t in strip_swscale strip_libass afmt_reset prefetch \
          audio_output_state embedded_cover_art pcm_tap bulk_analysis loudness_scan \
-         filter_label_tap chain_eof lavfi_eof_passthrough hotplug_core_thread \
+         filter_label_tap chain_eof gapless_tail lavfi_eof_passthrough hotplug_core_thread \
          playlist_prev_dos_path chapter_list_reset af_command_args read_error; do
   CASE_LIST+=("no-$t linux $t")
 done
