@@ -267,6 +267,8 @@ The web module runs in `verify/web/run_checks.sh <module dir> <spike dir> <fixtu
 
 The patches have tests of their own: `bash verify/tests/native/run.sh <work dir>` builds a debug libmpv with AddressSanitizer against the system FFmpeg and runs the C tests of the patched mpv, then the tests of the patch scripts. It needs meson, ninja, the `ffmpeg` command and the FFmpeg development files, and takes a few minutes.
 
+After a refactor of the patch scripts, `bash verify/tests/patches/patch_identity_test.sh <reference root> <pristine mpv> <pristine ffmpeg> <pristine rubberband> <work dir>`, run by hand, checks that this tree's `patches/` and those of a reference revision (`git archive <rev> patches | tar -x`) make the same source trees, so the refactor needs no rebuild.
+
 `bash verify/tests/network_test.sh <work dir>` builds libsmb2 and a minimal FFmpeg with AddressSanitizer and the network patches, then checks them against a local impacket SMB server, `openssl s_server` and a local HTTP server: the URL parsing, a stop while the server stalls, the connect deadline, the embedded CA roots, the EIO of an HTTP body cut short and the HLS and DASH segments lost to errors. It needs cmake, ninja, the OpenSSL and libxml2 development files, the `ffmpeg` command and impacket for the python in `SMB_PYTHON`, and takes about two minutes.
 
 #### 4.4 Publishing a release
