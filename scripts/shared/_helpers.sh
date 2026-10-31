@@ -46,10 +46,14 @@ download() {
   fi
   log "Download: $(basename "$dest")"
   mkdir -p "$(dirname "$dest")"
-  local from fetched=0
+  local from fetched=0 retry=(--retry 3)
+  # A reset connection is retried only with --retry-all-errors (curl 7.71;
+  # the Linux image is Ubuntu 20.04, curl 7.68).
+  [[ "$(curl --help all 2>/dev/null)" == *--retry-all-errors* ]] &&
+    retry+=(--retry-all-errors)
   for from in "$url" "$@"; do
     if command -v curl >/dev/null 2>&1; then
-      curl -fsSL --retry 3 --retry-all-errors -o "$dest" "$from" && fetched=1
+      curl -fsSL "${retry[@]}" -o "$dest" "$from" && fetched=1
     elif command -v wget >/dev/null 2>&1; then
       wget -q -O "$dest" "$from" && fetched=1
     else
