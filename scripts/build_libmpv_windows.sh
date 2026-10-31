@@ -392,7 +392,9 @@ fi
 # ── rubberband ────────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/librubberband.a" ]]; then
   log "Building rubberband $RUBBERBAND_VERSION..."
-  RB=$(fetch rubberband "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2")
+  RB=$(fetch rubberband "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" \
+    "https://distfiles.macports.org/rubberband/rubberband-${RUBBERBAND_VERSION}.tar.bz2" \
+    "https://sources.buildroot.net/rubberband/rubberband-${RUBBERBAND_VERSION}.tar.bz2")
   tar -xf "$RB" -C "$SRC"
   pushd "$SRC/rubberband-$RUBBERBAND_VERSION"
     # rubberband's system_memorybarrier() MinGW branch uses x86 inline asm

@@ -219,7 +219,9 @@ build_libxml2() {
 build_rubberband() {
   [[ -f "$PREFIX/lib/librubberband.a" ]] && return
   local src="$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
-  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
+  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src" \
+    "https://distfiles.macports.org/rubberband/rubberband-${RUBBERBAND_VERSION}.tar.bz2" \
+    "https://sources.buildroot.net/rubberband/rubberband-${RUBBERBAND_VERSION}.tar.bz2"
   rm -rf "$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/rubberband/patch_rubberband_size_t.py" "$dir"
