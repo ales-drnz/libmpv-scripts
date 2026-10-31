@@ -94,32 +94,10 @@ jobs:
           flutter --version
           flutter pub get
           flutter test -j 1 -r expanded 2>&1 | tee ../test.log
-      # flutter test on macOS installs the code asset as a bare dylib,
-      # build/native_assets/macos/libmpv_audio_kit, while
-      # test/_helpers/libmpv_resolver.dart looks for
-      # libmpv_audio_kit.framework/libmpv_audio_kit: every runtime suite then
-      # fails with "no bundled libmpv". This second run links the framework
-      # path to the dylib as soon as flutter installs it, so the rest of the
-      # suite runs against the libraries. CI only; the package is unchanged.
-      - name: flutter test with the framework path linked (macOS workaround)
-        if: always() && runner.os == 'macOS'
-        working-directory: kit
-        run: |
-          d=build/native_assets/macos
-          ls -la "$d" || true
-          rm -rf "$d"
-          (
-            until [ -f "$d/libmpv_audio_kit" ]; do sleep 0.1; done
-            sleep 1
-            mkdir -p "$d/libmpv_audio_kit.framework"
-            ln -sf ../libmpv_audio_kit "$d/libmpv_audio_kit.framework/libmpv_audio_kit"
-            echo "linked $(ls -la "$d/libmpv_audio_kit.framework")"
-          ) &
-          flutter test -j 1 -r expanded 2>&1 | tee ../test-shim.log
       - name: Summary
         if: always()
         run: |
-          for l in test test-shim; do
+          for l in test; do
             [ -f $l.log ] || continue
             grep -E '\[E\]$' $l.log | sort -u > failures-$l.txt || true
             echo "== $l: $(tail -1 $l.log)"
@@ -435,11 +413,6 @@ jobs:
           cp ../scripts/.github/diag/zz_underrun_diag_test.dart test/runtime_extended/
           sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize || true
           flutter pub get
-          d=build/native_assets/macos
-          rm -rf "$d"
-          ( until [ -f "$d/libmpv_audio_kit" ]; do sleep 0.1; done; sleep 1
-            mkdir -p "$d/libmpv_audio_kit.framework"
-            ln -sf ../libmpv_audio_kit "$d/libmpv_audio_kit.framework/libmpv_audio_kit" ) &
           flutter test -r expanded test/runtime_extended/zz_underrun_diag_test.dart 2>&1 | tee ../diag.log
           grep 'DIAG SUMMARY' ../diag.log
       - uses: actions/upload-artifact@v7
