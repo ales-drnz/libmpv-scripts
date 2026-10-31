@@ -372,9 +372,7 @@ build_libunibreak() {
 build_rubberband() {
   [[ -f "$PREFIX/lib/librubberband.a" ]] && return
   local src="$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
-  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src" \
-    "https://distfiles.macports.org/rubberband/rubberband-${RUBBERBAND_VERSION}.tar.bz2" \
-    "https://sources.buildroot.net/rubberband/rubberband-${RUBBERBAND_VERSION}.tar.bz2"
+  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   # rubberband 4.0+ uses unqualified `size_t` in src/common/mathmisc.{h,cpp};
   # modern gcc/clang under -std=c++20 rejects it. Inject <stddef.h>. Idempotent.
