@@ -156,9 +156,10 @@ LAVF_FILL = (
 )
 
 LAVF_FILL_NEW = (
-    '// ' + MARKER + ': seeks the protocol itself (avio direct), with the avio\n'
-    '// buffer dropped, so that avio neither serves the seek from its buffer\n'
-    '// nor reads on to it.\n'
+    '// ' + MARKER + ': seeks the protocol itself. direct keeps avio_seek()\n'
+    '// from serving the seek from its buffer or reading on to it; the buffer\n'
+    '// is dropped because the seek back by half a buffer (and refill) does\n'
+    '// not look at direct (libavformat/aviobuf.c, FFmpeg 8.1).\n'
     'static int64_t mak_protocol_seek(AVIOContext *avio, int64_t pos)\n'
     '{\n'
     '    int direct = avio->direct;\n'
