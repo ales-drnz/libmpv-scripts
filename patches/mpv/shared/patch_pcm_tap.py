@@ -109,7 +109,9 @@ Usage
     python3 patch_pcm_tap.py <mpv_source_dir>
 
 Composes with `patch_audio_output_state.py` and
-`patch_embedded_cover_art.py` — different files / disjoint anchors.
+`patch_embedded_cover_art.py` in any order: in player/command.c they
+share the `mp_property_audio_params` anchor (and, with the first, the
+`#include "command.h"` one), which each leaves in place.
 
 This tap feeds the spectrum / VU visualizer only. The progressive
 waveform does NOT use it: it folds PRE-DSP frames straight from the af
