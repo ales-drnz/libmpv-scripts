@@ -22,9 +22,7 @@
 # Needs gcc, meson, ninja, pkg-config, python3, curl, the ffmpeg command
 # with the libopus, libmp3lame and libvorbis encoders, and the FFmpeg
 # development files (mpv 0.41 wants libavcodec 60.31.102 or later).
-# audiotrack_test and audiotrack_patch_test run only when
-# patches/mpv/android/patch_audiotrack.py exists; audiotrack_test then needs
-# jni.h from the NDK in ANDROID_NDK_HOME.
+# audiotrack_test needs jni.h from the NDK in ANDROID_NDK_HOME.
 #
 # The work dir is wiped first; --reuse keeps its downloads, build and
 # fixtures, to rerun after editing a test. Arguments after the work dir pick
@@ -305,10 +303,6 @@ for c in "${CASES[@]}"; do
   # shellcheck disable=SC2086
   read -r -a modes <<< "$(picked_modes "$t" $listed)"
   (( ${#modes[@]} )) || continue
-  if [[ "$kind" == audiotrack && ! -f "$AUDIOTRACK_PATCH" ]]; then
-    skip "$t: no patches/mpv/android/patch_audiotrack.py"
-    continue
-  fi
   if [[ -z "${BUILT[$t]:-}" ]]; then
     if compile "$kind" "$t"; then
       BUILT[$t]=1
@@ -325,10 +319,6 @@ done
 for p in "${PATCH_TESTS[@]}"; do
   read -r t args <<< "$p"
   picked "$t" || continue
-  if [[ "$t" == audiotrack_patch_test && ! -f "$AUDIOTRACK_PATCH" ]]; then
-    skip "$t: no patches/mpv/android/patch_audiotrack.py"
-    continue
-  fi
   args="${args//\{mpv\}/$WORK/mpv}"; args="${args//\{ffmpeg\}/$WORK/ffmpeg}"
   args="${args//\{src\}/$SRC}"; args="${args//\{build\}/$BLD}"
   # shellcheck disable=SC2086
