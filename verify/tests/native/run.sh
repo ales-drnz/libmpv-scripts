@@ -117,6 +117,7 @@ PATCH_TESTS=(
   "filter_bounds_anchor_test {ffmpeg}"
   "winsock_poll_patch_test {ffmpeg}"
   "dash_keepalive_patch_test {ffmpeg}"
+  "webio_patch_test {ffmpeg}"
   "read_error_patch_test {ffmpeg}"
   "anchor_corrupt_test {mpv} {ffmpeg}"
 )
