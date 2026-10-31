@@ -521,8 +521,9 @@ jobs:
   # carries the audiotrack checks (F277 thread at rest during a pause or an
   # underrun, F276 no audio lost at pause, F278 output reopened after
   # audioserver dies), which no runner without an emulator can see, the
-  # players of an isolate or an engine that goes away (F170) and the media
-  # session through Media3 (media_session_test). Each file ends pass, fail
+  # players of an isolate or an engine that goes away (F170), the media
+  # session through Media3 (media_session_test) and its service through a
+  # call (android_focus_foreground_test, F172). Each file ends pass, fail
   # or infra (android_emulator.sh): only fail fails the job, infra is a
   # warning and a line of the summary, and a release needs zero fail and
   # its infra files run again.
