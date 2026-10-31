@@ -244,7 +244,7 @@ scripts/update_libmpv.sh r20                        # a published release
 scripts/update_libmpv.sh r20 path/to/manifest.json  # before publishing it
 ```
 
-It writes the release and the hashes from `manifest.json` into the hook.
+It writes the release into `lib/src/internals/libmpv_release.dart` and the hashes from `manifest.json` into the hook, installs the web module of `libmpv_web.zip` in `web/` once its hashes and ABI check, and copies the manifest to `tool/codegen`. Before publishing, `libmpv_web.zip` must sit beside `manifest.json`, as it does in the Build's `libmpv-release` artifact.
 
 #### 4.2 Local or downloaded libraries
 
