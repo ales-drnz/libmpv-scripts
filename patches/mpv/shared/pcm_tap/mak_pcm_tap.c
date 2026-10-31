@@ -31,6 +31,9 @@
  * larger than the scratch, convert_to_float drops it whole (returns 0
  * — rare and visually benign, skips the visualizer for one frame). */
 #define MAK_PCM_TAP_SCRATCH_FLOATS (64 * 1024)
+_Static_assert(MAK_PCM_TAP_SCRATCH_FLOATS * sizeof(float)
+                   <= MAK_PCM_TAP_CAPACITY,
+               "a converted chunk fits in the ring");
 
 struct mak_pcm_tap {
     uint8_t         buf[MAK_PCM_TAP_CAPACITY];
@@ -220,8 +223,6 @@ void mak_pcm_tap_write(struct ao *ao, void **data, int num_samples)
     g_tap.last_pts_ns = mp_time_ns();
 
     size_t frame_bytes = produced * sizeof(float);
-    if (frame_bytes > MAK_PCM_TAP_CAPACITY)
-        frame_bytes = MAK_PCM_TAP_CAPACITY;
 
     const uint8_t *src = (const uint8_t *)g_tap.scratch;
     size_t remaining = frame_bytes;
