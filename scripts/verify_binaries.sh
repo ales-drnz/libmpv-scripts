@@ -10,10 +10,11 @@
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
-#   3.  Patched mpv properties present (all 17: prefetch-state,
+#   3.  Patched mpv properties present (all 18: prefetch-state,
 #       -cache-duration, -open-filename and -playlist-entry-id,
 #       audio-output-state, embedded-cover-art-data/mime,
 #       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data/-enabled,
+#       waveform-duration-hint,
 #       loudness-scan-data/-enabled, af-command-saves-args,
 #       demuxer-read-error and demuxer-skipped-segments)
 #   4.  FFmpeg patches present (libsmb2 protocol, mov advanced_editlist,
@@ -1722,7 +1723,7 @@ check_binary() {
 WEB_FILES=(libmpv.mjs libmpv.wasm mak_webaudio_processor.js build_web.json)
 WEB_EXTRA_EXPORTS=(mak_web_abi_version mak_web_wakeup_attach mak_web_wakeup_detach
                    mak_web_layout mak_wa_table_get mak_webio_live_streams)
-# W1's ceiling (web/SPIKE.md): 12 MB raw; the module is about 4.5 MB.
+# Ceiling of the raw wasm: 12 MB; the module is about 4.5 MB.
 WEB_WASM_MAX_BYTES=12000000
 
 # wasm_info <file.wasm>: "shared <0|1>" for its imported memory, then one
