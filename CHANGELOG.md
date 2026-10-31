@@ -1,8 +1,9 @@
 ## [0.3.0] - Unreleased
 
 ### Breaking
-- The playlist prefetch runs a new hook, `on_prefetch`, before it opens the next entry ahead of time, while the current one plays, with `prefetch-open-filename` and `prefetch-playlist-entry-id` readable during it. `on_load` runs once per entry, when it starts, instead of a second time for the prefetch (`patch_prefetch_hook.py`).
+- The playlist prefetch runs a new hook, `on_prefetch`, before it opens the next entry ahead of time, while the current one plays, with `prefetch-open-filename` and `prefetch-playlist-entry-id` readable during it. `on_load` runs once per entry, when it starts, instead of a second time for the prefetch (`patch_prefetch.py`).
 - `mpv_event_end_file` ends with two new fields, `mak_read_error` and `mak_skipped_segments`, so the struct is 8 bytes longer. A client that reads it through `mpv/client.h` needs nothing more.
+- `patch_prefetch_hook.py` and `patch_prefetch_state.py` are now one script, `patch_prefetch.py`, with one toggle, `prefetch`, in place of `prefetch_hook` and `prefetch_state`: a `DISABLED_PATCHES` or saved TUI setting that turned either old one off is ignored, so the patch is applied, and the manifest lists `prefetch`.
 
 ### Added
 - libmpv for the browser: `libmpv_web.zip`, a WebAssembly module built with Emscripten and pthreads that exports the mpv client API and `mak_pcm_*` (mpv_audio_kit [#26](https://github.com/ales-drnz/mpv_audio_kit/issues/26)). It reads `http://`, `https://` and `blob:` URLs through `fetch` (`patch_ffmpeg_webio.py`), plays through `ao=webaudio`, a ring an AudioWorklet plays, and states its ABI version and the layout of the client structs. The manifest lists it, and Verify and the Build check it in Chrome.
