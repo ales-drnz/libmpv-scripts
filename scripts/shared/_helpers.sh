@@ -49,7 +49,7 @@ download() {
   local from fetched=0
   for from in "$url" "$@"; do
     if command -v curl >/dev/null 2>&1; then
-      curl -fsSL --retry 3 -o "$dest" "$from" && fetched=1
+      curl -fsSL --retry 3 --retry-all-errors -o "$dest" "$from" && fetched=1
     elif command -v wget >/dev/null 2>&1; then
       wget -q -O "$dest" "$from" && fetched=1
     else
