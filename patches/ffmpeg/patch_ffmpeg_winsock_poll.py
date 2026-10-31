@@ -22,10 +22,10 @@ This patch adds a socket waited on for POLLOUT to the exception set on
 Winsock, so the failure comes back as POLLERR in the next select(). The
 callers read SO_ERROR on any event (ff_listen_connect,
 ff_connect_parallel), or handle POLLERR (libsmb2's smb2_service), and
-fail with the connect's error, ECONNREFUSED. A connect that succeeds is
-not in the exception set, and a socket that is connected only lands
-there with out-of-band data, which no caller asks for and which reads as
-ready, as POLLOUT would.
+fail with the connect's error (SO_ERROR: WSAECONNREFUSED). A connect
+that succeeds is not in the exception set, and a socket that is
+connected only lands there with out-of-band data, which no caller asks
+for and which reads as ready, as POLLOUT would.
 
 Every platform runs it, as the build applies the same FFmpeg patches; the
 code it adds builds only with winsock2.h. Not user-gated: a defect of the
