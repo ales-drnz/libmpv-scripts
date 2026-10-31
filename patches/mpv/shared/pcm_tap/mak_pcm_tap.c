@@ -241,15 +241,11 @@ void mak_pcm_tap_write(struct ao *ao, void **data, int num_samples)
     mp_mutex_unlock(&g_tap_lock);
 }
 
-int mak_pcm_tap_read(struct mpv_node *out, int max_samples, void *parent)
+int mak_pcm_tap_read(struct mpv_node *out, int max_samples)
 {
-    (void)parent;  /* Property machinery owns the returned tree —
-                    * it expects each top-level allocation rooted at
-                    * NULL (talloc_zero(NULL, …)). The `arg` pointer
-                    * passed by the caller is the destination
-                    * mpv_node, NOT a talloc context. See
-                    * `mp_property_embedded_cover_art_data` and
-                    * `screenshot-raw` for the canonical pattern. */
+    /* The property machinery frees the returned tree: it is rooted at
+     * NULL (talloc_zero(NULL, ...)), as in
+     * mp_property_embedded_cover_art_data. */
     if (!out || max_samples <= 0)
         return -1;
 

@@ -69,7 +69,7 @@ static int rd(struct win *w)
 {
     memset(w, 0, sizeof(*w));
     struct mpv_node n = {0};
-    if (mak_pcm_tap_read(&n, 4096, NULL) < 0)
+    if (mak_pcm_tap_read(&n, 4096) < 0)
         return -1;
     struct mpv_node_list *l = n.u.list;
     for (int i = 0; i < l->num; i++) {

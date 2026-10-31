@@ -219,7 +219,7 @@ COMMAND_GETTER_INSERT = (
     '             * exposes. Smaller window sizes the consumer wants\n'
     '             * are sliced Dart-side. */\n'
     '            struct mpv_node n = {0};\n'
-    '            if (mak_pcm_tap_read(&n, 4096, arg) < 0)\n'
+    '            if (mak_pcm_tap_read(&n, 4096) < 0)\n'
     '                return M_PROPERTY_UNAVAILABLE;\n'
     '            *(struct mpv_node *)arg = n;\n'
     '            return M_PROPERTY_OK;\n'

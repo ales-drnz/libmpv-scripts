@@ -30,10 +30,8 @@ void mak_pcm_tap_write(struct ao *ao, void **data, int num_samples);
  * `max_samples` samples (per channel) in the ring, and arms the
  * tap (after an idle span, with an empty ring). Returns 0 on
  * success and -1 when the ring is empty or the format is unset.
- * The tree is talloc'd from a NULL root (`parent` is unused); the
- * caller hands the node to the property machinery, which frees
- * it. */
-int mak_pcm_tap_read(struct mpv_node *out, int max_samples,
-                     void *parent);
+ * The tree is talloc'd from a NULL root; the caller hands the
+ * node to the property machinery, which frees it. */
+int mak_pcm_tap_read(struct mpv_node *out, int max_samples);
 
 #endif
