@@ -50,6 +50,7 @@ func toggleSections() []section {
 		{Key: "decoders", Label: "Decoders", items: ffToggles(ffDecoder), emit: emitEnabledCSV("AUDIO_DECODERS")},
 		{Key: "filters", Label: "Filters", items: ffToggles(ffFilter), emit: emitEnabledCSV("AUDIO_FILTERS")},
 		{Key: "patches", Label: "Patches", items: patchToggles, emit: emitDisabledList("DISABLED_PATCHES")},
+		{Key: "license", Label: "License", items: licenseToggles, emit: emitFlag("LIBMPV_GPL")},
 	}
 }
 
@@ -88,6 +89,17 @@ func patchToggles() []toggle {
 	return out
 }
 
+// licenseToggles is the License tab: the opt-in GPL build (gpl_build in
+// scripts/shared/_audio_only.sh). Off by default — the published libmpv is
+// LGPL — so it is the one toggle the default selection leaves off.
+func licenseToggles() []toggle {
+	return []toggle{{
+		Name: "gpl", Title: "GPL build with Rubber Band",
+		Desc:     "FFmpeg --enable-gpl and mpv -Dgpl=true with librubberband (GPL-2.0+) and its rubberband filter. The library becomes GPL-3.0-or-later: an app that ships it must be GPL too, and cannot go on the App Store. Clean the work tree after a change.",
+		Category: "License",
+	}}
+}
+
 // ── override emitters ────────────────────────────────────────────────────────
 
 // emitEnabledCSV writes the comma-joined list of ENABLED items (catalog order):
@@ -118,6 +130,19 @@ func emitDisabledList(varName string) func(map[string]bool, []toggle) []string {
 			}
 		}
 		return []string{fmt.Sprintf("export %s=%q", varName, strings.Join(off, " "))}
+	}
+}
+
+// emitFlag writes 1 when the section's single item is on, 0 when it is off:
+//
+//	export VAR=1
+func emitFlag(varName string) func(map[string]bool, []toggle) []string {
+	return func(sel map[string]bool, items []toggle) []string {
+		v := 0
+		if len(items) == 1 && sel[items[0].Name] {
+			v = 1
+		}
+		return []string{fmt.Sprintf("export %s=%d", varName, v)}
 	}
 }
 

@@ -203,9 +203,10 @@ func ffmpegCatalog() []FFItem {
 		// ---------------------------------------------------------------
 		// FILTERS — Time / Pitch
 		// ---------------------------------------------------------------
+		// rubberband is no toggle: it follows the License tab (librubberband
+		// is GPL), and _audio_only.sh adds it to the list in the GPL build.
 		{Name: "atempo", Title: "Tempo", Desc: "Change tempo (speed) without altering pitch", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "asetrate", Title: "Sample Rate (Varispeed)", Desc: "Retag sample rate → pitch + speed (vinyl/tape varispeed)", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
-		{Name: "rubberband", Title: "Rubber Band", Desc: "High-quality time-stretch / pitch-shift (librubberband)", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "aresample", Title: "Resample", Desc: "Resample sample rate / repack audio (libswresample)", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "aformat", Title: "Format", Desc: "Force sample format, rate, or channel layout", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},
 		{Name: "adelay", Title: "Delay", Desc: "Delay one or more channels by a set time", Category: "Time / Pitch", Kind: ffFilter, DefaultOn: true},

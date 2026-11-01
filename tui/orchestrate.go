@@ -157,10 +157,11 @@ func findNDK() string {
 }
 
 // dockerEnvArgs forwards the optional throttle env vars into the container,
-// matching the Makefile's DOCKER_ENV.
+// matching the Makefile's DOCKER_ENV, and LIBMPV_GPL, the opt-in GPL build
+// (the License tab writes it into the override file instead).
 func dockerEnvArgs() []string {
 	args := []string{"-e", "MPV_AUDIO_KIT_ROOT=/repo"}
-	for _, k := range []string{"JOBS", "ENABLE_LTO_DEPS", "FORCE_DOWNLOAD", "KEEP_BUILD", "WIPE_ALL"} {
+	for _, k := range []string{"JOBS", "ENABLE_LTO_DEPS", "FORCE_DOWNLOAD", "KEEP_BUILD", "WIPE_ALL", "LIBMPV_GPL"} {
 		if v := os.Getenv(k); v != "" {
 			args = append(args, "-e", k+"="+v)
 		}

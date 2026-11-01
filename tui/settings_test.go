@@ -185,3 +185,51 @@ func csvHas(line, tok string) bool {
 	}
 	return false
 }
+
+// TestLicenseTabOptIn: the GPL build is off by default, so the default
+// selection writes no LIBMPV_GPL; turned on, the override exports
+// LIBMPV_GPL=1, and no filter toggle stands for rubberband, which follows it.
+func TestLicenseTabOptIn(t *testing.T) {
+	if defaultSettings().enabledSet()[nsKey("license", "gpl")] {
+		t.Fatal("the GPL build must be off by default")
+	}
+	for _, it := range ffToggles(ffFilter)() {
+		if it.Name == "rubberband" {
+			t.Error("rubberband must not be a filter toggle: it follows the License tab")
+		}
+	}
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "scripts", "shared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	us := defaultSettings()
+	us.Sections["filters"] = sectionDelta{Disabled: []string{"chorus"}}
+	if err := us.writeOverride(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, overrideRelPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "LIBMPV_GPL") {
+		t.Errorf("a default License tab must not write LIBMPV_GPL:\n%s", data)
+	}
+
+	on := us.enabledSet()
+	on[nsKey("license", "gpl")] = true
+	us = us.settingsFromEnabled(on)
+	if d := us.Sections["license"]; len(d.Enabled) != 1 || d.Enabled[0] != "gpl" {
+		t.Fatalf("license delta = %+v, want enabled [gpl]", d)
+	}
+	if err := us.writeOverride(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(root, overrideRelPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lineWith(string(data), "LIBMPV_GPL=") != "export LIBMPV_GPL=1" {
+		t.Errorf("override must export LIBMPV_GPL=1:\n%s", data)
+	}
+}
