@@ -392,19 +392,20 @@ assert "  mpv: no source checked against" in r, r
 assert f"  0123  {unpinned}  (not pinned)" in r, r
 assert "at commit feedc0de" in r, r
 assert r.splitlines()[0].endswith(": LGPL-3.0-or-later"), r.splitlines()[0]
-assert (d / "implib/LICENSE.txt").is_file()
+assert (d / "implib/LICENSE.txt").is_file() and not (d / "winpthreads").exists()
 assert not (d / "rubberband").exists()
 PY
 check $? "licenses: linux lists the sources it checked, once each, and marks an unpinned one"
 
-# Windows: the .tar.xz of FFmpeg, xz from tukaani, speexdsp from GitHub.
+# Windows: the .tar.xz of FFmpeg, xz from tukaani, speexdsp from GitHub, and
+# the COPYING of winpthreads.
 fw="$L/fetched-windows"
 for u in "https://ffmpeg.org/releases/ffmpeg-$FFV.tar.xz" \
          "https://tukaani.org/xz/xz-$XZV.tar.gz" \
          "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-$SPV.tar.gz"; do
   printf '%s  %s\n' "$(pin "$u")" "$u" >> "$fw"
 done
-licenses windows-x86_64 "$fw" mpv ffmpeg xz speexdsp; check $? "licenses: windows-x86_64"
+licenses windows-x86_64 "$fw" mpv ffmpeg xz speexdsp winpthreads; check $? "licenses: windows-x86_64"
 python3 - "$L/out/licenses_windows-x86_64" "$FFV" "$XZV" "$SPV" <<'PY'
 import pathlib, sys
 d, ffv, xzv, spv = sys.argv[1:]
@@ -414,8 +415,11 @@ src = [l.split()[1] for l in r.split("patches/ of that commit:\n")[1].splitlines
 assert src == [f"https://ffmpeg.org/releases/ffmpeg-{ffv}.tar.xz", f"https://tukaani.org/xz/xz-{xzv}.tar.gz",
                f"https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-{spv}.tar.gz"], src
 assert "(not pinned)" not in r, r
+c = (d / "winpthreads/COPYING").read_text()
+assert "mingw-w64 project" in c and "Lockless Inc." in c, c[:200]
+assert "winpthreads" in r, r
 PY
-check $? "licenses: windows lists the .tar.xz of FFmpeg alone"
+check $? "licenses: windows lists the .tar.xz of FFmpeg alone, and has the COPYING of winpthreads"
 
 # macOS: the mpv tree of the first arch, the GPL build, no record of sources.
 LIBMPV_GPL=1 licenses macos "$L/none" mpv=mpv-arm64 ffmpeg rubberband; check $? "licenses: macos (GPL)"

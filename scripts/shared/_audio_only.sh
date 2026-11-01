@@ -311,9 +311,10 @@ PY
 # _sources.sha256, from SOURCES_FETCHED of _helpers.sh). The caller lists
 # what it links, by the settings of the build: rubberband only with gpl_build,
 # libsmb2 only with patch_on libsmb2, the font stack only without
-# libass_stripped; <component>=<tree> names a tree the build extracted under
-# another name (the mpv tree of each Apple arch). A component without its tree
-# or its texts stops the build.
+# libass_stripped, winpthreads (scripts/shared/licenses/winpthreads) only on
+# Windows; <component>=<tree> names a tree the build extracted under another
+# name (the mpv tree of each Apple arch). A component without its tree or its
+# texts stops the build.
 # write_manifest.sh packs the directories into licenses.zip. RELEASE_DIR
 # overrides the directory.
 #
@@ -406,6 +407,15 @@ for name in components:
             "Public License, v. 2.0: https://mozilla.org/MPL/2.0/. Its source is the\n"
             "cacert.pem at the libmpv-scripts commit named in README.txt.\n")
         rows.append(f"  {name:<14} the Mozilla CA bundle (MPL-2.0)")
+        continue
+    if name == "winpthreads":
+        # mingw-w64's winpthreads, linked statically into the Windows DLL
+        # (-lwinpthread). Neither toolchain ships its COPYING as a file, so
+        # scripts/shared/licenses/winpthreads/COPYING holds the one of
+        # mingw-w64-libraries/winpthreads.
+        dest.mkdir()
+        shutil.copyfile(root / "scripts/shared/licenses/winpthreads/COPYING", dest / "COPYING")
+        rows.append(f"  {name:<14} mingw-w64 winpthreads of the toolchain: COPYING")
         continue
     if name == "implib":
         # tools/implib of this repo: the trampolines of the Linux audio stubs.
