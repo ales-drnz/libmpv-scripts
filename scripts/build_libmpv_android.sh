@@ -412,6 +412,11 @@ build_abi() {
     arm64-v8a|x86_64) assert_load_align "$release_dir/$final_name" 16384 "$readelf" ;;
   esac
   write_build_record "android-$abi" "$prefix"
+  local licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib libiconv bzip2 xz speexdsp)
+  patch_on libsmb2 && licenses+=(libsmb2)
+  gpl_build && licenses+=(rubberband)
+  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+  write_licenses "android-$abi" "$BUILD_DIR/src" "${licenses[@]}"
   ok "Output: $release_dir/$final_name"
 }
 

@@ -659,6 +659,11 @@ finalize() {
   assert_no_needed "$out" 'libpipewire|libpulse'
   assert_glibc_floor "$out" "$LINUX_GLIBC_FLOOR"
   write_build_record "linux-$ARCH" "$PREFIX"
+  local licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp pipewire implib)
+  patch_on libsmb2 && licenses+=(libsmb2)
+  gpl_build && licenses+=(rubberband)
+  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libunibreak libass)
+  write_licenses "linux-$ARCH" "$BUILD_DIR/src" "${licenses[@]}"
 
   # Dynsym hygiene check. readelf -W --dyn-syms columns:
   #   Num Value Size Type Bind Vis Ndx Name

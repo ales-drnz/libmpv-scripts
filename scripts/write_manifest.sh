@@ -12,6 +12,9 @@
 #
 #   release        the release tag suffix (LIBMPV_RELEASE, e.g. "r20")
 #   mpv, ffmpeg    the pinned upstream versions
+#   license        the license of the binaries, from the build records:
+#                  "LGPL-3.0-or-later", or "GPL-3.0-or-later" for a build
+#                  with LIBMPV_GPL=1 (gpl_build in shared/_audio_only.sh)
 #   audioFilters   the lavfi audio filters compiled in, which mpv_audio_kit's
 #                  codegen turns into its typed effects API
 #   patches        the toggleable patches applied, per target (the ids of the
@@ -24,6 +27,10 @@
 #                  MAK_WEB_ABI a client checks with mak_web_abi_version();
 #                  webaudioAbi; emscripten) and the SHA-256 of each file a
 #                  client installs from the zip
+#   licenses       licenses.zip and its SHA-256: the license texts of every
+#                  target, one directory each (the licenses_<target>/ that
+#                  write_licenses of shared/_audio_only.sh leaves next to the
+#                  binary), with the source of the build in its README.txt
 #
 # Filters and patches come from the record each build leaves next to its
 # binary, builds/release/build_<target>.json (write_build_record in
@@ -31,10 +38,12 @@
 # writing nothing, when a binary has no record, when a record belongs to
 # another release or when the records disagree on the filters, and when
 # libmpv_web.zip holds other files than the module's or a record other than
-# build_web.json, or that record has no module versions.
+# build_web.json, or that record has no module versions. Also when the records
+# disagree on the license or a target has no license texts.
 #
-# It also writes builds/release/SHA256SUMS, the same hashes in the
-# `sha256sum -c` format, published next to the binaries.
+# It also writes builds/release/licenses.zip, and builds/release/SHA256SUMS,
+# the same hashes in the `sha256sum -c` format, published next to the
+# binaries.
 #
 # Usage (from the repo root): scripts/write_manifest.sh
 # RELEASE_DIR overrides the directory it reads and writes.
@@ -77,6 +86,14 @@ for name in assets:
     if record["release"] != release:
         raise SystemExit(f"{path.name} is a build of {record['release']}, not {release}")
     records[target] = record
+licenses = {t: r.get("license") for t, r in records.items()}
+if None in licenses.values():
+    raise SystemExit("No license in " + ", ".join(
+        f"build_{t}.json" for t, l in sorted(licenses.items()) if l is None) +
+        ": build it again")
+if len(set(licenses.values())) != 1:
+    raise SystemExit("The builds disagree on the license:\n" +
+                     "\n".join(f"  {t}: {l}" for t, l in sorted(licenses.items())))
 filters = {t: sorted(r["audioFilters"]) for t, r in records.items()}
 if len({tuple(f) for f in filters.values()}) != 1:
     raise SystemExit("The builds disagree on audioFilters:\n" +
@@ -110,10 +127,30 @@ if "web" in records:
         "files": {n: hashlib.sha256(members[n]).hexdigest() for n in WEB_FILES},
     }
 
+# The license texts of every target, in one zip: <target>/ holds what
+# licenses_<target>/ holds. Sorted, with a fixed date, so the same texts give
+# the same zip.
+texts = {}
+for target in sorted(records):
+    d = release_dir / f"licenses_{target}"
+    if not (d / "README.txt").is_file():
+        raise SystemExit(f"No license texts {d.name}/README.txt for {target}: build it again")
+    for f in sorted(p for p in d.rglob("*") if p.is_file()):
+        texts[f"{target}/{f.relative_to(d).as_posix()}"] = f.read_bytes()
+licenses_zip = release_dir / "licenses.zip"
+with zipfile.ZipFile(licenses_zip, "w", zipfile.ZIP_DEFLATED) as z:
+    for name, data in texts.items():
+        info = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = 0o644 << 16
+        z.writestr(info, data)
+licenses_sha = hashlib.sha256(licenses_zip.read_bytes()).hexdigest()
+
 manifest = {
     "release": release,
     "mpv": os.environ["MPV_VERSION"],
     "ffmpeg": os.environ["FFMPEG_VERSION"],
+    "license": next(iter(licenses.values())),
     "audioFilters": next(iter(filters.values())),
     "patches": {t: records[t]["patches"] for t in sorted(records)},
     "source": {
@@ -121,13 +158,16 @@ manifest = {
         "run": os.environ["SOURCE_RUN"] or None,
     },
     "assets": assets,
+    "licenses": {"asset": licenses_zip.name, "sha256": licenses_sha},
 }
 if web:
     manifest["web"] = web
 out = release_dir / "manifest.json"
 out.write_text(json.dumps(manifest, indent=2) + "\n")
-print(f"Wrote {out} ({len(assets)} assets, {len(manifest['audioFilters'])} filters)")
+print(f"Wrote {licenses_zip} ({len(texts)} files)")
+print(f"Wrote {out} ({manifest['license']}, {len(assets)} assets, {len(manifest['audioFilters'])} filters)")
 sums = release_dir / "SHA256SUMS"
-sums.write_text("".join(f"{h}  {n}\n" for n, h in assets.items()))
+sums.write_text("".join(f"{h}  {n}\n" for n, h in assets.items()) +
+                f"{licenses_sha}  {licenses_zip.name}\n")
 print(f"Wrote {sums}")
 PY

@@ -54,7 +54,8 @@
 #   WEB_INITIAL_MEMORY=128MB (wasm memory at start; it grows up to 2GB)
 #   BUILD_DIR=<dir>         (default: builds/work/Web/<variant>)
 #   RELEASE_DIR=<dir>       (default: builds/release/libmpv_web)
-#   PACKAGE_DIR=<dir>       (where libmpv_web.zip and build_web.json go;
+#   PACKAGE_DIR=<dir>       (where libmpv_web.zip, build_web.json and
+#                           licenses_web/ go;
 #                           default: builds/release)
 #   KEEP_BUILD=0            (wipe build/ and prefix/ at the end; by default
 #                           they stay, so STAGE=link can relink)
@@ -500,6 +501,10 @@ main() {
     # The record of the patches and filters the archives were built with,
     # next to the module (write_build_record in shared/_audio_only.sh).
     RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
+    # The license texts go next to libmpv_web.zip, not into it.
+    local licenses=(mpv ffmpeg libplacebo libxml2 zlib)
+    gpl_build && licenses+=(rubberband)
+    RELEASE_DIR="$PACKAGE_DIR" write_licenses web "$BUILD_DIR/src" "${licenses[@]}"
     record_web_module
     package_web
     report_sizes

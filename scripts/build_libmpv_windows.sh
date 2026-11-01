@@ -752,6 +752,11 @@ cp "$DIST/bin/libmpv-2.dll" "$OUT_FILE"
 # full public API. (Linux/Android already strip; Windows/macOS/iOS did not.)
 "$STRIP" --strip-all "$OUT_FILE"
 write_build_record "windows-$OUT_ARCH" "$DIST"
+licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz libiconv speexdsp)
+patch_on libsmb2 && licenses+=(libsmb2)
+gpl_build && licenses+=(rubberband)
+libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+write_licenses "windows-$OUT_ARCH" "$SRC" "${licenses[@]}"
 
 log "=== Build libmpv for Windows COMPLETED! ==="
 log "Artifact: $OUT_FILE"

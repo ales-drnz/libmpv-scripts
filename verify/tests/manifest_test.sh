@@ -9,7 +9,8 @@
 # build, and takes the filters from the records, not from the override present
 # when it runs (F211). It fails and writes nothing when the records disagree
 # on the filters, when a binary has no record and when a record belongs to
-# another release. The web module: libmpv_web.zip as scripts/web/
+# another release, when they disagree on the license and when a target has
+# no license texts. The web module: libmpv_web.zip as scripts/web/
 # package_web.py packs it, whose files and versions the manifest lists, and
 # the zips it refuses. Then the side that writes the records:
 # write_build_record of scripts/shared/_audio_only.sh, on what the patch
@@ -39,25 +40,37 @@ HEAD_SHA="$(git -C "$REPO" rev-parse HEAD)"
 fails=0
 check() { if [[ "$1" == 0 ]]; then echo "ok   $2"; else echo "FAIL $2"; fails=$((fails + 1)); fi; }
 
-# record <dir> <target> <filters> <patches> [release]: a build record as the
-# build scripts write it; filters and patches separated by commas.
+# record <dir> <target> <filters> <patches> [release] [license]: a build
+# record as the build scripts write it; filters and patches separated by
+# commas.
 record() {
   python3 - "$@" "$RELEASE" <<'PY'
 import json, sys
 d, target, filters, patches, release = sys.argv[1:6]
-json.dump({"release": release, "target": target,
+license = sys.argv[6] if len(sys.argv) > 7 else "LGPL-3.0-or-later"
+json.dump({"release": release, "target": target, "license": license,
            "patches": [p for p in patches.split(",") if p],
            "audioFilters": [f for f in filters.split(",") if f]},
           open(f"{d}/build_{target}.json", "w"), indent=2)
 PY
 }
 
-# release_dir <name>: two binaries, Linux and Android, without records.
+# texts <dir> <target>: the license texts write_licenses leaves for <target>.
+texts() {
+  mkdir -p "$1/licenses_$2/mpv"
+  printf 'libmpv for %s\n' "$2" > "$1/licenses_$2/README.txt"
+  printf 'LGPL\n' > "$1/licenses_$2/mpv/LICENSE.LGPL"
+}
+
+# release_dir <name>: two binaries, Linux and Android, with their license
+# texts and without records.
 release_dir() {
   local d="$TMP/$1"
   mkdir -p "$d"
   printf 'linux' > "$d/libmpv_linux-x86_64.so"
   printf 'android' > "$d/libmpv_android-arm64-v8a.so"
+  texts "$d" linux-x86_64
+  texts "$d" android-arm64-v8a
   echo "$d"
 }
 
@@ -86,9 +99,26 @@ assert m["patches"] == {
     "linux-x86_64": ["chain_eof", "pcm_tap", "strip_win_resources"],
 }, m["patches"]
 assert m["source"] == {"commit": "0123abc", "run": "42"}, m["source"]
+assert m["license"] == "LGPL-3.0-or-later", m["license"]
 PY
-check $? "agree: the filters of the records, the patches per target, the commit and the run"
-[[ "$(wc -l < "$d/SHA256SUMS")" == 2 ]]; check $? "agree: SHA256SUMS lists the binaries and not the records"
+check $? "agree: the filters of the records, the patches per target, the commit, the run and the license"
+[[ "$(wc -l < "$d/SHA256SUMS")" == 3 ]]; check $? "agree: SHA256SUMS lists the binaries and licenses.zip, not the records"
+python3 - "$d" <<'PY'
+import hashlib, json, sys, zipfile
+d = sys.argv[1]
+m = json.load(open(f"{d}/manifest.json"))
+assert m["licenses"] == {"asset": "licenses.zip",
+                         "sha256": hashlib.sha256(open(f"{d}/licenses.zip", "rb").read()).hexdigest()}, m["licenses"]
+names = sorted(zipfile.ZipFile(f"{d}/licenses.zip").namelist())
+assert names == ["android-arm64-v8a/README.txt", "android-arm64-v8a/mpv/LICENSE.LGPL",
+                 "linux-x86_64/README.txt", "linux-x86_64/mpv/LICENSE.LGPL"], names
+assert "licenses.zip" not in m["assets"], m["assets"]
+PY
+check $? "agree: licenses.zip holds the texts of each target, with its hash in the manifest"
+mkdir -p "$TMP/agree-again"
+cp -r "$d"/libmpv_* "$d"/build_* "$d"/licenses_* "$TMP/agree-again/"
+manifest "$TMP/agree-again"
+cmp -s "$d/licenses.zip" "$TMP/agree-again/licenses.zip"; check $? "agree: the same texts give the same licenses.zip"
 rm -f "$REPO/scripts/shared/_user_overrides.sh"
 
 # ── A local run: the commit of the checkout, no run ────────────────────────
@@ -126,6 +156,17 @@ record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap' r1
 refused older 'r1'
 
+d="$(release_dir license)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap' "$RELEASE" GPL-3.0-or-later
+refused license 'GPL-3.0-or-later'
+
+d="$(release_dir notexts)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+rm -r "$d/licenses_android-arm64-v8a"
+refused notexts 'licenses_android-arm64-v8a'
+
 # ── The web module ──────────────────────────────────────────────────────────
 # web_module <dir> [record fields as JSON]: what build_libmpv_web.sh leaves
 # in its RELEASE_DIR, with the record's module versions unless overridden.
@@ -138,7 +179,8 @@ web_module() {
   python3 - "$d" "$RELEASE" "${2:-{\}}" <<'PY'
 import json, sys
 d, release, extra = sys.argv[1:]
-r = {"release": release, "target": "web", "patches": ["pcm_tap", "read_error"],
+r = {"release": release, "target": "web", "license": "LGPL-3.0-or-later",
+     "patches": ["pcm_tap", "read_error"],
      "audioFilters": ["volume"],
      "module": {"abi": 1, "webaudioAbi": 1, "emscripten": "6.0.12"}}
 r.update(json.loads(extra))
@@ -152,6 +194,7 @@ d="$(release_dir web)"
 record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap'
 web_module "$TMP/web-module"
+texts "$d" web
 package "$TMP/web-module" "$d"; check $? "web: package_web.py packs the module"
 package "$TMP/web-module" "$TMP/web-again"
 cmp -s "$d/libmpv_web.zip" "$TMP/web-again/libmpv_web.zip"; check $? "web: the same files give the same zip"
@@ -169,7 +212,7 @@ assert m["web"] == {
 }, m["web"]
 PY
 check $? "web: the asset, its patches, the module versions and the hash of each file"
-[[ "$(wc -l < "$d/SHA256SUMS")" == 3 ]]; check $? "web: SHA256SUMS lists the zip"
+[[ "$(wc -l < "$d/SHA256SUMS")" == 4 ]]; check $? "web: SHA256SUMS lists the zip"
 python3 -c 'import json,sys; sys.exit("web" in json.load(open(sys.argv[1])))' "$TMP/local/manifest.json"
 check $? "web: no web section without the zip"
 

@@ -67,6 +67,7 @@ jobs:
           path: |
             builds/release/libmpv_linux-${{ matrix.arch }}.so
             builds/release/build_linux-${{ matrix.arch }}.json
+            builds/release/licenses_linux-${{ matrix.arch }}/
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -106,6 +107,7 @@ jobs:
           path: |
             builds/release/libmpv_android-*.so
             builds/release/build_android-*.json
+            builds/release/licenses_android-*/
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -147,6 +149,7 @@ jobs:
           path: |
             builds/release/libmpv_windows-*.dll
             builds/release/build_windows-*.json
+            builds/release/licenses_windows-*/
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -171,10 +174,12 @@ jobs:
             script: scripts/build_libmpv_macos.sh
             output: builds/release/libmpv_macos.xcframework.zip
             record: builds/release/build_macos.json
+            licenses: builds/release/licenses_macos/
           - name: iOS
             script: scripts/build_libmpv_ios.sh
             output: builds/release/libmpv_ios.xcframework.zip
             record: builds/release/build_ios.json
+            licenses: builds/release/licenses_ios/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: brew install meson ninja nasm cmake pkg-config autoconf automake libtool
@@ -201,6 +206,7 @@ jobs:
           path: |
             ${{ matrix.output }}
             ${{ matrix.record }}
+            ${{ matrix.licenses }}
           if-no-files-found: error
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
@@ -281,6 +287,7 @@ jobs:
           path: |
             builds/release/libmpv_web.zip
             builds/release/build_web.json
+            builds/release/licenses_web/
           if-no-files-found: error
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -309,12 +316,15 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
-      # Each build leaves a record of its patches and filters next to its
-      # binary, which write_manifest.sh lists with this commit and run.
+      # Each build leaves a record of its license, patches and filters and
+      # the license texts of what it links next to its binary, which
+      # write_manifest.sh lists with this commit and run and packs into
+      # licenses.zip.
       - name: Assemble builds/release
         run: |
           mkdir -p builds/release
-          find artifacts -type f \( -name 'libmpv_*' -o -name 'build_*.json' \) -exec cp {} builds/release/ \;
+          find artifacts -type f \( -name 'libmpv_*' -o -name 'build_*.json' \) -not -path '*/licenses_*/*' -exec cp {} builds/release/ \;
+          find artifacts -type d -name 'licenses_*' -prune -exec cp -r {} builds/release/ \;
           scripts/write_manifest.sh
           ls -la builds/release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

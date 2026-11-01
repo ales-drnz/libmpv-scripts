@@ -1006,6 +1006,13 @@ EOF
     prefixes+=("$BUILD_ROOT/$arch/prefix")
   done
   write_build_record macos "${prefixes[@]}"
+  # Every arch extracts the same sources: the texts of the first one, whose
+  # mpv tree is mpv-<arch> (build_mpv).
+  local licenses=("mpv=mpv-${ARCHS%% *}" ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp)
+  patch_on libsmb2 && licenses+=(libsmb2)
+  gpl_build && licenses+=(rubberband)
+  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+  write_licenses macos "$BUILD_ROOT/${ARCHS%% *}/src" "${licenses[@]}"
 
   # 5. Verify the universal dylib inside the framework.
   verify_dylib "$fw/libmpv"

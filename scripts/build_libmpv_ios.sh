@@ -1003,6 +1003,13 @@ EOF
     prefixes+=("$PREFIX_BASE/${slice%%:*}_${slice##*:}")
   done
   write_build_record ios "${prefixes[@]}"
+  # The mpv tree of a slice is mpv-<sdk>_<arch> (slice_mpv): the first one.
+  local first="${SLICES[0]}"
+  local licenses=("mpv=mpv-${first%%:*}_${first##*:}" ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp)
+  patch_on libsmb2 && licenses+=(libsmb2)
+  gpl_build && licenses+=(rubberband)
+  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+  write_licenses ios "$BUILD_DIR/src" "${licenses[@]}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────

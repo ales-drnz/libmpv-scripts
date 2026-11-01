@@ -300,6 +300,160 @@ print(f"Wrote {out} ({license}, {len(patches)} patches, {len(filters)} filters)"
 PY
 }
 
+# ── License texts ────────────────────────────────────────────────────────────
+# write_licenses <target> <src dir> <component>... — write builds/release/
+# licenses_<target>/: the license texts of every component linked into
+# libmpv_<target>.*, copied from the source trees the build extracted into
+# <src dir> (so they are the texts of the versions built), our own LICENSE,
+# the notice of the Mozilla CA bundle when embed_cacert is on, and README.txt:
+# the license of the build and where its exact source is (the commit of this
+# repo, the pinned tarballs and git tags of _sources.sha256). The caller lists
+# what it links, by the settings of the build: rubberband only with gpl_build,
+# libsmb2 only with patch_on libsmb2, the font stack only without
+# libass_stripped; <component>=<tree> names a tree the build extracted under
+# another name (the mpv tree of each Apple arch). A component without its tree
+# or its texts stops the build.
+# write_manifest.sh packs the directories into licenses.zip. RELEASE_DIR
+# overrides the directory.
+#
+# mpv and FFmpeg get the texts of the license they are built under (LGPL or
+# GPL, see gpl_build; the LGPLv3 comes with the GPLv3 it adds to) with their
+# own notes on it (Copyright, LICENSE.md); the
+# other components every top-level LICENSE / COPYING / COPYRIGHT / NOTICE
+# file they ship.
+write_licenses() {
+  local target="$1" src="$2"; shift 2
+  local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}/licenses_$target"
+  local commit="${GITHUB_SHA:-$(git -C "$LIBMPV_SCRIPTS_ROOT" rev-parse HEAD 2>/dev/null || true)}"
+  local extra=()
+  patch_on embed_cacert && [[ " $* " == *" openssl "* ]] && extra+=(mozilla-ca)
+  rm -rf "$out"
+  # The versions a platform script pins itself are not exported.
+  LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-}" LIBUNIBREAK_VERSION="${LIBUNIBREAK_VERSION:-}" \
+  LIBEXPAT_VERSION="${EXPAT_VERSION:-$LIBEXPAT_VERSION}" \
+    python3 - "$out" "$target" "$src" "$commit" "$@" "${extra[@]}" <<'PY'
+import os, pathlib, re, shutil, sys
+
+out, target, src, commit, *components = sys.argv[1:]
+out, src = pathlib.Path(out), pathlib.Path(src)
+root = pathlib.Path(os.environ["LIBMPV_SCRIPTS_ROOT"])
+env = os.environ.get
+gpl = env("LIBMPV_LICENSE") == "GPL-3.0-or-later"
+
+def v(name):
+    value = env(name, "")
+    if not value:
+        sys.exit(f"write_licenses: {name} is not set")
+    return value[1:] if value.startswith("v") else value
+
+# name: (tree under <src>, the pins in _sources.sha256, license files or
+# None for the usual names)
+def table(name):
+    if name == "mpv":
+        return (f"mpv-{v('MPV_VERSION')}", rf"/mpv/archive/refs/tags/v{re.escape(v('MPV_VERSION'))}\.tar",
+                ["LICENSE.GPL" if gpl else "LICENSE.LGPL", "Copyright"])
+    if name == "ffmpeg":
+        return (f"ffmpeg-{v('FFMPEG_VERSION')}", rf"/ffmpeg-{re.escape(v('FFMPEG_VERSION'))}\.tar",
+                (["COPYING.GPLv3"] if gpl else ["COPYING.LGPLv3", "COPYING.GPLv3"]) + ["LICENSE.md"])
+    if name == "libplacebo":
+        return ("libplacebo-git", rf"/libplacebo\.git#v{re.escape(v('LIBPLACEBO_VERSION'))}$", None)
+    if name == "libsmb2":
+        return ("libsmb2", rf"/libsmb2\.git#v{re.escape(v('LIBSMB2_VERSION'))}$", None)
+    if name == "pipewire":
+        return (f"pipewire-{v('PIPEWIRE_VERSION')}", rf"/pipewire\.git#{re.escape(v('PIPEWIRE_VERSION'))}$", None)
+    if name == "speexdsp":
+        ver = re.escape(v("SPEEXDSP_VERSION"))
+        return (f"speexdsp*-{v('SPEEXDSP_VERSION')}", rf"/(speexdsp|SpeexDSP)-{ver}\.tar", None)
+    if name == "harfbuzz":
+        ver = re.escape(v("HARFBUZZ_VERSION"))
+        return (f"harfbuzz-{v('HARFBUZZ_VERSION')}", rf"/harfbuzz(/archive/refs/tags/|-){ver}\.tar", None)
+    if name == "freetype":
+        return (f"freetype-{v('FREETYPE_VERSION')}", rf"/freetype-{re.escape(v('FREETYPE_VERSION'))}\.tar",
+                ["LICENSE.TXT", "docs/FTL.TXT", "docs/GPLv2.TXT"])
+    var = {"openssl": "OPENSSL_VERSION", "libxml2": "LIBXML2_VERSION",
+           "zlib": "ZLIB_VERSION", "xz": "XZ_VERSION", "bzip2": "BZIP2_VERSION",
+           "libiconv": "LIBICONV_VERSION", "rubberband": "RUBBERBAND_VERSION",
+           "fribidi": "FRIBIDI_VERSION", "fontconfig": "FONTCONFIG_VERSION",
+           "libass": "LIBASS_VERSION", "libpng": "LIBPNG_VERSION",
+           "expat": "LIBEXPAT_VERSION", "libunibreak": "LIBUNIBREAK_VERSION"}.get(name)
+    if not var:
+        sys.exit(f"write_licenses: unknown component {name}")
+    return (f"{name}-{v(var)}", rf"/{name}-{re.escape(v(var))}\.tar", None)
+
+USUAL = re.compile(r"^(licen[cs]e|copying|copyright|notice)([.-].*)?$", re.I)
+pins = [l.split(None, 1) for l in (root / "scripts/shared/_sources.sha256").read_text().splitlines()
+        if l.strip() and not l.startswith("#")]
+out.mkdir(parents=True)
+rows, sources = [], []
+for name in components:
+    name, _, tree_name = name.partition("=")
+    dest = out / name
+    if name == "mozilla-ca":
+        dest.mkdir()
+        (dest / "NOTICE.txt").write_text(
+            "libmpv embeds the Mozilla CA certificate store (patches/ffmpeg/embed_cacert/\n"
+            "cacert.pem of libmpv-scripts, from https://curl.se/docs/caextract.html), made\n"
+            "from Mozilla's certdata.txt. That data is subject to the terms of the Mozilla\n"
+            "Public License, v. 2.0: https://mozilla.org/MPL/2.0/. Its source is the\n"
+            "cacert.pem at the libmpv-scripts commit named in README.txt.\n")
+        rows.append(f"  {name:<14} the Mozilla CA bundle (MPL-2.0)")
+        continue
+    if name == "implib":
+        # tools/implib of this repo: the trampolines of the Linux audio stubs.
+        dest.mkdir()
+        shutil.copyfile(root / "tools/implib/LICENSE.txt", dest / "LICENSE.txt")
+        rows.append(f"  {name:<14} tools/implib of libmpv-scripts: LICENSE.txt")
+        continue
+    pattern, pin, files = table(name)
+    pattern = tree_name or pattern
+    trees = sorted(p for p in src.glob(pattern) if p.is_dir())
+    if len(trees) != 1:
+        sys.exit(f"write_licenses: {len(trees)} source trees {src}/{pattern} for {name}")
+    tree = trees[0]
+    if files is None:
+        files = sorted(p.name for p in tree.iterdir() if p.is_file() and USUAL.match(p.name))
+    if not files:
+        sys.exit(f"write_licenses: no license file in {tree}")
+    for f in files:
+        if not (tree / f).is_file():
+            sys.exit(f"write_licenses: no {f} in {tree}")
+        (dest / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(tree / f, dest / f)
+    rows.append(f"  {name:<14} {tree.name}: {', '.join(files)}")
+    found = [f"  {h}  {u}" for h, u in pins if re.search(pin, u)]
+    sources += found or [f"  {name}: no pin in scripts/shared/_sources.sha256"]
+
+dest = out / "libmpv-scripts"
+dest.mkdir()
+shutil.copyfile(root / "LICENSE", dest / "LICENSE")
+rows.insert(0, "  libmpv-scripts the build scripts and the patches of this repo: LICENSE (BSD-3-Clause);"
+               "\n                 a patch that changes mpv or FFmpeg is under their license")
+
+release, license = env("LIBMPV_RELEASE", "?"), env("LIBMPV_LICENSE", "?")
+what = ("This build of libmpv is GPL, version 3 or later: an app that ships it\n"
+        "must be distributed under the GPLv3 too, with its source." if gpl else
+        "This build of libmpv is LGPL, version 3 or later (the LGPLv3 is a set of\n"
+        "permissions on top of the GPLv3, so both texts are here). An app may link\n"
+        "it whatever its own license, provided it ships these texts, says that it\n"
+        "uses libmpv, and lets the user replace the library with one built from\n"
+        "modified source (the dynamic libmpv of every platform allows that).")
+(out / "README.txt").write_text(f"""libmpv {release} for {target}: {license}
+
+{what}
+
+Components, and the license files of each one in the directory of its name:
+{chr(10).join(rows)}
+
+Source: https://github.com/ales-drnz/libmpv-scripts at commit {commit or "(unknown)"}
+builds this library from the upstream sources below, pinned by SHA-256 (tarballs)
+or commit (git tags) in scripts/shared/_sources.sha256, with the patches under
+patches/ of that commit:
+{chr(10).join(sources)}
+""")
+print(f"Wrote {out} ({len(components) + 1} components)")
+PY
+}
+
 # swscale_stripped — true only when libswscale can actually be dropped. That
 # needs BOTH reduction patches on:
 #   - strip_swscale   severs mpv's own libswscale link (stubs mp_sws_*) and
