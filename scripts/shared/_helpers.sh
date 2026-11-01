@@ -76,6 +76,24 @@ download() {
 # a strict build stops, so CI can publish it.
 SOURCES_SHA256_FILE="$LIBMPV_SCRIPTS_ROOT/scripts/shared/_sources.sha256"
 
+# SOURCES_FETCHED: the file where the build lists every source it checked,
+# "<hash>  <key>" as in _sources.sha256 (the key of the pin, not the mirror
+# that served it), so the README.txt of write_licenses names the sources
+# this build used. Exported, so the scripts the build runs and sources
+# (build_openssl.sh) append to the same file. It is made by the first
+# source a build checks, so verify_binaries.sh and write_manifest.sh leave
+# none; $$ stays the build's own PID in the $(...) of fetch.
+if [[ -z "${SOURCES_FETCHED:-}" ]]; then
+  SOURCES_FETCHED="${TMPDIR:-/tmp}/libmpv-sources.$$"
+  rm -f "$SOURCES_FETCHED"
+  export SOURCES_FETCHED
+fi
+
+# fetched_source <hash> <key> — list a checked source in SOURCES_FETCHED.
+fetched_source() {
+  printf '%s  %s\n' "$1" "$2" >> "$SOURCES_FETCHED"
+}
+
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | cut -d' ' -f1
@@ -108,12 +126,14 @@ verify_source() {
   want="$(pinned_source "$url")"
   if [[ -z "$want" ]]; then
     unpinned_source "$got" "$url"
+    fetched_source "$got" "$url"
     return 0
   fi
   if [[ "$got" != "$want" ]]; then
     rm -f "$file"
     die "SHA-256 mismatch for $url: got $got, expected $want"
   fi
+  fetched_source "$got" "$url"
 }
 
 # verify_git_source <url> <tag> <dir> — the clone's HEAD must be the commit
@@ -125,10 +145,12 @@ verify_git_source() {
   want="$(pinned_source "$url#$tag")"
   if [[ -z "$want" ]]; then
     unpinned_source "$got" "$url#$tag"
+    fetched_source "$got" "$url#$tag"
     return 0
   fi
   [[ "$got" == "$want" ]] || \
     die "Commit mismatch for $url at $tag: got $got, expected $want (FORCE_DOWNLOAD=1 reclones)"
+  fetched_source "$got" "$url#$tag"
 }
 
 # ── Git clone with cache ─────────────────────────────────────────────────────

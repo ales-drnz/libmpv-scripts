@@ -325,5 +325,123 @@ LIBMPV_GPL=1 build_record "$w/out6" linux-x86_64 "$w/gpl"; check $? "write: a GP
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["license"] == "GPL-3.0-or-later", r' \
   "$w/out6/build_linux-x86_64.json"; check $? "write: the record of a GPL build says GPL-3.0-or-later"
 
+# ── write_licenses, on fake source trees ───────────────────────────────────
+# The source lines of README.txt are the sources the build checked
+# (SOURCES_FETCHED), not every pin of the component's name: FFmpeg, xz and
+# speexdsp have two pins each, and a platform downloads one of them.
+L="$TMP/licenses"
+pin() { awk -v u="$1" '!/^#/ && $2 == u { print $1 }' "$ROOT/scripts/shared/_sources.sha256"; }
+# trees <src dir>: a source tree with a license text for every component.
+trees() {
+  (
+    source "$ROOT/scripts/shared/_versions.sh"
+    s="$1"
+    for t in "zlib-$ZLIB_VERSION" "bzip2-$BZIP2_VERSION" "xz-$XZ_VERSION" \
+             "libxml2-$LIBXML2_VERSION" "openssl-$OPENSSL_VERSION" "libiconv-$LIBICONV_VERSION" \
+             "speexdsp-SpeexDSP-$SPEEXDSP_VERSION" "pipewire-$PIPEWIRE_VERSION" libplacebo-git \
+             libsmb2 "rubberband-$RUBBERBAND_VERSION"; do
+      mkdir -p "$s/$t"; printf '%s\n' "$t" > "$s/$t/COPYING"
+    done
+    for m in "mpv-$MPV_VERSION" mpv-arm64; do
+      mkdir -p "$s/$m"; printf 'lgpl\n' > "$s/$m/LICENSE.LGPL"; printf 'gpl\n' > "$s/$m/LICENSE.GPL"
+      printf 'c\n' > "$s/$m/Copyright"
+    done
+    f="$s/ffmpeg-$FFMPEG_VERSION"; mkdir -p "$f"
+    for n in COPYING.LGPLv3 COPYING.GPLv3 LICENSE.md; do printf '%s\n' "$n" > "$f/$n"; done
+  )
+}
+# licenses <target> <fetched file> <components...>: write_licenses on $L/src.
+licenses() {
+  local target="$1" fetched="$2"; shift 2
+  (
+    source "$ROOT/scripts/shared/_helpers.sh"
+    source "$ROOT/scripts/shared/_versions.sh"
+    source "$ROOT/scripts/shared/_audio_only.sh"
+    SOURCES_FETCHED="$fetched" GITHUB_SHA=feedc0de LIBPLACEBO_VERSION=6.338.2 \
+      RELEASE_DIR="$L/out" write_licenses "$target" "$L/src" "$@"
+  ) > "$L/$target.log" 2>&1
+}
+V="$(bash -c "source '$ROOT/scripts/shared/_versions.sh'; echo \"\$FFMPEG_VERSION \$XZ_VERSION \$SPEEXDSP_VERSION \$OPENSSL_VERSION\"")"
+read -r FFV XZV SPV OSV <<<"$V"
+mkdir -p "$L/src"; trees "$L/src"
+LP="https://code.videolan.org/videolan/libplacebo.git#v6.338.2"
+UNPINNED="https://example.invalid/openssl-$OSV.tar.gz"
+
+# Linux: the .tar.gz of FFmpeg, xz from GitHub, speexdsp from xiph, a
+# source checked twice (cached, then again), and an unpinned one.
+fl="$L/fetched-linux"
+for u in "https://ffmpeg.org/releases/ffmpeg-$FFV.tar.gz" \
+         "https://github.com/tukaani-project/xz/releases/download/v$XZV/xz-$XZV.tar.gz" \
+         "https://downloads.xiph.org/releases/speex/speexdsp-$SPV.tar.gz" \
+         "https://downloads.xiph.org/releases/speex/speexdsp-$SPV.tar.gz" "$LP"; do
+  printf '%s  %s\n' "$(pin "$u")" "$u" >> "$fl"
+done
+printf '%s  %s\n' 0123 "$UNPINNED" >> "$fl"
+licenses linux-x86_64 "$fl" mpv ffmpeg openssl libplacebo xz speexdsp implib; check $? "licenses: linux-x86_64"
+python3 - "$L/out/licenses_linux-x86_64" "$FFV" "$XZV" "$SPV" "$UNPINNED" <<'PY'
+import pathlib, sys
+d, ffv, xzv, spv, unpinned = sys.argv[1:]
+d = pathlib.Path(d)
+r = (d / "README.txt").read_text()
+src = [l.split()[1] for l in r.split("patches/ of that commit:\n")[1].splitlines() if "  https://" in l]
+assert src == [f"https://ffmpeg.org/releases/ffmpeg-{ffv}.tar.gz", unpinned,
+               "https://code.videolan.org/videolan/libplacebo.git#v6.338.2",
+               f"https://github.com/tukaani-project/xz/releases/download/v{xzv}/xz-{xzv}.tar.gz",
+               f"https://downloads.xiph.org/releases/speex/speexdsp-{spv}.tar.gz"], src
+assert "  mpv: no source checked against" in r, r
+assert f"  0123  {unpinned}  (not pinned)" in r, r
+assert "at commit feedc0de" in r, r
+assert r.splitlines()[0].endswith(": LGPL-3.0-or-later"), r.splitlines()[0]
+assert (d / "implib/LICENSE.txt").is_file()
+assert not (d / "rubberband").exists()
+PY
+check $? "licenses: linux lists the sources it checked, once each, and marks an unpinned one"
+
+# Windows: the .tar.xz of FFmpeg, xz from tukaani, speexdsp from GitHub.
+fw="$L/fetched-windows"
+for u in "https://ffmpeg.org/releases/ffmpeg-$FFV.tar.xz" \
+         "https://tukaani.org/xz/xz-$XZV.tar.gz" \
+         "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-$SPV.tar.gz"; do
+  printf '%s  %s\n' "$(pin "$u")" "$u" >> "$fw"
+done
+licenses windows-x86_64 "$fw" mpv ffmpeg xz speexdsp; check $? "licenses: windows-x86_64"
+python3 - "$L/out/licenses_windows-x86_64" "$FFV" "$XZV" "$SPV" <<'PY'
+import pathlib, sys
+d, ffv, xzv, spv = sys.argv[1:]
+d = pathlib.Path(d)
+r = (d / "README.txt").read_text()
+src = [l.split()[1] for l in r.split("patches/ of that commit:\n")[1].splitlines() if "  https://" in l]
+assert src == [f"https://ffmpeg.org/releases/ffmpeg-{ffv}.tar.xz", f"https://tukaani.org/xz/xz-{xzv}.tar.gz",
+               f"https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-{spv}.tar.gz"], src
+assert "(not pinned)" not in r, r
+PY
+check $? "licenses: windows lists the .tar.xz of FFmpeg alone"
+
+# macOS: the mpv tree of the first arch, the GPL build, no record of sources.
+LIBMPV_GPL=1 licenses macos "$L/none" mpv=mpv-arm64 ffmpeg rubberband; check $? "licenses: macos (GPL)"
+python3 - "$L/out/licenses_macos" <<'PY'
+import pathlib, sys
+d = pathlib.Path(sys.argv[1])
+r = (d / "README.txt").read_text()
+assert r.splitlines()[0].endswith(": GPL-3.0-or-later"), r.splitlines()[0]
+assert (d / "mpv/LICENSE.GPL").is_file() and not (d / "mpv/LICENSE.LGPL").exists()
+assert (d / "ffmpeg/COPYING.GPLv3").is_file() and not (d / "ffmpeg/COPYING.LGPLv3").exists()
+assert (d / "rubberband/COPYING").is_file()
+for n in ("mpv", "ffmpeg", "rubberband"):
+    assert f"  {n}: no source checked against" in r, r
+PY
+check $? "licenses: macos takes the tree of its arch, the GPL texts, and says when no source was checked"
+
+# verify_source lists what it checked in SOURCES_FETCHED; sourcing the
+# helpers alone writes nothing.
+(
+  export TMPDIR="$L/tmp"; mkdir -p "$TMPDIR"
+  source "$ROOT/scripts/shared/_helpers.sh"
+  [[ ! -e "$SOURCES_FETCHED" ]] || exit 1
+  printf 'x' > "$L/x.tar.gz"
+  verify_source "https://example.invalid/x.tar.gz" "$L/x.tar.gz" 2>/dev/null
+  grep -qx "$(sha256_of "$L/x.tar.gz")  https://example.invalid/x.tar.gz" "$SOURCES_FETCHED"
+); check $? "licenses: verify_source lists the source it checked, and no file before"
+
 if (( fails > 0 )); then echo "$fails check(s) failed"; exit 1; fi
 echo "all checks passed"

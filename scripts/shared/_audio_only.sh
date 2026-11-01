@@ -307,7 +307,8 @@ PY
 # <src dir> (so they are the texts of the versions built), our own LICENSE,
 # the notice of the Mozilla CA bundle when embed_cacert is on, and README.txt:
 # the license of the build and where its exact source is (the commit of this
-# repo, the pinned tarballs and git tags of _sources.sha256). The caller lists
+# repo, and the tarballs and git tags this build checked against
+# _sources.sha256, from SOURCES_FETCHED of _helpers.sh). The caller lists
 # what it links, by the settings of the build: rubberband only with gpl_build,
 # libsmb2 only with patch_on libsmb2, the font stack only without
 # libass_stripped; <component>=<tree> names a tree the build extracted under
@@ -382,8 +383,15 @@ def table(name):
     return (f"{name}-{v(var)}", rf"/{name}-{re.escape(v(var))}\.tar", None)
 
 USUAL = re.compile(r"^(licen[cs]e|copying|copyright|notice)([.-].*)?$", re.I)
-pins = [l.split(None, 1) for l in (root / "scripts/shared/_sources.sha256").read_text().splitlines()
-        if l.strip() and not l.startswith("#")]
+def lines(path):
+    return [tuple(l.split(None, 1)) for l in path.read_text().splitlines()
+            if l.strip() and not l.startswith("#")]
+# The sources this build checked (SOURCES_FETCHED of _helpers.sh), each once:
+# only those, so a component pinned under several URLs (mirrors, .tar.gz and
+# .tar.xz) lists the one the build downloaded.
+pinned = set(lines(root / "scripts/shared/_sources.sha256"))
+fetched = pathlib.Path(env("SOURCES_FETCHED") or "/nonexistent")
+pins = list(dict.fromkeys(lines(fetched))) if fetched.is_file() else []
 out.mkdir(parents=True)
 rows, sources = [], []
 for name in components:
@@ -421,8 +429,9 @@ for name in components:
         (dest / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tree / f, dest / f)
     rows.append(f"  {name:<14} {tree.name}: {', '.join(files)}")
-    found = [f"  {h}  {u}" for h, u in pins if re.search(pin, u)]
-    sources += found or [f"  {name}: no pin in scripts/shared/_sources.sha256"]
+    found = [f"  {h}  {u}" + ("" if (h, u) in pinned else "  (not pinned)")
+             for h, u in pins if re.search(pin, u)]
+    sources += found or [f"  {name}: no source checked against scripts/shared/_sources.sha256"]
 
 dest = out / "libmpv-scripts"
 dest.mkdir()
