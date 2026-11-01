@@ -44,7 +44,17 @@ Each library exports only the `mpv_*` C API, plus the `mak_pcm_*` functions that
 
 The web module is WebAssembly built with Emscripten 6.0.12 and pthreads. `libmpv_web.zip` holds `libmpv.mjs` (the ES module that loads `libmpv.wasm` from beside itself), `libmpv.wasm`, `mak_webaudio_processor.js` (the AudioWorklet of its `webaudio` output, loaded from beside `libmpv.mjs`) and its record `build_web.json`. It has the shared patches, the decoders and the filters of the libraries, without the render API, SMB and the embedded CA bundle: http, https and `blob:` URLs go through the browser's fetch, so a server of another origin must send CORS headers. A page that loads it must be cross-origin isolated (COOP and COEP headers on every file). `mak_web_abi_version()` returns the version of what a client relies on (exports, struct layout, the wakeup bridge, `Module.makWebAudio`); `build_web.json` and the manifest list it.
 
-The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and `scripts/shared/_sources.sha256` pins each source tarball by its SHA-256 and each git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. Each build leaves next to its library a record of the patches it applied and the audio filters it compiled (`builds/release/build_<target>.json`). The Manifest action turns them into `builds/release/manifest.json`, with the versions, the filters, the patches of every target, the commit and run of the build and the hash of every library. It fails when the libraries disagree on the filters or one has no record.
+The versions of mpv, FFmpeg and every other dependency are set in `scripts/shared/_versions.sh`, and `scripts/shared/_sources.sha256` pins each source tarball by its SHA-256 and each git source (libplacebo, libsmb2, PipeWire) by the commit of its tag. Each build leaves next to its library a record of its license, the patches it applied and the audio filters it compiled (`builds/release/build_<target>.json`), and the license texts of what it links (`builds/release/licenses_<target>/`). The Manifest action turns them into `builds/release/manifest.json`, with the versions, the license, the filters, the patches of every target, the commit and run of the build and the hash of every library, and packs the texts into `licenses.zip`. It fails when the libraries disagree on the license or the filters, or one has no record or no license texts.
+
+---
+
+## Licenses
+
+The scripts and patches of this repository are BSD-3-Clause. The libraries they build are **LGPL, version 3 or later**: mpv is built with `-Dgpl=false` (LGPLv2.1+), FFmpeg without `--enable-gpl` and with `--enable-version3`, which OpenSSL 3 (Apache-2.0) needs, and every other dependency is under a permissive or LGPL license. An app may link the library whatever its own license, as long as it ships the license texts, says that it uses libmpv, and lets the user swap in a library built from modified source: every target ships libmpv as its own dynamic library or module, which allows that.
+
+The texts are in `licenses.zip`, published with the libraries: one folder per target with the texts of mpv, FFmpeg and each library linked into it (those of the versions built, taken from their source trees), the notice of the embedded Mozilla CA bundle, this repository's license, and a `README.txt` naming the commit of this repository and the URL and SHA-256 of every pinned source. `manifest.json` names the license (`"license": "LGPL-3.0-or-later"`).
+
+Rubber Band (librubberband, GPL-2.0+) is left out, and with it FFmpeg's `rubberband` filter and mpv's `af=rubberband`. Pitch and tempo stay available through mpv's `pitch` and `speed` (`scaletempo2`) and the `atempo`, `asetrate` and `aresample` filters. For Rubber Band, build the libraries yourself with `LIBMPV_GPL=1` (or Settings ▸ License in the TUI): FFmpeg gets `--enable-gpl --enable-librubberband` and the `rubberband` filter, mpv `-Dgpl=true -Drubberband=enabled`, and every platform builds librubberband. Such a library is **GPL, version 3 or later**: an app that ships it must be GPL too, which rules out the App Store. Its record, manifest and texts say `GPL-3.0-or-later`. The published releases never use it. Clean `builds/work/` after switching, or the build stops on stages built with the other setting.
 
 ---
 
@@ -52,6 +62,7 @@ The versions of mpv, FFmpeg and every other dependency are set in `scripts/share
 
 *   [Quick start](#quick-start)
 *   [What it produces](#what-it-produces)
+*   [Licenses](#licenses)
 *   [Visuals](#visuals)
 *   [Guide](#guide)
     <details>
@@ -155,11 +166,11 @@ Three tabs:
 
 #### 2.2 Settings
 
-Choose which audio decoders, audio filters and patches go into the build. Fewer decoders and filters make a smaller library, but a format you remove won't play. Your choices are saved separately from the defaults, and you can reset them at any time.
+Choose which audio decoders, audio filters and patches go into the build, and in the License tab whether to make the GPL build with Rubber Band (see [Licenses](#licenses)). Fewer decoders and filters make a smaller library, but a format you remove won't play. Your choices are saved separately from the defaults, and you can reset them at any time.
 
 #### 2.3 Dependencies
 
-Every library in the build, with its version and license.
+Every library in the build, with its version and license. Rubber Band is only in the GPL build.
 
 ---
 
@@ -224,12 +235,13 @@ These variables are passed to the Docker builds:
 | `WIPE_ALL=1` | also delete the downloaded sources |
 | `STRICT_SOURCES=1` | stop on a source that is not pinned, as CI does |
 | `RECORD_SOURCES=<file>` | append the hash of every unpinned source to a file |
+| `LIBMPV_GPL=1` | the GPL build with Rubber Band (see [Licenses](#licenses)) |
 
 To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` and so on (see `scripts/shared/_versions.sh`).
 
 #### 3.6 On GitHub Actions
 
-Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries and the web module on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries, `libmpv_web.zip`, their build records and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio, runs the patch tests of [4.3](#43-verifying), and runs the checks of the web module in Node and in Chrome. The release waits for the patch tests and the web checks. A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
+Every push to a `release/` branch runs `.github/workflows/build.yml`, which builds all nine libraries and the web module on GitHub's runners, Apple included, with `STRICT_SOURCES=1`. The run ends with a `libmpv-release` artifact holding the libraries, `libmpv_web.zip`, their build records and license texts, `licenses.zip` and `manifest.json`, then checks them as in [4.3](#43-verifying). It also plays a tone with the Linux x86_64 library in a bare Debian 11 container, without PipeWire and PulseAudio, runs the patch tests of [4.3](#43-verifying), and runs the checks of the web module in Node and in Chrome. The release waits for the patch tests and the web checks. A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
 
 ---
 
@@ -261,20 +273,20 @@ The Manifest action in the Tools tab writes `builds/release/manifest.json` for a
 
 #### 4.3 Verifying
 
-`./build verify` checks every library in `builds/release/`: architecture, exported API, the patched mpv properties, the included decoders and filters, the spdif muxer and the httpproxy, https and tls protocols, that no video code slipped in, and the libraries it depends on. On Linux and Android it also checks the SONAME, that there is no `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries and the glibc 2.31 floor. Where the host can load it, it also opens the library and calls into it. For `libmpv_web.zip` it checks the files of the zip, its record, a shared memory wasm under 12 MB, the exported functions, the patched properties, the FFmpeg patches, decoders and filters and mpv's version. The report has one row per library, and Enter shows the full log.
+`./build verify` checks every library in `builds/release/`: architecture, exported API, the patched mpv properties, the included decoders and filters, the spdif muxer and the httpproxy, https and tls protocols, that no video code slipped in, and the libraries it depends on, and the license: neither `gpl` nor `rubberband` among mpv's enabled features nor Rubber Band's code in the library, and its license texts next to it, in `licenses.zip` and in `manifest.json` (the opposite with `LIBMPV_GPL=1`). On Linux and Android it also checks the SONAME, that there is no `DT_RELR`, the 16 KB alignment of the 64 bit Android libraries and the glibc 2.31 floor. Where the host can load it, it also opens the library and calls into it. For `libmpv_web.zip` it checks the files of the zip, its record, a shared memory wasm under 12 MB, the exported functions, the patched properties, the FFmpeg patches, decoders and filters and mpv's version. The report has one row per library, and Enter shows the full log.
 
 The web module runs in `verify/web/run_checks.sh <module dir> <spike dir> <fixtures dir> <work dir>`: Node and each browser of `BROWSERS` (Chrome, Firefox) decode, filter, play through the `webaudio` output and read over http, as [`verify/web/README.md`](verify/web/README.md) describes.
 
 The patches have tests of their own: `bash verify/tests/native/run.sh <work dir>` builds a debug libmpv with AddressSanitizer against the system FFmpeg and runs the C tests of the patched mpv, then the tests of the patch scripts. It needs meson, ninja, the `ffmpeg` command and the FFmpeg development files, and takes a few minutes.
 
-After a refactor of the patch scripts, `bash verify/tests/patches/patch_identity_test.sh <reference root> <pristine mpv> <pristine ffmpeg> <pristine rubberband> <work dir>`, run by hand, checks that this tree's `patches/` and those of a reference revision (`git archive <rev> patches | tar -x`) make the same source trees, so the refactor needs no rebuild.
+After a refactor of the patch scripts, `bash verify/tests/patches/patch_identity_test.sh <reference root> <pristine mpv> <pristine ffmpeg> <pristine rubberband> <work dir>`, run by hand (`-` for the rubberband tree leaves out its case), checks that this tree's `patches/` and those of a reference revision (`git archive <rev> patches | tar -x`) make the same source trees, so the refactor needs no rebuild.
 
 `bash verify/tests/network_test.sh <work dir>` builds libsmb2 and a minimal FFmpeg with AddressSanitizer and the network patches, then checks them against a local impacket SMB server, `openssl s_server` and a local HTTP server: the URL parsing, a stop while the server stalls, the connect deadline, the embedded CA roots, the EIO of an HTTP body cut short and the HLS and DASH segments lost to errors. It needs cmake, ninja, the OpenSSL and libxml2 development files, the `ffmpeg` command and impacket for the python in `SMB_PYTHON`, and takes about two minutes.
 
 #### 4.4 Publishing a release
 
 1. Build all nine libraries and the web module, usually by pushing a `release/` branch (see [3.6](#36-on-github-actions)).
-2. Create the `libmpv-rN` release on `mpv_audio_kit` and upload the libraries, `libmpv_web.zip` and `manifest.json`.
+2. Create the `libmpv-rN` release on `mpv_audio_kit` and upload the libraries, `libmpv_web.zip`, `licenses.zip` and `manifest.json`.
 3. In `mpv_audio_kit`, run `scripts/update_libmpv.sh rN`.
 
 ---
