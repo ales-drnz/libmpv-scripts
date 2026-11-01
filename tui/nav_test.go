@@ -51,7 +51,7 @@ func TestHeaderReachableFromSettingsList(t *testing.T) {
 		t.Fatalf("up from list should land on sub-tab strip; onSetTabs=%v onTabs=%v", m.onSetTabs, m.onTabs)
 	}
 	assertOneZone(t, m)
-	// up again → header strip (the user's reported gap)
+	// up again → header strip (the sub-tab strip used to be a dead end)
 	m = pressKey(m, tea.KeyUp)
 	if !m.onTabs || m.onSetTabs {
 		t.Fatalf("up from sub-tabs should reach header; onTabs=%v onSetTabs=%v", m.onTabs, m.onSetTabs)

@@ -877,8 +877,8 @@ verify_dylib() {
 # Current symlink — NOT the iOS shallow layout), then assemble an xcframework
 # via `xcodebuild -create-xcframework`. Output:
 #   builds/release/libmpv_macos.xcframework.zip
-# Same SwiftPM .binaryTarget shape used by media-kit / flutter_soloud /
-# pdfium_flutter.
+# The zip holds a single xcframework at its root, the layout a SwiftPM
+# .binaryTarget(url:checksum:) expects.
 assemble_xcframework() {
   log "Assembling macOS xcframework..."
   local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"

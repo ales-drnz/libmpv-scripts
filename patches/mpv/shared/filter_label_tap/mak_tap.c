@@ -62,13 +62,12 @@
  * The ring is allocated dynamically at format-detection time
  * (see mak_tap_write) so a 44.1 kHz mono stream and a 384 kHz
  * 5.1 stream both get a buffer that covers the same number of
- * SECONDS of audio rather than the same number of bytes. This
- * matches the canonical JUCE prepareToPlay model — the audio
- * thread allocates only at format change (rare, equivalent to
- * file load), not in the per-frame hot path.
+ * SECONDS of audio rather than the same number of bytes. The
+ * audio thread allocates only when the format changes (rare,
+ * about as often as a file load), never in the per-frame hot
+ * path.
  *
  * TAP_BUFFER_SECONDS — target coverage in seconds. 3.0 s
- *   matches the iZotope Ozone "Average Time" middle preset and
  *   covers mpv's observed ~1.2 s chain pre-buffer with a 2.5×
  *   safety margin.
  *
@@ -82,9 +81,7 @@
  * When the requested PTS-aligned read falls outside the ring's
  * coverage (only possible at the cap, on extreme hi-res), the
  * reader degrades gracefully to "latest available window" rather
- * than freezing on a stale slice — same behaviour every DAW
- * spectrum analyser uses (VLC visual.c, JUCE AudioVisualiser-
- * Component, Voxengo SPAN). */
+ * than freezing on a stale slice. */
 #define TAP_BUFFER_SECONDS  3.0
 #define TAP_MAX_RING_BYTES  (16 * 1024 * 1024)
 #define TAP_MAX_CHANNELS    8
@@ -513,9 +510,9 @@ void mak_tap_write(const char *name, bool is_post,
      * coverage shrinks from 3 s to ~96 ms. The soft fallback in
      * build_ring_node degrades to "latest available window"; the
      * visualiser keeps refreshing, just without strict PTS
-     * alignment for the few-frame chain pre-buffer phase — same
-     * trade-off VLC / JUCE / Voxengo accept. Reverse case (high
-     * rate first, low rate later) gives extra headroom for free. */
+     * alignment for the few-frame chain pre-buffer phase. Reverse
+     * case (high rate first, low rate later) gives extra headroom
+     * for free. */
     if (ring->buf == NULL) {
         size_t frame_bytes = (size_t)channels * sizeof(float);
         size_t needed =
@@ -675,11 +672,10 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
          * outside the ring's coverage (only possible at the
          * TAP_MAX_RING_BYTES cap, on extreme hi-res), degrade to
          * "latest available window" rather than freezing on stale
-         * data or returning empty. Same behaviour as VLC visual.c,
-         * JUCE AudioVisualiserComponent, Voxengo SPAN. The visual
-         * effect is a brief constant lead during the chain pre-
-         * buffer phase, fully resolved within one paint as the AO
-         * catches up to the chain. */
+         * data or returning empty. The visual effect is a brief
+         * constant lead during the chain pre-buffer phase, fully
+         * resolved within one paint as the AO catches up to the
+         * chain. */
         if (delta_bytes + window_bytes > valid_bytes) {
             delta_bytes = 0;
         }

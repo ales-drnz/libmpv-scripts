@@ -49,8 +49,7 @@ Thumbs.db
 .idea/
 *.iml
 
-# VS Code (workspace-local settings shouldn't propagate to a private
-# tooling repo by default; uncomment if you want to track them).
+# Editor settings and local notes (not tracked).
 .vscode/
 docs/
 .claude/
