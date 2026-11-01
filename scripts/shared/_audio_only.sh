@@ -332,7 +332,7 @@ write_licenses() {
   # The versions a platform script pins itself are not exported.
   LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-}" LIBUNIBREAK_VERSION="${LIBUNIBREAK_VERSION:-}" \
   LIBEXPAT_VERSION="${EXPAT_VERSION:-$LIBEXPAT_VERSION}" \
-    python3 - "$out" "$target" "$src" "$commit" "$@" "${extra[@]}" <<'PY'
+    python3 - "$out" "$target" "$src" "$commit" "$@" ${extra[@]+"${extra[@]}"} <<'PY'
 import os, pathlib, re, shutil, sys
 
 out, target, src, commit, *components = sys.argv[1:]
