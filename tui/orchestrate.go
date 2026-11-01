@@ -25,8 +25,7 @@ func dockerPlatformFor(t Target) string {
 	return "linux/" + runtime.GOARCH
 }
 
-// buildCtx holds the resolved paths the build commands need. It replaces the
-// Makefile's REPO_ROOT / DOCKER_RUN / NDK-mount machinery.
+// buildCtx holds the resolved paths the build commands need.
 type buildCtx struct {
 	scriptsRoot string // the libmpv-scripts checkout (holds scripts/, docker/, tui/)
 	repoRoot    string // the mpv_audio_kit package, or "" when not found
@@ -157,8 +156,8 @@ func findNDK() string {
 }
 
 // dockerEnvArgs forwards the optional throttle env vars into the container,
-// matching the Makefile's DOCKER_ENV, and LIBMPV_GPL, the opt-in GPL build
-// (the License tab writes it into the override file instead).
+// and LIBMPV_GPL, the opt-in GPL build (the License tab writes it into the
+// override file instead).
 func dockerEnvArgs() []string {
 	args := []string{"-e", "MPV_AUDIO_KIT_ROOT=/repo"}
 	for _, k := range []string{"JOBS", "ENABLE_LTO_DEPS", "FORCE_DOWNLOAD", "KEEP_BUILD", "WIPE_ALL", "LIBMPV_GPL"} {

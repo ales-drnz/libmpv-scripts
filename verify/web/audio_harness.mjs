@@ -2,7 +2,7 @@
 // All rights reserved.
 // Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-// The W2 harness: mpv's webaudio output in a browser, driven from the main
+// The audio harness: mpv's webaudio output in a browser, driven from the main
 // thread through the module (libmpv.mjs) and Module.makWebAudio. It plays
 // files in real time and reads what the AudioWorklet did from the slots of
 // the shared table (makWebAudio.stats()): frames consumed, underruns,
@@ -380,7 +380,7 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   check(moved && wa.context.sampleRate === rate2 && +aop2 === rate2 && Math.abs(fps2 / rate2 - 1) < 0.03,
     'context.replace', `context at ${wa.context.sampleRate}, audio-out-params ${aop2} Hz, ${fps2.toFixed(0)} frames/s`);
 
-  // The output node is a plain AudioNode: the media session route of W4
+  // The output node is a plain AudioNode: a media session route
   // (a MediaStreamAudioDestinationNode into an <audio>) takes it.
   const dest = wa.context.createMediaStreamDestination();
   wa.output(0).connect(dest);

@@ -2,7 +2,7 @@
 // All rights reserved.
 // Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-// Runs the W1 harness module (spike.mjs, from verify/web/mak_spike.c) in
+// Runs the harness module (spike.mjs, from verify/web/mak_spike.c) in
 // Node, where Emscripten's pthreads are worker_threads.
 //
 //   node run_node.mjs <spike.mjs> [-n loops] [-x step]... [-a af] [-l long_file]... file...

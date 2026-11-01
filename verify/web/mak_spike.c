@@ -2,7 +2,7 @@
  * All rights reserved.
  * Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
  *
- * mak_spike.c: the W1 harness of the web build, a libmpv client in C.
+ * mak_spike.c: the C harness of the web build, a libmpv client in C.
  *
  * Built two ways from this one file:
  * - web: linked into spike.mjs by build_libmpv_web.sh with PROXY_TO_PTHREAD,

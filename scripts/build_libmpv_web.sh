@@ -22,7 +22,7 @@
 #                                                     the release asset
 # builds/release/build_web.json                       its record, for
 #                                                     write_manifest.sh
-# $BUILD_DIR/spike/spike.mjs, spike.wasm              the W1 harness module
+# $BUILD_DIR/spike/spike.mjs, spike.wasm              the harness module
 #                                                     (verify/web/mak_spike.c)
 #
 # === SYSTEM ===

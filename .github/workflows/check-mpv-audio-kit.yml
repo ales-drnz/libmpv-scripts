@@ -97,12 +97,10 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          for l in test; do
-            [ -f $l.log ] || continue
-            grep -E '\[E\]$' $l.log | sort -u > failures-$l.txt || true
-            echo "== $l: $(tail -1 $l.log)"
-            echo "Failing tests:"; cat failures-$l.txt
-          done
+          [ -f test.log ] || exit 0
+          grep -E '\[E\]$' test.log | sort -u > failures-test.txt || true
+          echo "== test: $(tail -1 test.log)"
+          echo "Failing tests:"; cat failures-test.txt
       - uses: actions/upload-artifact@v7
         if: always()
         with:

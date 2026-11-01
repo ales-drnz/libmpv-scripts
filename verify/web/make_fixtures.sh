@@ -24,7 +24,7 @@ src=(-f lavfi -i "anoisesrc=color=pink:amplitude=0.3:sample_rate=48000:duration=
   ffmpeg -hide_banner -loglevel error -y "${src[@]}" -sample_fmt s16 "$out/long_60s.flac"
 [[ -s "$out/long_60s.mp3" ]] || \
   ffmpeg -hide_banner -loglevel error -y "${src[@]}" -ar 44100 -b:a 192k "$out/long_60s.mp3"
-# W2: a steady 1 kHz tone at -12 dBFS (peak 0.25) at two rates, for the gain
+# Audio: a steady 1 kHz tone at -12 dBFS (peak 0.25) at two rates, for the gain
 # of the output and a format change.
 for t in 48:48000 44:44100; do
   f="$out/tone_${t%%:*}k_20s.flac"

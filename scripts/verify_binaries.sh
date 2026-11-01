@@ -72,7 +72,8 @@
 # the four files of the zip and the record's release and versions, a shared
 # memory wasm under its size ceiling, exactly the mpv_* and mak_* exports the
 # web build exports, the patched properties, the FFmpeg patches, decoders and
-# filters, the webaudio output and the webio protocols, and mpv's version.
+# filters, the webaudio output and the webio protocols, the license and mpv's
+# version.
 # It runs in the browser in the Build's web job (verify/web/run_checks.sh).
 #
 # A layer whose tool fails or returns nothing counts as FAILED, never as a
@@ -111,6 +112,7 @@
 #  6  Audio filters               ✓    ✓     ✓     ✓     ✓
 #  7  Audio-only invariant        ✓    ✓     ✓     ✓     ✓
 # 7b  Feature presence (strips)    ✓    ✓     ✓     ✓     ✓    adaptive to Settings ▸ Patches (swscale/libass/GPU/win-icon + core protocols)
+# 7c  License                     ✓    ✓     ✓     ✓     ✓    the build's license, against its record and license texts
 #  8  Runtime dependencies        ·    ·     ·     ·     ·    info; the allowlist assertion is #11
 #  9  Dependency versions         ✓    ✓     ✓     ✓     ✓
 # 10  API surface hash            ·    ·     ·     ·     ·    info; asserted globally by the cross-platform audit
@@ -128,7 +130,7 @@
 #    pointer (a Mach-O can't load under a Linux loader). iOS stays N/A (device
 #    arm64 slice; the simulator slice needs the iOS Simulator runtime).
 #
-# Static categories (1-11, plus 7b) run on EVERY artifact — including the
+# Static categories (1-11, plus 7b and 7c) run on EVERY artifact — including the
 # macOS/iOS xcframeworks, whose inner Mach-O dylib is extracted and inspected.
 # Only the runtime categories (12-14) and the ELF one (16) vary by platform,
 # and every non-applicable cell emits its reason, so the report never shows an
@@ -1377,8 +1379,8 @@ layer15_codesign_identity() {
 # The same facts the build scripts assert (assert_soname, assert_no_relr,
 # assert_load_align, assert_glibc_floor in _audio_only.sh), checked again on
 # the shipped file:
-#   SONAME     libmpv_audio_kit.so, so the kit never collides with media_kit's
-#              libmpv in one process or one bundle.
+#   SONAME     libmpv_audio_kit.so, so the kit never collides with another
+#              plugin's libmpv in one process or one bundle.
 #   DT_RELR    absent (tag 0x24, or Android's OS-private 0x6fffe000): glibc
 #              below 2.36 refuses it, bionic below API 30 skips it silently.
 #   alignment  every LOAD segment aligned to >= 0x4000 on arm64-v8a and

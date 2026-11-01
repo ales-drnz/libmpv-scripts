@@ -3,7 +3,7 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-# The media of the webio harness: the W1 fixtures (make_fixtures.sh), a
+# The media of the webio harness: the harness fixtures (make_fixtures.sh), a
 # radio-like MP3 for the live stream, a 300 s WAV for the read speed, and
 # 30 s of the 60 s file as HLS (AAC in MPEG-TS, 5 s segments; gap.m3u8 names
 # a segment that is not there) and as DASH (AAC in fragmented MP4).

@@ -1436,7 +1436,7 @@ dep_unwind_cflags() {
 
 # ── SONAME of the bundled library (linux + android) ──────────────────────────
 # mpv's meson names the library libmpv.so.2 on Linux and libmpv.so on Android,
-# the same SONAME media_kit ships. Two libraries with one SONAME cannot live
+# the name another plugin's libmpv may ship too. Two libraries with one SONAME cannot live
 # in one process on bionic, which resolves a dlopen by name against the
 # SONAMEs already loaded, and they collide on disk too: lib/<abi>/ in the
 # APK, lib/ in the Linux bundle. The kit's plugin therefore owns its own name,

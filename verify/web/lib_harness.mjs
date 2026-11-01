@@ -2,12 +2,12 @@
 // All rights reserved.
 // Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-// The JS side of W1: drives the module (libmpv.mjs, no main) through its
-// exports from the calling thread, the way the Dart backend of W4 will.
+// The JS side of the harness: drives the module (libmpv.mjs, no main) through its
+// exports from the calling thread, the way the Dart backend of the kit does.
 // Events come from the wakeup bridge of scripts/web/mak_web.c: mpv posts one
 // task to the main thread, which drains mpv_wait_event(h, 0). Nothing here
 // waits on mpv but the calls that take the core lock (initialize, hook_add,
-// hook_continue, terminate_destroy), which W4 moves to a service thread.
+// hook_continue, terminate_destroy).
 //
 // Shared by run_lib_node.mjs (Node) and harness.html (browser):
 //   const result = await runLibHarness(factory, files, log, record);
@@ -25,8 +25,7 @@ const AF_CHAIN = 'lavfi=[equalizer=f=1000:t=q:w=1:g=3],lavfi=[afftdn],lavfi=[lou
 // client of the module checks it.
 const EXPECTED_WEB_ABI = 1;
 
-// The struct layout W0 derived from client.h for wasm32 (DESIGN.md 6.3), in
-// the order of mak_web_layout().
+// The struct layout of client.h on wasm32, in the order of mak_web_layout().
 const EXPECTED_LAYOUT = [
   16, 8, // mpv_node: size, format
   12, 4, 8, // mpv_node_list: size, values, keys

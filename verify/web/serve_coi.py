@@ -3,7 +3,7 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-"""Serves a directory for the W1 browser harness, cross-origin isolated.
+"""Serves a directory for the browser harness, cross-origin isolated.
 
 Every response carries COOP same-origin and COEP require-corp (what Safari
 needs; Chrome and Firefox take credentialless too), so SharedArrayBuffer and

@@ -21,9 +21,6 @@
  * and the autoprobe falls back to aaudio (API 26+) or opensles, which
  * play through another driver than the intended one; null is used only
  * when every driver fails.
- *
- * Reference: mpv-android does the same in its JNI bridge
- * (https://github.com/mpv-android/mpv-android).
  */
 
 /* Guarded so the intent is self-documenting and the TU is a strict no-op
