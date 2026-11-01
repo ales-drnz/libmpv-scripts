@@ -95,7 +95,7 @@ func patchToggles() []toggle {
 func licenseToggles() []toggle {
 	return []toggle{{
 		Name: "gpl", Title: "GPL build with Rubber Band",
-		Desc:     "FFmpeg --enable-gpl and mpv -Dgpl=true with librubberband (GPL-2.0+) and its rubberband filter. The library becomes GPL-3.0-or-later: an app that ships it must be GPL too, and cannot go on the App Store. Clean the work tree after a change.",
+		Desc:     "FFmpeg --enable-gpl and mpv -Dgpl=true with librubberband (GPL-2.0+) and its rubberband filter. The library becomes GPL-3.0-or-later: an app that ships it is, as a whole, under the terms of the GPLv3. Clean the work tree after a change.",
 		Category: "License",
 	}}
 }

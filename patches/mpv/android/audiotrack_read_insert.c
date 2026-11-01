@@ -1,3 +1,7 @@
+/* Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
+ * Adapted from audio_thread() of mpv's audio/out/ao_audiotrack.c; like mpv,
+ * it is under the GNU Lesser General Public License, version 2.1 or later
+ * (see NOTICE). */
 /* MAK_AUDIOTRACK_IDLE_PATCH_V1:
  * reads the next chunk into p->chunk and returns its size in bytes, 0
  * when mpv's buffer has nothing. With audio-stream-silence the chunk is

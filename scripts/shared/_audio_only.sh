@@ -189,9 +189,10 @@ patch_on() {
 # ── License: LGPL by default, GPL on request ─────────────────────────────────
 # The libmpv we publish is LGPL, version 3 or later: FFmpeg without
 # --enable-gpl (LGPLv3 with --enable-version3, see ffmpeg_common_args) and mpv
-# with -Dgpl=false (LGPLv2.1+), so an app may link it whatever its own
-# license. librubberband is GPL-2.0+ (and its author rules out the App Store
-# without a commercial license), so it is not in that build.
+# with -Dgpl=false (LGPLv2.1+), which lets an app link it under the LGPL's
+# conditions whatever its own license. librubberband is GPL-2.0-or-later
+# (Breakfast Quay also offers it under a commercial license), so it is not in
+# that build.
 #
 # gpl_build — true only when LIBMPV_GPL=1, set in the environment or by the
 # Settings ▸ License tab of the build TUI (it writes the override file). It
@@ -489,23 +490,25 @@ for name in components:
 
 dest = out / "libmpv-scripts"
 dest.mkdir()
-for f in ("LICENSE", "NOTICE"):
+for f in ("LICENSE", "LICENSE.LGPL-2.1", "NOTICE"):
     shutil.copyfile(root / f, dest / f)
 rows.insert(0, "  libmpv-scripts the build scripts and the patches of this repo: LICENSE (BSD-3-Clause),"
-               "\n                 NOTICE (its files under the LGPL, MIT and MPL-2.0); what a patch"
-               "\n                 changes in mpv or FFmpeg is under their license")
+               "\n                 NOTICE (its files under the LGPL, MIT and MPL-2.0), LICENSE.LGPL-2.1;"
+               "\n                 what a patch changes in mpv or FFmpeg is under their license")
 combined.insert(0, ("libmpv-scripts", f"commit {commit or '(unknown)'}",
                     "BSD-3-Clause, with files under LGPL-2.1-or-later, MIT and MPL-2.0 (NOTICE)",
-                    [(f, text_of(dest / f)) for f in ("LICENSE", "NOTICE")]))
+                    [(f, text_of(dest / f)) for f in ("LICENSE", "LICENSE.LGPL-2.1", "NOTICE")]))
 
 release, license = env("LIBMPV_RELEASE", "?"), env("LIBMPV_LICENSE", "?")
 what = ("This build of libmpv is GPL, version 3 or later: an app that ships it\n"
         "must be distributed under the GPLv3 too, with its source." if gpl else
         "This build of libmpv is LGPL, version 3 or later (the LGPLv3 is a set of\n"
-        "permissions on top of the GPLv3, so both texts are here). An app may link\n"
-        "it whatever its own license, provided it ships these texts, says that it\n"
-        "uses libmpv, and lets the user replace the library with one built from\n"
-        "modified source (the dynamic libmpv of every platform allows that).")
+        "permissions on top of the GPLv3, so both texts are here). It lets an app\n"
+        "link the library whatever its own license, on its conditions, among them:\n"
+        "ship these texts, say that the app uses libmpv and that libmpv is under\n"
+        "the LGPL, provide the source of this library (see Source below), and let\n"
+        "the user replace it with one built from modified source. libmpv is a\n"
+        "separate dynamic library or module on every platform. The texts are the terms.")
 (out / "README.txt").write_text(f"""libmpv {release} for {target}: {license}
 
 {what}

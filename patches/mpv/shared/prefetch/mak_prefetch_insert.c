@@ -1,3 +1,7 @@
+/* Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
+ * prefetch_next() below is mpv's (player/loadfile.c), modified; this file is,
+ * like mpv, under the GNU Lesser General Public License, version 2.1 or later
+ * (see NOTICE). */
 /* MAK_PREFETCH_PATCH_V1 ─── the playlist prefetch, with an on_prefetch hook
  * that runs while the current entry plays.
  *

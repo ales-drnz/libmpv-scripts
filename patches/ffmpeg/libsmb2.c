@@ -7,7 +7,7 @@
 /*
  * SMB2/3 protocol handler using libsmb2 (LGPL)
  *
- * Copyright (c) 2026
+ * Copyright (c) 2026 Alessandro Di Ronza
  *
  * This file is part of FFmpeg.
  *

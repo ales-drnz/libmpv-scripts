@@ -4,12 +4,12 @@ The files of this repository are under the BSD 3-Clause License in LICENSE,
 except the ones below, which are under the license named with them.
 
 GNU Lesser General Public License, version 2.1 or later (LGPL-2.1-or-later),
-the license of mpv and FFmpeg (its text: LICENSE.LGPL of mpv, COPYING.LGPLv2.1
-of FFmpeg, https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html):
+the license of mpv and FFmpeg; its text is LICENSE.LGPL-2.1:
 
   patches/ffmpeg/libsmb2.c
-      the libsmb2 protocol of FFmpeg, copied into libavformat/ by
-      patch_ffmpeg_libsmb2.py; its header has FFmpeg's license notice.
+      an FFmpeg protocol for libsmb2 written for this repository, copied into
+      libavformat/ by patch_ffmpeg_libsmb2.py; its header has FFmpeg's
+      license notice.
   patches/ffmpeg/webio/webio.c
       the http, https and makblob protocols of the web build, copied into
       libavformat/ by patch_ffmpeg_webio.py, with code adapted from FFmpeg's
@@ -20,6 +20,15 @@ of FFmpeg, https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html):
       each writes C sources into the mpv tree (the stubs of what it removes)
       that reproduce code of mpv: declarations, option tables and the
       license notice of mpv.
+  patches/mpv/ios/patch_ios_audio_stubs.py
+      writes into audio/out/ao_coreaudio_utils.c the iOS versions of its
+      format helpers, which reproduce code of mpv from that file.
+  patches/mpv/android/audiotrack_read_insert.c
+      inserted into audio/out/ao_audiotrack.c; adapted from the read loop of
+      its audio_thread().
+  patches/mpv/shared/prefetch/mak_prefetch_insert.c
+      inserted into player/loadfile.c; its prefetch_next() is mpv's,
+      modified.
 
 MIT License (MIT):
 
@@ -46,7 +55,9 @@ The quoted lines stay code of that project, under its license (mpv and FFmpeg:
 LGPL-2.1-or-later; Rubber Band, only in the GPL build: GPL-2.0-or-later), and
 so does every file a patch writes or changes in an upstream source tree. The
 code of this repository that a patch adds to such a file is BSD-3-Clause, and
-in the patched file it goes with that file, under its license.
+in the patched file it goes with that file, under its license. Code of mpv or
+FFmpeg that a file of this repository adapts (not only quotes) is
+LGPL-2.1-or-later, and that file is listed above.
 
 The libraries the scripts build are under the license that README.md
 ("Licenses") names: LGPL-3.0-or-later, or GPL-3.0-or-later when built with
