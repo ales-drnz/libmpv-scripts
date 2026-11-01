@@ -1218,7 +1218,8 @@ layer_feature_presence() {
 #     af_rubberband) is there only in the GPL build: every line of strings
 #     that names it, except the meson command line;
 #   - licenses_<target>/ next to the binary (write_licenses) has the texts of
-#     that license (and on Windows the COPYING of the static winpthreads), and licenses.zip and manifest.json, when write_manifest.sh
+#     that license (and on Windows the COPYING of the static winpthreads)
+#     and THIRD_PARTY_LICENSES.txt, and licenses.zip and manifest.json, when write_manifest.sh
 #     has run, have the target's texts and the license.
 # FFmpeg's own license string does not survive LTO and --gc-sections; its
 # CONFIG_GPL is asserted at build time (verify_ffmpeg_config).
@@ -1264,13 +1265,14 @@ layer_license() {
   if [[ -f "$dir/README.txt" ]]; then
     if head -1 "$dir/README.txt" | grep -qF ": $want"; then pass "license: $(basename "$dir")/README.txt says $want"
     else fail "license: $(basename "$dir")/README.txt does not say $want: $(head -1 "$dir/README.txt")"; fi
-    for f in "mpv/$mpv_text" mpv/Copyright "ffmpeg/$ffmpeg_text" ffmpeg/LICENSE.md libmpv-scripts/LICENSE; do
+    for f in "mpv/$mpv_text" mpv/Copyright "ffmpeg/$ffmpeg_text" ffmpeg/LICENSE.md libmpv-scripts/LICENSE \
+             libmpv-scripts/NOTICE THIRD_PARTY_LICENSES.txt; do
       [[ -s "$dir/$f" ]] || missing+=("$f")
     done
     if [[ "$target" == windows-* && ! -s "$dir/winpthreads/COPYING" ]]; then missing+=(winpthreads/COPYING); fi
     if gpl_build; then [[ -d "$dir/rubberband" ]] || missing+=("rubberband/")
     elif [[ -e "$dir/rubberband" ]]; then fail "license: rubberband texts in the LGPL build's $(basename "$dir")"; fi
-    if (( ${#missing[@]} == 0 )); then pass "license: the texts of mpv, FFmpeg and libmpv-scripts in $(basename "$dir")"
+    if (( ${#missing[@]} == 0 )); then pass "license: the texts of mpv, FFmpeg and libmpv-scripts, and THIRD_PARTY_LICENSES.txt, in $(basename "$dir")"
     else fail "license: missing in $(basename "$dir"): ${missing[*]}"; fi
   else
     fail "license: no license texts $dir/README.txt (write_licenses)"

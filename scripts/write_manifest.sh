@@ -31,6 +31,7 @@
 #                  target, one directory each (the licenses_<target>/ that
 #                  write_licenses of shared/_audio_only.sh leaves next to the
 #                  binary), with the source of the build in its README.txt
+#                  and all the texts in one file, THIRD_PARTY_LICENSES.txt
 #
 # Filters and patches come from the record each build leaves next to its
 # binary, builds/release/build_<target>.json (write_build_record in
@@ -133,8 +134,9 @@ if "web" in records:
 texts = {}
 for target in sorted(records):
     d = release_dir / f"licenses_{target}"
-    if not (d / "README.txt").is_file():
-        raise SystemExit(f"No license texts {d.name}/README.txt for {target}: build it again")
+    for f in ("README.txt", "THIRD_PARTY_LICENSES.txt"):
+        if not (d / f).is_file():
+            raise SystemExit(f"No license texts {d.name}/{f} for {target}: build it again")
     for f in sorted(p for p in d.rglob("*") if p.is_file()):
         texts[f"{target}/{f.relative_to(d).as_posix()}"] = f.read_bytes()
 licenses_zip = release_dir / "licenses.zip"

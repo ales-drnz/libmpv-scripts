@@ -60,6 +60,7 @@ texts() {
   mkdir -p "$1/licenses_$2/mpv"
   printf 'libmpv for %s\n' "$2" > "$1/licenses_$2/README.txt"
   printf 'LGPL\n' > "$1/licenses_$2/mpv/LICENSE.LGPL"
+  printf 'mpv\nLGPL\n' > "$1/licenses_$2/THIRD_PARTY_LICENSES.txt"
 }
 
 # release_dir <name>: two binaries, Linux and Android, with their license
@@ -110,8 +111,10 @@ m = json.load(open(f"{d}/manifest.json"))
 assert m["licenses"] == {"asset": "licenses.zip",
                          "sha256": hashlib.sha256(open(f"{d}/licenses.zip", "rb").read()).hexdigest()}, m["licenses"]
 names = sorted(zipfile.ZipFile(f"{d}/licenses.zip").namelist())
-assert names == ["android-arm64-v8a/README.txt", "android-arm64-v8a/mpv/LICENSE.LGPL",
-                 "linux-x86_64/README.txt", "linux-x86_64/mpv/LICENSE.LGPL"], names
+assert names == ["android-arm64-v8a/README.txt", "android-arm64-v8a/THIRD_PARTY_LICENSES.txt",
+                 "android-arm64-v8a/mpv/LICENSE.LGPL",
+                 "linux-x86_64/README.txt", "linux-x86_64/THIRD_PARTY_LICENSES.txt",
+                 "linux-x86_64/mpv/LICENSE.LGPL"], names
 assert "licenses.zip" not in m["assets"], m["assets"]
 PY
 check $? "agree: licenses.zip holds the texts of each target, with its hash in the manifest"
@@ -166,6 +169,12 @@ record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap'
 rm -r "$d/licenses_android-arm64-v8a"
 refused notexts 'licenses_android-arm64-v8a'
+
+d="$(release_dir nocombined)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+rm "$d/licenses_linux-x86_64/THIRD_PARTY_LICENSES.txt"
+refused nocombined 'licenses_linux-x86_64/THIRD_PARTY_LICENSES.txt'
 
 # ── The web module ──────────────────────────────────────────────────────────
 # web_module <dir> [record fields as JSON]: what build_libmpv_web.sh leaves
@@ -396,6 +405,36 @@ assert (d / "implib/LICENSE.txt").is_file() and not (d / "winpthreads").exists()
 assert not (d / "rubberband").exists()
 PY
 check $? "licenses: linux lists the sources it checked, once each, and marks an unpinned one"
+(source "$ROOT/scripts/shared/_versions.sh"; python3 - "$L/out/licenses_linux-x86_64" "$ROOT") <<'PY'
+import os, pathlib, re, sys
+d, root = map(pathlib.Path, sys.argv[1:])
+c = (d / "THIRD_PARTY_LICENSES.txt").read_text()
+assert c.splitlines()[0].endswith(": LGPL-3.0-or-later"), c.splitlines()[0]
+# One heading per component, in the order of the build, ours first.
+heads = re.findall(r"^=+\n(.+)\nLicense: (.+)\n=+$", c, re.M)
+v = os.environ
+ca = re.search(r"as of: (.*)", (root / "patches/ffmpeg/embed_cacert/cacert.pem").read_text()).group(1).strip()
+assert heads == [
+    ("libmpv-scripts commit feedc0de",
+     "BSD-3-Clause, with files under LGPL-2.1-or-later, MIT and MPL-2.0 (NOTICE)"),
+    (f"mpv {v['MPV_VERSION']}", "LGPL-2.1-or-later"),
+    (f"ffmpeg {v['FFMPEG_VERSION']}", "LGPL-3.0-or-later"),
+    (f"openssl {v['OPENSSL_VERSION']}", "Apache-2.0"),
+    ("libplacebo 6.338.2", "LGPL-2.1-or-later"),
+    (f"xz {v['XZ_VERSION']}", "0BSD"),
+    (f"speexdsp {v['SPEEXDSP_VERSION']}", "BSD-3-Clause"),
+    ("Implib.so commit a3e167cf978a5b8a38ec0f710d8c4331e8dcdd9a", "MIT"),
+    (f"Mozilla CA certificate store as of {ca}", "MPL-2.0"),
+], heads
+# Every file of the directories, in full, under its name.
+for f in sorted(p for p in d.rglob("*") if p.is_file()):
+    if f.name in ("README.txt", "THIRD_PARTY_LICENSES.txt"):
+        continue
+    assert f"--- {f.name} ---\n\n{f.read_text().rstrip()}\n" in c, f
+assert (root / "NOTICE").read_text().rstrip() in c and "patches/ffmpeg/libsmb2.c" in c
+assert (d / "libmpv-scripts/NOTICE").read_bytes() == (root / "NOTICE").read_bytes()
+PY
+check $? "licenses: linux has THIRD_PARTY_LICENSES.txt, every component with its version, SPDX id and texts"
 
 # Windows: the .tar.xz of FFmpeg, xz from tukaani, speexdsp from GitHub, and
 # the COPYING of winpthreads.
@@ -418,6 +457,9 @@ assert "(not pinned)" not in r, r
 c = (d / "winpthreads/COPYING").read_text()
 assert "mingw-w64 project" in c and "Lockless Inc." in c, c[:200]
 assert "winpthreads" in r, r
+c = (d / "THIRD_PARTY_LICENSES.txt").read_text()
+assert "mingw-w64 winpthreads of the toolchain\nLicense: MIT AND BSD-3-Clause\n" in c, c
+assert "Lockless Inc." in c
 PY
 check $? "licenses: windows lists the .tar.xz of FFmpeg alone, and has the COPYING of winpthreads"
 
@@ -433,6 +475,11 @@ assert (d / "ffmpeg/COPYING.GPLv3").is_file() and not (d / "ffmpeg/COPYING.LGPLv
 assert (d / "rubberband/COPYING").is_file()
 for n in ("mpv", "ffmpeg", "rubberband"):
     assert f"  {n}: no source checked against" in r, r
+c = (d / "THIRD_PARTY_LICENSES.txt").read_text()
+assert c.splitlines()[0].endswith(": GPL-3.0-or-later"), c.splitlines()[0]
+for h in ("License: GPL-2.0-or-later\n", "License: GPL-3.0-or-later\n"):
+    assert c.count(h) == (2 if h.startswith("License: GPL-2") else 1), (h, c)
+assert "--- LICENSE.GPL ---" in c and "--- LICENSE.LGPL ---" not in c and "COPYING.LGPLv3" not in c
 PY
 check $? "licenses: macos takes the tree of its arch, the GPL texts, and says when no source was checked"
 

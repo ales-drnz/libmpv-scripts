@@ -305,10 +305,13 @@ PY
 # licenses_<target>/: the license texts of every component linked into
 # libmpv_<target>.*, copied from the source trees the build extracted into
 # <src dir> (so they are the texts of the versions built), our own LICENSE,
-# the notice of the Mozilla CA bundle when embed_cacert is on, and README.txt:
+# the notice of the Mozilla CA bundle when embed_cacert is on, README.txt:
 # the license of the build and where its exact source is (the commit of this
 # repo, and the tarballs and git tags this build checked against
-# _sources.sha256, from SOURCES_FETCHED of _helpers.sh). The caller lists
+# _sources.sha256, from SOURCES_FETCHED of _helpers.sh), and
+# THIRD_PARTY_LICENSES.txt: the same texts in one plain-text file, each
+# component with its name, version and SPDX license id, for an app to ship
+# as it is. The caller lists
 # what it links, by the settings of the build: rubberband only with gpl_build,
 # libsmb2 only with patch_on libsmb2, the font stack only without
 # libass_stripped, winpthreads (scripts/shared/licenses/winpthreads) only on
@@ -322,7 +325,8 @@ PY
 # GPL, see gpl_build; the LGPLv3 comes with the GPLv3 it adds to) with their
 # own notes on it (Copyright, LICENSE.md); the
 # other components every top-level LICENSE / COPYING / COPYRIGHT / NOTICE
-# file they ship.
+# file they ship. A component without an SPDX id in SPDX below stops the
+# build, so a new one gets its id.
 write_licenses() {
   local target="$1" src="$2"; shift 2
   local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}/licenses_$target"
@@ -349,6 +353,39 @@ def v(name):
         sys.exit(f"write_licenses: {name} is not set")
     return value[1:] if value.startswith("v") else value
 
+# The SPDX id of each component, as linked here: mpv built with -Dgpl=false
+# (true in the GPL build), FFmpeg with --enable-version3 (and --enable-gpl),
+# libiconv and xz by their library, the static winpthreads of mingw-w64.
+SPDX = {
+    "mpv": "GPL-2.0-or-later" if gpl else "LGPL-2.1-or-later",
+    "ffmpeg": "GPL-3.0-or-later" if gpl else "LGPL-3.0-or-later",
+    "openssl": "Apache-2.0", "libxml2": "MIT", "zlib": "Zlib", "bzip2": "bzip2-1.0.6",
+    "xz": "0BSD", "libiconv": "LGPL-2.1-or-later", "speexdsp": "BSD-3-Clause",
+    "pipewire": "MIT", "libplacebo": "LGPL-2.1-or-later", "libsmb2": "LGPL-2.1-or-later",
+    "rubberband": "GPL-2.0-or-later", "expat": "MIT", "libpng": "libpng-2.0",
+    "freetype": "FTL OR GPL-2.0-or-later", "fribidi": "LGPL-2.1-or-later",
+    "harfbuzz": "MIT-Modern-Variant", "fontconfig": "HPND-sell-variant",
+    "libass": "ISC", "libunibreak": "Zlib", "mozilla-ca": "MPL-2.0",
+    "winpthreads": "MIT AND BSD-3-Clause", "implib": "MIT",
+}
+VERSION = {"mpv": "MPV_VERSION", "ffmpeg": "FFMPEG_VERSION", "libplacebo": "LIBPLACEBO_VERSION",
+           "libsmb2": "LIBSMB2_VERSION", "pipewire": "PIPEWIRE_VERSION",
+           "speexdsp": "SPEEXDSP_VERSION", "harfbuzz": "HARFBUZZ_VERSION",
+           "freetype": "FREETYPE_VERSION", "openssl": "OPENSSL_VERSION",
+           "libxml2": "LIBXML2_VERSION", "zlib": "ZLIB_VERSION", "xz": "XZ_VERSION",
+           "bzip2": "BZIP2_VERSION", "libiconv": "LIBICONV_VERSION",
+           "rubberband": "RUBBERBAND_VERSION", "fribidi": "FRIBIDI_VERSION",
+           "fontconfig": "FONTCONFIG_VERSION", "libass": "LIBASS_VERSION",
+           "libpng": "LIBPNG_VERSION", "expat": "LIBEXPAT_VERSION",
+           "libunibreak": "LIBUNIBREAK_VERSION"}
+
+def text_of(path):
+    data = path.read_bytes()
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1")
+
 # name: (tree under <src>, the pins in _sources.sha256, license files or
 # None for the usual names)
 def table(name):
@@ -373,12 +410,7 @@ def table(name):
     if name == "freetype":
         return (f"freetype-{v('FREETYPE_VERSION')}", rf"/freetype-{re.escape(v('FREETYPE_VERSION'))}\.tar",
                 ["LICENSE.TXT", "docs/FTL.TXT", "docs/GPLv2.TXT"])
-    var = {"openssl": "OPENSSL_VERSION", "libxml2": "LIBXML2_VERSION",
-           "zlib": "ZLIB_VERSION", "xz": "XZ_VERSION", "bzip2": "BZIP2_VERSION",
-           "libiconv": "LIBICONV_VERSION", "rubberband": "RUBBERBAND_VERSION",
-           "fribidi": "FRIBIDI_VERSION", "fontconfig": "FONTCONFIG_VERSION",
-           "libass": "LIBASS_VERSION", "libpng": "LIBPNG_VERSION",
-           "expat": "LIBEXPAT_VERSION", "libunibreak": "LIBUNIBREAK_VERSION"}.get(name)
+    var = VERSION.get(name)
     if not var:
         sys.exit(f"write_licenses: unknown component {name}")
     return (f"{name}-{v(var)}", rf"/{name}-{re.escape(v(var))}\.tar", None)
@@ -394,10 +426,12 @@ pinned = set(lines(root / "scripts/shared/_sources.sha256"))
 fetched = pathlib.Path(env("SOURCES_FETCHED") or "/nonexistent")
 pins = list(dict.fromkeys(lines(fetched))) if fetched.is_file() else []
 out.mkdir(parents=True)
-rows, sources = [], []
+rows, sources, combined = [], [], []
 for name in components:
     name, _, tree_name = name.partition("=")
     dest = out / name
+    if name not in SPDX:
+        sys.exit(f"write_licenses: no SPDX id for {name}")
     if name == "mozilla-ca":
         dest.mkdir()
         (dest / "NOTICE.txt").write_text(
@@ -407,6 +441,10 @@ for name in components:
             "Public License, v. 2.0: https://mozilla.org/MPL/2.0/. Its source is the\n"
             "cacert.pem at the libmpv-scripts commit named in README.txt.\n")
         rows.append(f"  {name:<14} the Mozilla CA bundle (MPL-2.0)")
+        pem = (root / "patches/ffmpeg/embed_cacert/cacert.pem").read_text()
+        when = re.search(r"Certificate data from Mozilla as of: (.*)", pem)
+        combined.append(("Mozilla CA certificate store", f"as of {when.group(1).strip()}" if when else "?",
+                         SPDX[name], [("NOTICE.txt", text_of(dest / "NOTICE.txt"))]))
         continue
     if name == "winpthreads":
         # mingw-w64's winpthreads, linked statically into the Windows DLL
@@ -416,12 +454,17 @@ for name in components:
         dest.mkdir()
         shutil.copyfile(root / "scripts/shared/licenses/winpthreads/COPYING", dest / "COPYING")
         rows.append(f"  {name:<14} mingw-w64 winpthreads of the toolchain: COPYING")
+        combined.append(("mingw-w64 winpthreads", "of the toolchain", SPDX[name],
+                         [("COPYING", text_of(dest / "COPYING"))]))
         continue
     if name == "implib":
         # tools/implib of this repo: the trampolines of the Linux audio stubs.
         dest.mkdir()
         shutil.copyfile(root / "tools/implib/LICENSE.txt", dest / "LICENSE.txt")
         rows.append(f"  {name:<14} tools/implib of libmpv-scripts: LICENSE.txt")
+        at = re.search(r"at commit `([0-9a-f]+)`", (root / "tools/implib/README.md").read_text())
+        combined.append(("Implib.so", f"commit {at.group(1)}" if at else "?", SPDX[name],
+                         [("LICENSE.txt", text_of(dest / "LICENSE.txt"))]))
         continue
     pattern, pin, files = table(name)
     pattern = tree_name or pattern
@@ -439,15 +482,21 @@ for name in components:
         (dest / f).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tree / f, dest / f)
     rows.append(f"  {name:<14} {tree.name}: {', '.join(files)}")
+    combined.append((name, v(VERSION[name]), SPDX[name], [(f, text_of(dest / f)) for f in files]))
     found = [f"  {h}  {u}" + ("" if (h, u) in pinned else "  (not pinned)")
              for h, u in pins if re.search(pin, u)]
     sources += found or [f"  {name}: no source checked against scripts/shared/_sources.sha256"]
 
 dest = out / "libmpv-scripts"
 dest.mkdir()
-shutil.copyfile(root / "LICENSE", dest / "LICENSE")
-rows.insert(0, "  libmpv-scripts the build scripts and the patches of this repo: LICENSE (BSD-3-Clause);"
-               "\n                 a patch that changes mpv or FFmpeg is under their license")
+for f in ("LICENSE", "NOTICE"):
+    shutil.copyfile(root / f, dest / f)
+rows.insert(0, "  libmpv-scripts the build scripts and the patches of this repo: LICENSE (BSD-3-Clause),"
+               "\n                 NOTICE (its files under the LGPL, MIT and MPL-2.0); what a patch"
+               "\n                 changes in mpv or FFmpeg is under their license")
+combined.insert(0, ("libmpv-scripts", f"commit {commit or '(unknown)'}",
+                    "BSD-3-Clause, with files under LGPL-2.1-or-later, MIT and MPL-2.0 (NOTICE)",
+                    [(f, text_of(dest / f)) for f in ("LICENSE", "NOTICE")]))
 
 release, license = env("LIBMPV_RELEASE", "?"), env("LIBMPV_LICENSE", "?")
 what = ("This build of libmpv is GPL, version 3 or later: an app that ships it\n"
@@ -470,6 +519,24 @@ or commit (git tags) in scripts/shared/_sources.sha256, with the patches under
 patches/ of that commit:
 {chr(10).join(sources)}
 """)
+
+# THIRD_PARTY_LICENSES.txt: the texts above in one file, for an app to ship
+# without reading the directories. The ids are SPDX; the texts are what
+# applies.
+rule = "=" * 78
+parts = [f"""Licenses of libmpv {release} for {target}: {license}
+
+{what}
+
+Each component linked into this library follows: its name, version and SPDX
+license id, then the full text of each of its license files. The ids are a
+guide; the texts are the terms.
+"""]
+for name, version, spdx, texts in combined:
+    parts.append(f"{rule}\n{name} {version}\nLicense: {spdx}\n{rule}\n")
+    for f, body in texts:
+        parts.append(f"--- {f} ---\n\n{body.rstrip()}\n")
+(out / "THIRD_PARTY_LICENSES.txt").write_text("\n".join(parts))
 print(f"Wrote {out} ({len(components) + 1} components)")
 PY
 }
