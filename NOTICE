@@ -44,9 +44,11 @@ Mozilla Public License, version 2.0 (MPL-2.0, https://mozilla.org/MPL/2.0/):
 
 Not code of this repository:
 
-  scripts/shared/licenses/winpthreads/COPYING
-      the license of mingw-w64 winpthreads (MIT, with BSD-3-Clause terms of
-      Lockless Inc.), shipped with the Windows library, which links it.
+  scripts/shared/licenses/
+      the license texts of the toolchain runtimes the libraries link
+      statically (mingw-w64, LLVM, Emscripten, musl), each one under its own
+      terms and shipped with the targets that link it; SOURCES.txt there
+      names where each one comes from.
 
 Upstream code in the other patches. A patch script under patches/mpv,
 patches/ffmpeg or patches/rubberband quotes lines of the source of mpv, FFmpeg
