@@ -315,10 +315,11 @@ PY
 # as it is. The caller lists
 # what it links, by the settings of the build: rubberband only with gpl_build,
 # libsmb2 only with patch_on libsmb2, the font stack only without
-# libass_stripped, winpthreads (scripts/shared/licenses/winpthreads) only on
-# Windows; <component>=<tree> names a tree the build extracted under another
-# name (the mpv tree of each Apple arch). A component without its tree or its
-# texts stops the build.
+# libass_stripped, and the runtime libraries of the toolchain it links
+# statically whose license asks for its notice in a binary (TOOLCHAIN below,
+# texts in scripts/shared/licenses); <component>=<tree> names a tree the build
+# extracted under another name (the mpv tree of each Apple arch). A component
+# without its tree or its texts stops the build.
 # write_manifest.sh packs the directories into licenses.zip. RELEASE_DIR
 # overrides the directory.
 #
@@ -356,7 +357,9 @@ def v(name):
 
 # The SPDX id of each component, as linked here: mpv built with -Dgpl=false
 # (true in the GPL build), FFmpeg with --enable-version3 (and --enable-gpl),
-# libiconv and xz by their library, the static winpthreads of mingw-w64.
+# libiconv and xz by their library, the static winpthreads and CRT of
+# mingw-w64, the LLVM runtimes under their current license (code older than
+# its relicensing is under the legacy NCSA OR MIT, in the same texts).
 SPDX = {
     "mpv": "GPL-2.0-or-later" if gpl else "LGPL-2.1-or-later",
     "ffmpeg": "GPL-3.0-or-later" if gpl else "LGPL-3.0-or-later",
@@ -368,6 +371,43 @@ SPDX = {
     "harfbuzz": "MIT-Modern-Variant", "fontconfig": "HPND-sell-variant",
     "libass": "ISC", "libunibreak": "Zlib", "mozilla-ca": "MPL-2.0",
     "winpthreads": "MIT AND BSD-3-Clause", "implib": "MIT",
+    "mingw-w64-crt": "ZPL-2.1 AND ISC AND BSD-2-Clause AND dtoa AND SunPro AND MIT",
+    "llvm-runtimes": "Apache-2.0 WITH LLVM-exception, legacy code NCSA OR MIT",
+    "emscripten": "MIT OR NCSA", "musl": "MIT",
+}
+
+# The runtime libraries of the toolchain that a build links statically and
+# whose license asks for its notice in a binary. No source tree of the build
+# holds them, so scripts/shared/licenses/<name>/ has the upstream texts
+# (SOURCES.txt there says where from). The caller lists the ones of its
+# toolchain:
+#   winpthreads    -lwinpthread, both Windows toolchains (MIT, BSD-3-Clause);
+#   mingw-w64-crt  the CRT startup code and libmingwex/libmingw32 that -static
+#                  links into every MinGW binary, both Windows toolchains: its
+#                  ZPL-2.1 and BSD parts ask for the notices in binary form;
+#   llvm-runtimes  libc++, libc++abi, libunwind and the compiler-rt builtins,
+#                  linked statically on Android (libc++_static), Windows arm64
+#                  (llvm-mingw, -static) and web (Emscripten). The LLVM
+#                  exception of their Apache-2.0 waives the notice for code
+#                  compiled into a binary, but the code older than the
+#                  relicensing is still under the legacy NCSA OR MIT, whose
+#                  terms keep the notice: shipped as cheap good practice;
+#   emscripten     the JS glue and Emscripten's own system libraries in the
+#                  web module (MIT OR NCSA, both keep the notice);
+#   musl           the libc of the web module, musl as Emscripten bundles it
+#                  (MIT).
+# Not listed: libgcc and libstdc++ (GCC, Windows x86_64 and Linux), under the
+# GCC Runtime Library Exception, which asks for no notice; glibc's static
+# start files, under the LGPL with its linking exception; the compiler-rt
+# builtins Apple's clang links, which the LLVM exception covers; and
+# libc++/libSystem on Apple and glibc on Linux, which are dynamic.
+TOOLCHAIN = {
+    "winpthreads": ("mingw-w64 winpthreads", ["COPYING"]),
+    "mingw-w64-crt": ("mingw-w64 runtime (CRT)", ["COPYING.MinGW-w64-runtime.txt"]),
+    "llvm-runtimes": ("LLVM libc++, libc++abi, libunwind and compiler-rt",
+                      [f"{d}/LICENSE.TXT" for d in ("libcxx", "libcxxabi", "libunwind", "compiler-rt")]),
+    "emscripten": ("Emscripten", ["LICENSE"]),
+    "musl": ("musl libc of Emscripten", ["COPYRIGHT"]),
 }
 VERSION = {"mpv": "MPV_VERSION", "ffmpeg": "FFMPEG_VERSION", "libplacebo": "LIBPLACEBO_VERSION",
            "libsmb2": "LIBSMB2_VERSION", "pipewire": "PIPEWIRE_VERSION",
@@ -447,16 +487,14 @@ for name in components:
         combined.append(("Mozilla CA certificate store", f"as of {when.group(1).strip()}" if when else "?",
                          SPDX[name], [("NOTICE.txt", text_of(dest / "NOTICE.txt"))]))
         continue
-    if name == "winpthreads":
-        # mingw-w64's winpthreads, linked statically into the Windows DLL
-        # (-lwinpthread). Neither toolchain ships its COPYING as a file, so
-        # scripts/shared/licenses/winpthreads/COPYING holds the one of
-        # mingw-w64-libraries/winpthreads.
-        dest.mkdir()
-        shutil.copyfile(root / "scripts/shared/licenses/winpthreads/COPYING", dest / "COPYING")
-        rows.append(f"  {name:<14} mingw-w64 winpthreads of the toolchain: COPYING")
-        combined.append(("mingw-w64 winpthreads", "of the toolchain", SPDX[name],
-                         [("COPYING", text_of(dest / "COPYING"))]))
+    if name in TOOLCHAIN:
+        title, files = TOOLCHAIN[name]
+        for f in files:
+            (dest / f).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / "scripts/shared/licenses" / name / f, dest / f)
+        rows.append(f"  {name:<14} {title} of the toolchain: {', '.join(files)}")
+        combined.append((title, "of the toolchain", SPDX[name],
+                         [(f, text_of(dest / f)) for f in files]))
         continue
     if name == "implib":
         # tools/implib of this repo: the trampolines of the Linux audio stubs.

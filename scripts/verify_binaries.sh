@@ -1218,8 +1218,10 @@ layer_feature_presence() {
 #     af_rubberband) is there only in the GPL build: every line of strings
 #     that names it, except the meson command line;
 #   - licenses_<target>/ next to the binary (write_licenses) has the texts of
-#     that license (and on Windows the COPYING of the static winpthreads)
-#     and THIRD_PARTY_LICENSES.txt, and licenses.zip and manifest.json, when write_manifest.sh
+#     that license, the texts of the toolchain runtime libraries the target
+#     links statically (Windows: mingw-w64's winpthreads and CRT; Android,
+#     Windows arm64 and web: LLVM's libc++, libc++abi, libunwind and
+#     compiler-rt; web: Emscripten and its musl) and THIRD_PARTY_LICENSES.txt, and licenses.zip and manifest.json, when write_manifest.sh
 #     has run, have the target's texts and the license.
 # FFmpeg's own license string does not survive LTO and --gc-sections; its
 # CONFIG_GPL is asserted at build time (verify_ffmpeg_config).
@@ -1269,10 +1271,21 @@ layer_license() {
              libmpv-scripts/NOTICE THIRD_PARTY_LICENSES.txt; do
       [[ -s "$dir/$f" ]] || missing+=("$f")
     done
-    if [[ "$target" == windows-* && ! -s "$dir/winpthreads/COPYING" ]]; then missing+=(winpthreads/COPYING); fi
+    local toolchain=()
+    case "$target" in
+      windows-*) toolchain+=(winpthreads/COPYING mingw-w64-crt/COPYING.MinGW-w64-runtime.txt) ;;
+      web) toolchain+=(emscripten/LICENSE musl/COPYRIGHT) ;;
+    esac
+    case "$target" in
+      android-*|windows-arm64|web)
+        toolchain+=(llvm-runtimes/{libcxx,libcxxabi,libunwind,compiler-rt}/LICENSE.TXT) ;;
+    esac
+    for f in ${toolchain[@]+"${toolchain[@]}"}; do
+      [[ -s "$dir/$f" ]] || missing+=("$f")
+    done
     if gpl_build; then [[ -d "$dir/rubberband" ]] || missing+=("rubberband/")
     elif [[ -e "$dir/rubberband" ]]; then fail "license: rubberband texts in the LGPL build's $(basename "$dir")"; fi
-    if (( ${#missing[@]} == 0 )); then pass "license: the texts of mpv, FFmpeg and libmpv-scripts, and THIRD_PARTY_LICENSES.txt, in $(basename "$dir")"
+    if (( ${#missing[@]} == 0 )); then pass "license: the texts of mpv, FFmpeg, libmpv-scripts${toolchain[0]:+ and the toolchain runtimes}, and THIRD_PARTY_LICENSES.txt, in $(basename "$dir")"
     else fail "license: missing in $(basename "$dir"): ${missing[*]}"; fi
   else
     fail "license: no license texts $dir/README.txt (write_licenses)"

@@ -752,7 +752,11 @@ cp "$DIST/bin/libmpv-2.dll" "$OUT_FILE"
 # full public API. (Linux/Android already strip; Windows/macOS/iOS did not.)
 "$STRIP" --strip-all "$OUT_FILE"
 write_build_record "windows-$OUT_ARCH" "$DIST"
-licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz libiconv speexdsp winpthreads)
+# The toolchain's runtime libraries -static links in (write_licenses):
+# mingw-w64's winpthreads and CRT on both, and on aarch64 llvm-mingw's libc++,
+# libunwind and compiler-rt. GCC's libgcc and libstdc++ (x86_64) need no notice.
+licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz libiconv speexdsp winpthreads mingw-w64-crt)
+[[ "$CROSS_TOOLCHAIN_KIND" == "llvm" ]] && licenses+=(llvm-runtimes)
 patch_on libsmb2 && licenses+=(libsmb2)
 gpl_build && licenses+=(rubberband)
 libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)

@@ -502,7 +502,9 @@ main() {
     # next to the module (write_build_record in shared/_audio_only.sh).
     RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
     # The license texts go next to libmpv_web.zip, not into it.
-    local licenses=(mpv ffmpeg libplacebo libxml2 zlib)
+    # The module also holds Emscripten's JS glue and system libraries, its
+    # musl libc and the LLVM libc++ and compiler-rt (write_licenses).
+    local licenses=(mpv ffmpeg libplacebo libxml2 zlib emscripten musl llvm-runtimes)
     gpl_build && licenses+=(rubberband)
     RELEASE_DIR="$PACKAGE_DIR" write_licenses web "$BUILD_DIR/src" "${licenses[@]}"
     record_web_module

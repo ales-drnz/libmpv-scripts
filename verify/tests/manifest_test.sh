@@ -437,14 +437,14 @@ PY
 check $? "licenses: linux has THIRD_PARTY_LICENSES.txt, every component with its version, SPDX id and texts"
 
 # Windows: the .tar.xz of FFmpeg, xz from tukaani, speexdsp from GitHub, and
-# the COPYING of winpthreads.
+# the texts of mingw-w64's winpthreads and CRT.
 fw="$L/fetched-windows"
 for u in "https://ffmpeg.org/releases/ffmpeg-$FFV.tar.xz" \
          "https://tukaani.org/xz/xz-$XZV.tar.gz" \
          "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-$SPV.tar.gz"; do
   printf '%s  %s\n' "$(pin "$u")" "$u" >> "$fw"
 done
-licenses windows-x86_64 "$fw" mpv ffmpeg xz speexdsp winpthreads; check $? "licenses: windows-x86_64"
+licenses windows-x86_64 "$fw" mpv ffmpeg xz speexdsp winpthreads mingw-w64-crt; check $? "licenses: windows-x86_64"
 python3 - "$L/out/licenses_windows-x86_64" "$FFV" "$XZV" "$SPV" <<'PY'
 import pathlib, sys
 d, ffv, xzv, spv = sys.argv[1:]
@@ -460,8 +460,54 @@ assert "winpthreads" in r, r
 c = (d / "THIRD_PARTY_LICENSES.txt").read_text()
 assert "mingw-w64 winpthreads of the toolchain\nLicense: MIT AND BSD-3-Clause\n" in c, c
 assert "Lockless Inc." in c
+crt = (d / "mingw-w64-crt/COPYING.MinGW-w64-runtime.txt").read_text()
+assert "statically\nlinked against the MinGW-w64 runtime" in crt and "David M. Gay" in crt, crt[:300]
+assert ("mingw-w64 runtime (CRT) of the toolchain\n"
+        "License: ZPL-2.1 AND ISC AND BSD-2-Clause AND dtoa AND SunPro AND MIT\n") in c, c
+assert f"--- COPYING.MinGW-w64-runtime.txt ---\n\n{crt.rstrip()}\n" in c
+assert "mingw-w64-crt  mingw-w64 runtime (CRT) of the toolchain: COPYING.MinGW-w64-runtime.txt" in r, r
+assert not (d / "llvm-runtimes").exists()
 PY
-check $? "licenses: windows lists the .tar.xz of FFmpeg alone, and has the COPYING of winpthreads"
+check $? "licenses: windows lists the .tar.xz of FFmpeg alone, and has the texts of winpthreads and the mingw-w64 CRT"
+
+# The LLVM runtimes of Android, Windows arm64 (llvm-mingw) and web, and on web
+# Emscripten and its musl, from scripts/shared/licenses, each text in full.
+licenses android-arm64-v8a "$L/none" mpv ffmpeg llvm-runtimes; check $? "licenses: android-arm64-v8a"
+licenses windows-arm64 "$L/none" mpv ffmpeg winpthreads mingw-w64-crt llvm-runtimes; check $? "licenses: windows-arm64"
+licenses web "$L/none" mpv ffmpeg emscripten musl llvm-runtimes; check $? "licenses: web"
+python3 - "$L/out" "$ROOT/scripts/shared/licenses" <<'PY'
+import pathlib, re, sys
+out, fixed = map(pathlib.Path, sys.argv[1:])
+llvm = [f"{n}/LICENSE.TXT" for n in ("libcxx", "libcxxabi", "libunwind", "compiler-rt")]
+want = {
+    "android-arm64-v8a": {"llvm-runtimes": llvm},
+    "windows-arm64": {"winpthreads": ["COPYING"], "mingw-w64-crt": ["COPYING.MinGW-w64-runtime.txt"],
+                      "llvm-runtimes": llvm},
+    "web": {"emscripten": ["LICENSE"], "musl": ["COPYRIGHT"], "llvm-runtimes": llvm},
+}
+heads = {"llvm-runtimes": ("LLVM libc++, libc++abi, libunwind and compiler-rt",
+                           "Apache-2.0 WITH LLVM-exception, legacy code NCSA OR MIT"),
+         "emscripten": ("Emscripten", "MIT OR NCSA"), "musl": ("musl libc of Emscripten", "MIT"),
+         "winpthreads": ("mingw-w64 winpthreads", "MIT AND BSD-3-Clause"),
+         "mingw-w64-crt": ("mingw-w64 runtime (CRT)",
+                           "ZPL-2.1 AND ISC AND BSD-2-Clause AND dtoa AND SunPro AND MIT")}
+for target, comps in want.items():
+    d = out / f"licenses_{target}"
+    c = (d / "THIRD_PARTY_LICENSES.txt").read_text()
+    got = {m.group(1) for m in re.finditer(r"^=+\n(.+) of the toolchain\nLicense: .+\n=+$", c, re.M)}
+    assert got == {heads[n][0] for n in comps}, (target, got)
+    for n, files in comps.items():
+        assert f"{heads[n][0]} of the toolchain\nLicense: {heads[n][1]}\n" in c, (target, n)
+        for f in files:
+            body = (fixed / n / f).read_bytes()
+            assert (d / n / f).read_bytes() == body, (target, n, f)
+            assert f"--- {f} ---\n\n{body.decode().rstrip()}\n" in c, (target, n, f)
+llvm_text = (fixed / "llvm-runtimes/libcxx/LICENSE.TXT").read_text()
+assert "LLVM Exceptions to the Apache 2.0 License" in llvm_text and "Legacy LLVM License" in llvm_text
+assert "MIT license" in (fixed / "emscripten/LICENSE").read_text()
+assert "Rich Felker" in (fixed / "musl/COPYRIGHT").read_text()
+PY
+check $? "licenses: android, windows-arm64 and web have the texts of the toolchain runtimes they link"
 
 # macOS: the mpv tree of the first arch, the GPL build, no record of sources.
 LIBMPV_GPL=1 licenses macos "$L/none" mpv=mpv-arm64 ffmpeg rubberband; check $? "licenses: macos (GPL)"
