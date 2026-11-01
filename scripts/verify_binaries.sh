@@ -1278,7 +1278,11 @@ layer_license() {
     fail "license: no license texts $dir/README.txt (write_licenses)"
   fi
   if [[ -f "$RELEASE_DIR/licenses.zip" ]]; then
-    if unzip -Z1 "$RELEASE_DIR/licenses.zip" 2>/dev/null | grep -qx "$target/README.txt"; then
+    # The whole listing first: grep -q leaves at the first match, and the
+    # SIGPIPE of unzip would fail the pipeline under pipefail.
+    local zip_names
+    zip_names="$(unzip -Z1 "$RELEASE_DIR/licenses.zip" 2>/dev/null || true)"
+    if grep -qx "$target/README.txt" <<<"$zip_names"; then
       pass "license: licenses.zip has $target/"
     else
       fail "license: licenses.zip has no $target/README.txt"

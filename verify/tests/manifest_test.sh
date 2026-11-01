@@ -486,7 +486,10 @@ check $? "licenses: macos takes the tree of its arch, the GPL texts, and says wh
 # verify_source lists what it checked in SOURCES_FETCHED; sourcing the
 # helpers alone writes nothing.
 (
-  export TMPDIR="$L/tmp"; mkdir -p "$TMPDIR"
+  # CI exports STRICT_SOURCES=1, under which an unpinned source stops
+  # before it is recorded.
+  export TMPDIR="$L/tmp" STRICT_SOURCES=0; unset RECORD_SOURCES
+  mkdir -p "$TMPDIR"
   source "$ROOT/scripts/shared/_helpers.sh"
   [[ ! -e "$SOURCES_FETCHED" ]] || exit 1
   printf 'x' > "$L/x.tar.gz"
