@@ -244,7 +244,7 @@ expected_version_for() {
     xz|liblzma)     echo "$XZ_VERSION" ;;
     libxml2)        echo "$LIBXML2_VERSION" ;;
     libpng)         echo "$LIBPNG_VERSION" ;;
-    rubberband)     gpl_build && echo "$RUBBERBAND_VERSION" ;;
+    rubberband)     if gpl_build; then echo "$RUBBERBAND_VERSION"; fi ;;
     libsmb2)        echo "$LIBSMB2_VERSION" ;;
     openssl)        echo "$OPENSSL_VERSION" ;;
     libplacebo)
