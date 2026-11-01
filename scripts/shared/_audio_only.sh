@@ -552,10 +552,13 @@ ffmpeg_common_args() {
   local _swscale_flag="--enable-swscale"
   swscale_stripped && _swscale_flag="--disable-swscale"
   # License (see gpl_build). --enable-version3 stays on in both builds:
-  # OpenSSL 3 is Apache-2.0, which LICENSE.md calls incompatible with the
-  # LGPLv2.1, so FFmpeg links it under the (L)GPLv3. Configure asks for it
-  # only with --enable-gpl and would build an LGPLv2.1 FFmpeg with OpenSSL
-  # without a word; verify_ffmpeg_config asserts CONFIG_VERSION3 instead.
+  # OpenSSL 3 is Apache-2.0, which is incompatible with the (L)GPLv2 but not
+  # with version 3 (FFmpeg's LICENSE.md says so of its Apache-2.0 libraries;
+  # what it says of OpenSSL is about the old OpenSSL license), so FFmpeg
+  # links it under the LGPLv3. Configure enforces that only with
+  # --enable-gpl ("OpenSSL >=3.0.0 requires --enable-version3") and would
+  # build an LGPLv2.1 FFmpeg with OpenSSL 3 without a word;
+  # verify_ffmpeg_config asserts CONFIG_VERSION3 instead.
   local _gpl_flag="" _rubberband_flag=""
   if gpl_build; then
     _gpl_flag="--enable-gpl"
