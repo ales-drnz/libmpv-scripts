@@ -94,6 +94,7 @@ var verifyPhaseOrder = []struct{ id, label string }{
 	{"components", "FFmpeg muxer and protocols"},
 	{"audioonly", "Audio-only invariant"},
 	{"features", "Feature presence"},
+	{"license", "License"},
 	{"deps", "Runtime dependencies"},
 	{"versions", "Dependency versions"},
 	{"apihash", "API surface hash"},

@@ -27,9 +27,14 @@
 #  7b.  Adaptive feature presence — cross-checks the binary against the
 #       current Settings ▸ Patches strip selection (swscale / libass+fonts /
 #       GPU-render / Windows icon present iff NOT stripped), and asserts the
-#       always-on audio-path features (HTTPS/TLS, rubberband, DASH, OpenSSL,
+#       always-on audio-path features (HTTPS/TLS, DASH, OpenSSL,
 #       SMB2-when-enabled, embedded-CA-bundle-when-enabled). Catches a strip
 #       that silently didn't take effect.
+#  7c.  License — LGPL unless LIBMPV_GPL=1 (gpl_build in shared/
+#       _audio_only.sh): neither gpl nor rubberband among mpv's enabled
+#       features, no librubberband code, and the license texts of the target
+#       (licenses_<target>/, licenses.zip) and the license of manifest.json
+#       match. The GPL build asserts the opposite.
 #   8.  External runtime dependency list (informative)
 #   9.  Embedded dep VERSIONS match scripts/shared/_versions.sh — catches the
 #       classic "I bumped harfbuzz in _versions.sh but the build cache held
@@ -239,7 +244,7 @@ expected_version_for() {
     xz|liblzma)     echo "$XZ_VERSION" ;;
     libxml2)        echo "$LIBXML2_VERSION" ;;
     libpng)         echo "$LIBPNG_VERSION" ;;
-    rubberband)     echo "$RUBBERBAND_VERSION" ;;
+    rubberband)     gpl_build && echo "$RUBBERBAND_VERSION" ;;
     libsmb2)        echo "$LIBSMB2_VERSION" ;;
     openssl)        echo "$OPENSSL_VERSION" ;;
     libplacebo)
@@ -1107,7 +1112,8 @@ _l14_jni_onload_real() {
 # default all-stripped build — asserts every marker absent and passes cleanly.
 #
 # It also asserts the always-on audio-path features are present (HTTPS/TLS,
-# rubberband, DASH, OpenSSL, and SMB2 when the libsmb2 patch is enabled).
+# DASH, OpenSSL, and SMB2 when the libsmb2 patch is enabled). rubberband is
+# the license's, in layer_license.
 
 # _feat_assert <label> <present|absent> <marker-hit-count>
 _feat_assert() {
@@ -1173,7 +1179,7 @@ layer_feature_presence() {
 
   # ── Always-on audio-path features — must be present on every platform ──
   local e mk lbl
-  for e in "https:HTTPS/TLS protocol" "rubberband:rubberband (pitch/tempo)" "dash:DASH demuxer" "OpenSSL:OpenSSL TLS backend"; do
+  for e in "https:HTTPS/TLS protocol" "dash:DASH demuxer" "OpenSSL:OpenSSL TLS backend"; do
     mk="${e%%:*}"; lbl="${e#*:}"
     if grep -qiF "$mk" <<<"$str"; then pass "feature present: $lbl"
     else fail "feature MISSING: $lbl (marker '$mk')"; fi
@@ -1197,6 +1203,89 @@ layer_feature_presence() {
     else fail "feature MISSING: embedded CA bundle (embed_cacert patch enabled)"; fi
   else
     info "embedded CA bundle: embed_cacert patch disabled — not asserted"
+  fi
+}
+
+# Layer 7c: the license. The default build is LGPL-3.0-or-later; LIBMPV_GPL=1
+# (gpl_build) is the GPL build with librubberband. Checked on what the binary
+# says of itself, not on a plain search for "gpl" or "rubberband": the meson
+# command line mpv embeds ("Configuration: ... -Dgpl=false ...
+# -Drubberband=disabled") names both in either build. So:
+#   - the token list of "List of enabled features:" (mpv's FULLCONFIG, the
+#     mpv-configuration of a player) holds gpl and rubberband only in the GPL
+#     build;
+#   - librubberband's code (the RubberBand:: classes, the messages of
+#     af_rubberband) is there only in the GPL build: every line of strings
+#     that names it, except the meson command line;
+#   - licenses_<target>/ next to the binary (write_licenses) has the texts of
+#     that license, and licenses.zip and manifest.json, when write_manifest.sh
+#     has run, have the target's texts and the license.
+# FFmpeg's own license string does not survive LTO and --gc-sections; its
+# CONFIG_GPL is asserted at build time (verify_ffmpeg_config).
+# Args: $1 artifact name, $2 str_text
+layer_license() {
+  local name="$1" str="$2"
+  phase license
+  local target="${name#libmpv_}"; target="${target%%.*}"
+  local want="LGPL-3.0-or-later" mpv_text="LICENSE.LGPL" ffmpeg_text="COPYING.LGPLv3"
+  if gpl_build; then
+    want="GPL-3.0-or-later" mpv_text="LICENSE.GPL" ffmpeg_text="COPYING.GPLv3"
+  fi
+
+  local feats
+  feats="$(grep -oE 'List of enabled features: .*' <<<"$str" | head -1 || true)"
+  feats=" ${feats#List of enabled features: } "
+  if [[ "$feats" == "  " ]]; then
+    fail "license: no \"List of enabled features\" in the binary (tool failure, or mpv's FULLCONFIG gone)"
+  else
+    local has_gpl=0 has_rb=0
+    [[ "$feats" == *" gpl "* ]] && has_gpl=1
+    [[ "$feats" =~ \ rubberband[^\ ]*\  ]] && has_rb=1
+    if gpl_build; then
+      if (( has_gpl && has_rb )); then pass "license: gpl and rubberband among mpv's enabled features (GPL build)"
+      else fail "license: the GPL build lacks gpl or rubberband among mpv's enabled features:${feats% }"; fi
+    else
+      if (( has_gpl || has_rb )); then fail "license: gpl or rubberband among mpv's enabled features of the LGPL build:${feats% }"
+      else pass "license: neither gpl nor rubberband among mpv's enabled features"; fi
+    fi
+  fi
+
+  local n
+  n=$(grep -iE 'rubber ?band' <<<"$str" | grep -cvE -- '-Drubberband=|^List of enabled features: ' || true)
+  if gpl_build; then
+    if (( n > 0 )); then pass "license: librubberband linked (GPL build, marker hits=$n)"
+    else warn "license: GPL build but no librubberband marker (LTO may have removed it; the build-time config audit covers it)"; fi
+  else
+    if (( n > 0 )); then fail "license: librubberband code in the LGPL build (marker hits=$n)"
+    else pass "license: no librubberband code"; fi
+  fi
+
+  local dir="$RELEASE_DIR/licenses_$target" f missing=()
+  if [[ -f "$dir/README.txt" ]]; then
+    if head -1 "$dir/README.txt" | grep -qF ": $want"; then pass "license: $(basename "$dir")/README.txt says $want"
+    else fail "license: $(basename "$dir")/README.txt does not say $want: $(head -1 "$dir/README.txt")"; fi
+    for f in "mpv/$mpv_text" mpv/Copyright "ffmpeg/$ffmpeg_text" ffmpeg/LICENSE.md libmpv-scripts/LICENSE; do
+      [[ -s "$dir/$f" ]] || missing+=("$f")
+    done
+    if gpl_build; then [[ -d "$dir/rubberband" ]] || missing+=("rubberband/")
+    elif [[ -e "$dir/rubberband" ]]; then fail "license: rubberband texts in the LGPL build's $(basename "$dir")"; fi
+    if (( ${#missing[@]} == 0 )); then pass "license: the texts of mpv, FFmpeg and libmpv-scripts in $(basename "$dir")"
+    else fail "license: missing in $(basename "$dir"): ${missing[*]}"; fi
+  else
+    fail "license: no license texts $dir/README.txt (write_licenses)"
+  fi
+  if [[ -f "$RELEASE_DIR/licenses.zip" ]]; then
+    if unzip -Z1 "$RELEASE_DIR/licenses.zip" 2>/dev/null | grep -qx "$target/README.txt"; then
+      pass "license: licenses.zip has $target/"
+    else
+      fail "license: licenses.zip has no $target/README.txt"
+    fi
+  fi
+  if [[ -f "$RELEASE_DIR/manifest.json" ]]; then
+    local got
+    got="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("license"))' "$RELEASE_DIR/manifest.json" 2>/dev/null || true)"
+    if [[ "$got" == "$want" ]]; then pass "license: manifest.json says $want"
+    else fail "license: manifest.json says ${got:-nothing}, not $want"; fi
   fi
 }
 
@@ -1629,6 +1718,9 @@ check_binary() {
   # ── 7b. adaptive feature presence (tracks Settings ▸ Patches strips) ──
   layer_feature_presence "$platform" "$str_text" "$inspect" "$LD" || fail "7b: layer aborted (exit $?)"
 
+  # ── 7c. license: LGPL, or GPL with rubberband (LIBMPV_GPL) ──
+  layer_license "$name" "$str_text" || fail "7c: layer aborted (exit $?)"
+
   # ── 8. external runtime deps (informative) ──
   phase deps
   local dep_count
@@ -1937,6 +2029,9 @@ PY
   else
     fail "$missing/${#REQUIRED_FILTERS[@]} audio filters missing"
   fi
+
+  # ── 7c. license ──
+  layer_license "$name" "$str_text" || fail "7c: layer aborted (exit $?)"
 
   # ── 9. mpv's version names this release ──
   phase versions
