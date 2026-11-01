@@ -285,7 +285,7 @@ EOF
 
   log "═══ Slice: $sdk / $arch ═══"
 
-  # Ordine: base → [font] → audio → core
+  # Order: base → [font] → audio → core
   # Font chain — built ONLY when libass is kept (strip_libass disabled in
   # Settings ▸ Patches). By default libass is stripped from mpv
   # (patch_strip_libass.py), so freetype/harfbuzz/fontconfig/fribidi/libass —
@@ -316,7 +316,7 @@ EOF
   slice_mpv        "$sdk" "$arch" "$prefix" "$cf"
 }
 
-# ── Macro helper: cmake statico ──────────────────────────────────────────────
+# ── Helper: static cmake build ──────────────────────────────────────────────
 cmake_static() {
   local sdk="$1" arch="$2" prefix="$3" srcdir="$4"; shift 4
   local bdir="$BUILD_DIR/build/$(basename "$srcdir")-${sdk}-${arch}"
@@ -337,7 +337,7 @@ cmake_static() {
   popd >/dev/null
 }
 
-# ── Singole librerie (pattern: check sentinel → build) ───────────────────────
+# ── Libraries (pattern: check sentinel → build) ───────────────────────
 
 slice_zlib() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4"

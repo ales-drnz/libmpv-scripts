@@ -229,7 +229,8 @@ ndk_cc() {
   local abi="$1"
   local triple; triple="$(abi_to_triple "$abi")"
   local tc; tc="$(ndk_toolchain)"
-  # armeabi-v7a usa armv7a ma il binario clang ha il prefisso armv7a
+  # The NDK names the clang of each ABI after its triple and API level
+  # (armeabi-v7a: armv7a-linux-androideabi<api>-clang).
   echo "$tc/bin/${triple}${ANDROID_API}-clang"
 }
 

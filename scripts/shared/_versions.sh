@@ -14,8 +14,7 @@
 # ── Player core ──────────────────────────────────────────────────────────────
 # mpv 0.41.0 (2025-12) is the latest release. FFmpeg 8.1.1 ("Hoare",
 # 2026-05) — mpv 0.41's meson floor is libavcodec >= 60.31.102, which
-# the 8.x line clears comfortably; FFmpeg 8.x + mpv 0.41 is a
-# community-verified pairing.
+# the 8.x line clears comfortably.
 export MPV_VERSION="${MPV_VERSION:-0.41.0}"
 # The mpv_audio_kit release these binaries ship as (GitHub release
 # libmpv-<release>). Baked into mpv's own version string, so a running app
