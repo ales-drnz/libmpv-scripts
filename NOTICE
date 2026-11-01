@@ -1,0 +1,53 @@
+libmpv-scripts: the licenses of its files
+
+The files of this repository are under the BSD 3-Clause License in LICENSE,
+except the ones below, which are under the license named with them.
+
+GNU Lesser General Public License, version 2.1 or later (LGPL-2.1-or-later),
+the license of mpv and FFmpeg (its text: LICENSE.LGPL of mpv, COPYING.LGPLv2.1
+of FFmpeg, https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html):
+
+  patches/ffmpeg/libsmb2.c
+      the libsmb2 protocol of FFmpeg, copied into libavformat/ by
+      patch_ffmpeg_libsmb2.py; its header has FFmpeg's license notice.
+  patches/ffmpeg/webio/webio.c
+      the http, https and makblob protocols of the web build, copied into
+      libavformat/ by patch_ffmpeg_webio.py, with code adapted from FFmpeg's
+      libavformat/http.c (the options and the mapping of HTTP status codes).
+  patches/mpv/shared/patch_strip_libass.py
+  patches/mpv/shared/patch_strip_mpv_dead.py
+  patches/mpv/shared/patch_swscale_optional.py
+      each writes C sources into the mpv tree (the stubs of what it removes)
+      that reproduce code of mpv: declarations, option tables and the
+      license notice of mpv.
+
+MIT License (MIT):
+
+  tools/implib/
+      Implib.so by Yury Gribov, at the commit tools/implib/README.md names;
+      its text is tools/implib/LICENSE.txt.
+
+Mozilla Public License, version 2.0 (MPL-2.0, https://mozilla.org/MPL/2.0/):
+
+  patches/ffmpeg/embed_cacert/cacert.pem
+      the Mozilla CA certificate store, as extracted by curl
+      (https://curl.se/docs/caextract.html) from Mozilla's certdata.txt.
+
+Not code of this repository:
+
+  scripts/shared/licenses/winpthreads/COPYING
+      the license of mingw-w64 winpthreads (MIT, with BSD-3-Clause terms of
+      Lockless Inc.), shipped with the Windows library, which links it.
+
+Upstream code in the other patches. A patch script under patches/mpv,
+patches/ffmpeg or patches/rubberband quotes lines of the source of mpv, FFmpeg
+or Rubber Band to find where it applies, and may write code into those files.
+The quoted lines stay code of that project, under its license (mpv and FFmpeg:
+LGPL-2.1-or-later; Rubber Band, only in the GPL build: GPL-2.0-or-later), and
+so does every file a patch writes or changes in an upstream source tree. The
+code of this repository that a patch adds to such a file is BSD-3-Clause, and
+in the patched file it goes with that file, under its license.
+
+The libraries the scripts build are under the license that README.md
+("Licenses") names: LGPL-3.0-or-later, or GPL-3.0-or-later when built with
+LIBMPV_GPL=1.

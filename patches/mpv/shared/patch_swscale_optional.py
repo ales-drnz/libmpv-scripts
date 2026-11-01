@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
 # All rights reserved.
-# Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+# This file holds C sources reproduced from mpv: like mpv, it is under the GNU
+# Lesser General Public License, version 2.1 or later (see NOTICE).
 
 """Make libswscale optional so mpv links without it (~1.57M saved).
 
