@@ -324,7 +324,8 @@ PY
 write_licenses() {
   local target="$1" src="$2"; shift 2
   local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}/licenses_$target"
-  local commit="${GITHUB_SHA:-$(git -C "$LIBMPV_SCRIPTS_ROOT" rev-parse HEAD 2>/dev/null || true)}"
+  # safe.directory: in Docker, root reads a checkout of the runner's user.
+  local commit="${GITHUB_SHA:-$(git -c safe.directory='*' -C "$LIBMPV_SCRIPTS_ROOT" rev-parse HEAD 2>/dev/null || true)}"
   local extra=()
   patch_on embed_cacert && [[ " $* " == *" openssl "* ]] && extra+=(mozilla-ca)
   rm -rf "$out"
