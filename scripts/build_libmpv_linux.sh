@@ -150,8 +150,8 @@ build_zlib() {
   # Append -Os so it wins over the global -O2 export (last -O flag wins),
   # while keeping the LTO/visibility/security flags it carries — matches the
   # bzip2 -Os below and the other platforms' size pass for the compression
-  # deps. DSP/crypto deps (openssl, rubberband) keep -O2 via the unchanged
-  # global export.
+  # deps. DSP/crypto deps (openssl, rubberband in the GPL build) keep -O2 via
+  # the unchanged global export.
   CHOST="$CROSS_TRIPLE" CFLAGS="$CFLAGS -Os" ./configure --prefix="$PREFIX" --static
   make -j"$JOBS"; make install
   popd >/dev/null
@@ -722,7 +722,10 @@ main() {
   fi
 
   build_speexdsp
-  build_rubberband
+  # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
+  if gpl_build; then
+    build_rubberband
+  fi
 
   build_libplacebo
 

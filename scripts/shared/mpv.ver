@@ -4,8 +4,8 @@
 # Only the public mpv_* C API, plus the mak_pcm_* live PCM API
 # (patch_pcm_stream.py), leaks into the .so's dynamic symbol table. All
 # statically-linked dep internals (ffmpeg, freetype, fribidi, harfbuzz,
-# fontconfig, libass, libplacebo, libsmb2, libxml2, rubberband, speexdsp,
-# OpenSSL) stay local — preventing symbol-poisoning when another Flutter
+# fontconfig, libass, libplacebo, libsmb2, libxml2, speexdsp, OpenSSL, and
+# rubberband in the GPL build) stay local — preventing symbol-poisoning when another Flutter
 # plugin loads its own copy of these libraries in the same process.
 {
   global:

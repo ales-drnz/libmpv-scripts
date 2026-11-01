@@ -390,7 +390,8 @@ if [[ ! -f "$DIST/lib/libspeexdsp.a" ]]; then
 fi
 
 # ── rubberband ────────────────────────────────────────────────────────────────
-if [[ ! -f "$DIST/lib/librubberband.a" ]]; then
+# librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
+if gpl_build && [[ ! -f "$DIST/lib/librubberband.a" ]]; then
   log "Building rubberband $RUBBERBAND_VERSION..."
   RB=$(fetch rubberband "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2")
   tar -xf "$RB" -C "$SRC"
@@ -477,7 +478,8 @@ CFLAGS="$CFLAGS_COMMON" LDFLAGS="$LDFLAGS_COMMON" \
 # OpenSSL's libcrypto.pc keeps the Win32 syslibs (ws2_32/crypt32/gdi32) under
 # Libs.private. ffmpeg's openssl probe links the test against the non-static
 # `pkg-config --libs` set, drops those syslibs, fails to link, and then wrongly
-# aborts ("OpenSSL <3.0.0 is incompatible with the gpl"). Promote the private
+# aborts ("openssl (>= 1.1.1) not found", or "OpenSSL <3.0.0 is incompatible
+# with the gpl" in the GPL build). Promote the private
 # syslibs onto the public Libs line so the probe links.
 crypto_pc="$DIST/lib/pkgconfig/libcrypto.pc"
 if [[ -f "$crypto_pc" ]] && ! grep -qE '^Libs:.*-lws2_32' "$crypto_pc"; then
@@ -668,7 +670,8 @@ pushd "$SRC/mpv-$MPV_VERSION"
   # Layered order (left → right means consumer → provider):
   #   font stack: libass → fontconfig → harfbuzz → freetype → fribidi (kept only
   #               when strip_libass is disabled; private deps libpng + expat)
-  #   media:      libplacebo, librubberband, libsmb2, libxml2, libspeexdsp
+  #   media:      libplacebo, libsmb2, libxml2, libspeexdsp (and librubberband
+  #               in the GPL build)
   #   compression: zlib, bz2, lzma, iconv
   #   tls:        openssl (ssl + crypto)
   #   threading + winsock: winpthread, ws2_32 (libsmb2)
@@ -682,8 +685,12 @@ pushd "$SRC/mpv-$MPV_VERSION"
   if ! libass_stripped; then
     _font_libs="-lass -lfontconfig -lharfbuzz -lfribidi -lfreetype -lpng16 -lexpat "
   fi
+  _rubberband_lib=""
+  if gpl_build; then
+    _rubberband_lib="-lrubberband "
+  fi
   WIN_USR_LIBS="-Wl,--start-group \
-    ${_font_libs}-lplacebo -lrubberband -lsmb2 -lxml2 -lspeexdsp \
+    ${_font_libs}-lplacebo ${_rubberband_lib}-lsmb2 -lxml2 -lspeexdsp \
     -lz -lbz2 -llzma -liconv \
     -lssl -lcrypto \
     -Wl,--end-group"

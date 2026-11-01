@@ -178,7 +178,7 @@ write_ios_cross() {
   local ehf_arg="" _f
   for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
   # mpv orchestration code favours size: -Oz (placed after meson's own
-  # -Os so it wins). DSP stays in ffmpeg/rubberband, untouched by this.
+  # -Os so it wins). DSP stays in ffmpeg (and rubberband), untouched by this.
   ehf_arg="$ehf_arg, '-Oz'"
   cat > "$file" << EOF
 [binaries]
@@ -304,7 +304,10 @@ EOF
     slice_libass     "$sdk" "$arch" "$prefix" "$cf"
   fi
   slice_speexdsp   "$sdk" "$arch" "$prefix" "$cf"
-  slice_rubberband "$sdk" "$arch" "$prefix" "$cf"
+  # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
+  if gpl_build; then
+    slice_rubberband "$sdk" "$arch" "$prefix" "$cf"
+  fi
   slice_openssl    "$sdk" "$arch" "$prefix" "$cf"
   slice_libsmb2    "$sdk" "$arch" "$prefix" "$cf"
   slice_libxml2    "$sdk" "$arch" "$prefix" "$cf"

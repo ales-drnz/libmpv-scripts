@@ -11,8 +11,8 @@ package main
 // Only the "feature" and size-reduction patches are listed. Three of them act
 // on one platform only and are no-ops elsewhere: strip_win_resources and
 // timer_resolution on Windows, audiotrack on Android. The per-platform
-// build-correctness patches (Apple/iOS/Windows/Android fixups, rubberband,
-// libplacebo) and the structural patch_optional_deps are always applied and
+// build-correctness patches (Apple/iOS/Windows/Android fixups, rubberband in
+// the GPL build, libplacebo) and the structural patch_optional_deps are always applied and
 // aren't user-toggleable, so they're not listed here. Everything listed is
 // freely toggleable: the build's config audit adapts to the selection, so no
 // entry needs to be locked.

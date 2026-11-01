@@ -364,7 +364,10 @@ build_abi() {
     android_libass     "$abi" "$prefix"
   fi
   android_speexdsp   "$abi" "$prefix"
-  android_rubberband "$abi" "$prefix"
+  # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
+  if gpl_build; then
+    android_rubberband "$abi" "$prefix"
+  fi
   # OpenSSL's android-* targets own their toolchain resolution: they
   # locate `clang` / `llvm-ar` on $PATH and match them against
   # $ANDROID_NDK_ROOT (Configurations/15-android.conf) — an explicit
@@ -878,7 +881,7 @@ android_mpv() {
   #                           (driver-level lib injection gets bypassed),
   #                           so pin the archives explicitly via -Bstatic.
   #                           They sit AT THE END of the link line so static
-  #                           refs from libplacebo / librubberband / ffmpeg
+  #                           refs from libplacebo / ffmpeg (/ librubberband)
   #                           resolve against them.
   #
   # link_extra must be a bash array, not a string: meson's -D options use

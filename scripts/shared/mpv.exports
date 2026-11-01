@@ -4,9 +4,9 @@
 # Only the public mpv_* C API, plus the mak_pcm_* live PCM API
 # (patch_pcm_stream.py), leaks into the .dylib's dynamic symbol table.
 # All ffmpeg / freetype / fribidi / harfbuzz / fontconfig / libass / libplacebo /
-# libsmb2 / libxml2 / rubberband / speexdsp internals stay private (they were
-# also linked statically; without this list they would be exported and
-# clash-prone with other Flutter plugins linking the same libs).
+# libsmb2 / libxml2 / speexdsp (/ rubberband in the GPL build) internals stay
+# private (they were also linked statically; without this list they would be
+# exported and clash-prone with other Flutter plugins linking the same libs).
 _mpv_*
 # The mak_pcm_* API as a glob: ld64 rejects a listed symbol that is not
 # defined, so meson's link test of this flag failed and dropped the whole

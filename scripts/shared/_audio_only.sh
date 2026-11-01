@@ -111,10 +111,10 @@ export AUDIO_PARSERS
 #   - sofalizer (libmysofa) — binaural HRTF
 #   - flite     (libflite) — TTS
 #   - ladspa, lv2 — plugin hosts requiring system plugin dirs
-# `rubberband` IS built — we bundle librubberband and pass
-# `--enable-librubberband` so ffmpeg registers `af_rubberband` as a
-# lavfi filter (separate from mpv's native `af_rubberband.c`, which is
-# always available via `-Drubberband=enabled` in mpv meson).
+# `rubberband` (librubberband, GPL-2.0+) is in the GPL build only (LIBMPV_GPL=1,
+# see gpl_build below), which appends it to this list, passes
+# `--enable-librubberband` and builds mpv's native `af_rubberband.c` with
+# `-Drubberband=enabled`. The default LGPL build has neither.
 # Filters dropped from the whitelist for the 0.1.0 cut (debug / utility
 # only — they have no business in a music-player API):
 #   abench, acopy, acue, alatency, aloop, ametadata, anull, aperms,
@@ -137,7 +137,7 @@ AUDIO_FILTERS+=",equalizer,anequalizer,superequalizer,firequalizer,bass,treble,h
 # ── Spatial / Stereo ────────────────────────────────────────────────────────
 AUDIO_FILTERS+=",stereotools,stereowiden,extrastereo,crossfeed,haas,surround,earwax,pan,channelmap,virtualbass,dialoguenhance,adecorrelate"
 # ── Time / Pitch ────────────────────────────────────────────────────────────
-AUDIO_FILTERS+=",atempo,asetrate,rubberband,aresample,aformat,adelay,apad,compensationdelay,afade,aphaseshift,afreqshift"
+AUDIO_FILTERS+=",atempo,asetrate,aresample,aformat,adelay,apad,compensationdelay,afade,aphaseshift,afreqshift"
 # ── Modulation / FX ─────────────────────────────────────────────────────────
 AUDIO_FILTERS+=",aecho,chorus,flanger,aphaser,apulsator,tremolo,vibrato"
 # ── Restoration / Noise ─────────────────────────────────────────────────────
@@ -186,6 +186,42 @@ patch_on() {
   esac
 }
 
+# ── License: LGPL by default, GPL on request ─────────────────────────────────
+# The libmpv we publish is LGPL, version 3 or later: FFmpeg without
+# --enable-gpl (LGPLv3 with --enable-version3, see ffmpeg_common_args) and mpv
+# with -Dgpl=false (LGPLv2.1+), so an app may link it whatever its own
+# license. librubberband is GPL-2.0+ (and its author rules out the App Store
+# without a commercial license), so it is not in that build.
+#
+# gpl_build — true only when LIBMPV_GPL=1, set in the environment or by the
+# Settings ▸ License tab of the build TUI (it writes the override file). It
+# turns on, together: FFmpeg --enable-gpl --enable-librubberband and its
+# rubberband filter, mpv -Dgpl=true -Drubberband=enabled, the librubberband
+# build of every platform, and the GPL-3.0-or-later license in the build
+# record. Off by default; the release workflows never set it. A prefix built
+# with the other setting is refused by write_build_record: clean the build
+# directory after a change.
+case "${LIBMPV_GPL:-0}" in
+  0|1) ;;
+  *) die "LIBMPV_GPL=${LIBMPV_GPL} (expected 0 or 1)" ;;
+esac
+gpl_build() { [[ "${LIBMPV_GPL:-0}" == "1" ]]; }
+
+# The rubberband filter follows the license, also when an override lists the
+# filters: FFmpeg would drop it without librubberband and the config audit
+# would stop the build.
+if gpl_build; then
+  LIBMPV_LICENSE="GPL-3.0-or-later"
+  case ",$AUDIO_FILTERS," in
+    *",rubberband,"*) ;;
+    *) AUDIO_FILTERS="${AUDIO_FILTERS:+$AUDIO_FILTERS,}rubberband" ;;
+  esac
+else
+  LIBMPV_LICENSE="LGPL-3.0-or-later"
+  AUDIO_FILTERS="$(printf ',%s,' "$AUDIO_FILTERS" | sed 's/,rubberband,/,/; s/^,//; s/,$//')"
+fi
+export AUDIO_FILTERS LIBMPV_LICENSE
+
 # ── Patch record ─────────────────────────────────────────────────────────────
 # Each build records the toggleable patches it applied (the ids of the TUI
 # catalog; the required ones always are) and the filters FFmpeg was
@@ -195,13 +231,15 @@ patch_on() {
 # and with it its record.
 #
 # patch_record_start <tree> <prefix> — the stage patches a fresh <tree>
-# (ffmpeg or mpv) and installs into <prefix>: start its record afresh. The
-# FFmpeg one also keeps the AUDIO_FILTERS its configure compiles in.
+# (ffmpeg or mpv) and installs into <prefix>: start its record afresh, with
+# the license it is configured for (LIBMPV_LICENSE). The FFmpeg one also keeps
+# the AUDIO_FILTERS its configure compiles in.
 patch_record_start() {
   local tree="$1" dir="$2/share/libmpv-scripts"
   mkdir -p "$dir"
   PATCH_RECORD="$dir/$tree.patches"
   : > "$PATCH_RECORD"
+  printf '%s\n' "$LIBMPV_LICENSE" > "$dir/$tree.license"
   if [[ "$tree" == ffmpeg ]]; then
     printf '%s\n' "$AUDIO_FILTERS" > "$dir/audio_filters"
   fi
@@ -216,17 +254,18 @@ record_patch() {
 
 # write_build_record <target> <prefix>... — write builds/release/
 # build_<target>.json, the record of libmpv_<target>.*: its release, its
-# patches and its filters, from the prefixes it was linked from (one per
-# architecture or slice, which must agree). write_manifest.sh reads it.
+# license, its patches and its filters, from the prefixes it was linked from
+# (one per architecture or slice, which must agree). A stage cached from a
+# build with the other license setting stops it. write_manifest.sh reads it.
 # RELEASE_DIR overrides the directory.
 write_build_record() {
   local target="$1"; shift
   local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
   mkdir -p "$out"
-  python3 - "$out/build_$target.json" "$target" "$LIBMPV_RELEASE" "$@" <<'PY'
+  python3 - "$out/build_$target.json" "$target" "$LIBMPV_RELEASE" "$LIBMPV_LICENSE" "$@" <<'PY'
 import json, pathlib, sys
 
-out, target, release, *prefixes = sys.argv[1:]
+out, target, release, license, *prefixes = sys.argv[1:]
 records = []
 for prefix in prefixes:
     d = pathlib.Path(prefix, "share", "libmpv-scripts")
@@ -234,6 +273,11 @@ for prefix in prefixes:
         patches = set()
         for tree in ("ffmpeg", "mpv"):
             patches.update((d / f"{tree}.patches").read_text().split())
+            built = (d / f"{tree}.license").read_text().strip()
+            if built != license:
+                sys.exit(f"{prefix}: {tree} was built {built}, this build is "
+                         f"{license} (LIBMPV_GPL): clean the build directory "
+                         "and build again")
         filters = (d / "audio_filters").read_text().strip().split(",")
     except FileNotFoundError as e:
         sys.exit(f"No patch record {e.filename}: a stage built before the "
@@ -248,10 +292,11 @@ patches, filters = records[0]
 pathlib.Path(out).write_text(json.dumps({
     "release": release,
     "target": target,
+    "license": license,
     "patches": patches,
     "audioFilters": filters,
 }, indent=2) + "\n")
-print(f"Wrote {out} ({len(patches)} patches, {len(filters)} filters)")
+print(f"Wrote {out} ({license}, {len(patches)} patches, {len(filters)} filters)")
 PY
 }
 
@@ -332,6 +377,16 @@ ffmpeg_common_args() {
   # couples this to strip_mpv_dead (see its definition above).
   local _swscale_flag="--enable-swscale"
   swscale_stripped && _swscale_flag="--disable-swscale"
+  # License (see gpl_build). --enable-version3 stays on in both builds:
+  # OpenSSL 3 is Apache-2.0, which LICENSE.md calls incompatible with the
+  # LGPLv2.1, so FFmpeg links it under the (L)GPLv3. Configure asks for it
+  # only with --enable-gpl and would build an LGPLv2.1 FFmpeg with OpenSSL
+  # without a word; verify_ffmpeg_config asserts CONFIG_VERSION3 instead.
+  local _gpl_flag="" _rubberband_flag=""
+  if gpl_build; then
+    _gpl_flag="--enable-gpl"
+    _rubberband_flag="--enable-librubberband"
+  fi
   cat <<EOF
 --enable-static
 --disable-shared
@@ -367,11 +422,11 @@ ${_swscale_flag}
 --enable-lzma
 --disable-iconv
 --enable-network
---enable-gpl
+${_gpl_flag}
 --enable-version3
 --enable-libxml2
 ${_smb2_flag}
---enable-librubberband
+${_rubberband_flag}
 --enable-openssl
 --disable-mbedtls
 --disable-sdl2
@@ -393,18 +448,25 @@ EOF
 # off; the optional-deps patch makes libplacebo / libass not-required so
 # unbuilt deps don't fail configure.
 mpv_common_args() {
-  cat <<'EOF'
+  # License (see gpl_build). -Dgpl=false does not turn rubberband off (mpv's
+  # rubberband feature does not depend on gpl), so both are set.
+  local _gpl=false _rubberband=disabled
+  if gpl_build; then
+    _gpl=true
+    _rubberband=enabled
+  fi
+  cat <<EOF
 -Db_lto=true
 -Doptimization=s
 -Dauto_features=disabled
--Dgpl=true
+-Dgpl=${_gpl}
 -Dlibmpv=true
 -Dcplayer=false
 -Dbuild-date=false
 -Dtests=false
 -Dgl=disabled
 -Dplain-gl=disabled
--Drubberband=enabled
+-Drubberband=${_rubberband}
 -Dzlib=enabled
 EOF
 }
@@ -468,6 +530,18 @@ verify_ffmpeg_config() {
   fi
   # libxml2 — required by the DASH demuxer's manifest parser (Plex etc).
   assert_define "$cfg" "CONFIG_LIBXML2"   "1"
+
+  # License (see gpl_build): (L)GPL version 3 in both builds, never nonfree,
+  # GPL only in the opt-in build, the only one that links librubberband.
+  assert_define "$cfg" "CONFIG_VERSION3" "1"
+  assert_define "$cfg" "CONFIG_NONFREE"  "0"
+  if gpl_build; then
+    assert_define "$cfg" "CONFIG_GPL"           "1"
+    assert_define "$cfg" "CONFIG_LIBRUBBERBAND" "1"
+  else
+    assert_define "$cfg" "CONFIG_GPL"           "0"
+    assert_define "$cfg" "CONFIG_LIBRUBBERBAND" "0"
+  fi
 
   # The spdif muxer behind audio-spdif. Without it ad_spdif drops every
   # packet with no log, so a passthrough file plays nothing.
@@ -614,7 +688,14 @@ verify_mpv_config() {
   else
     assert_define "$cfg" "HAVE_LIBASS" "1"
   fi
-  assert_define "$cfg" "HAVE_RUBBERBAND" "1"
+  # License (see gpl_build): -Dgpl and -Drubberband move together.
+  if gpl_build; then
+    assert_define "$cfg" "HAVE_GPL"        "1"
+    assert_define "$cfg" "HAVE_RUBBERBAND" "1"
+  else
+    assert_define "$cfg" "HAVE_GPL"        "0"
+    assert_define "$cfg" "HAVE_RUBBERBAND" "0"
+  fi
   assert_define "$cfg" "HAVE_ZLIB"       "1"
 
   # ── Audio outputs per platform ────────────────────────────────────────
@@ -1048,9 +1129,9 @@ section_gc_cflags() {
 # .eh_frame_hdr only serve crash-backtrace quality — not any audio feature.
 # Dropping them shrinks the shipped artifact (.eh_frame survives --strip-unneeded).
 # This MUST NOT go into the shared CFLAGS/CXXFLAGS or any meson cross-file, which
-# also compile the C++ deps (rubberband / harfbuzz / libplacebo / libass) that
-# need unwind tables for C++ exception correctness. Wire it ONLY via ffmpeg
-# --extra-cflags and mpv -Dc_args (both C-only knobs).
+# also compile the C++ deps (libplacebo / harfbuzz / libass, rubberband in the
+# GPL build) that need unwind tables for C++ exception correctness. Wire it
+# ONLY via ffmpeg --extra-cflags and mpv -Dc_args (both C-only knobs).
 eh_frame_cflags() {
   [[ "${EH_FRAME_TRIM:-1}" == "0" ]] && return
   echo "-fno-asynchronous-unwind-tables -fno-unwind-tables"
@@ -1059,8 +1140,8 @@ eh_frame_cflags() {
 # ── Unwind-table trim for the C/C++ DEPENDENCY builds (default ON) ───────────
 # The weaker, C++-safe variant of eh_frame_cflags(): -fno-asynchronous-unwind-
 # tables drops the async .eh_frame (backtrace/profiler precision) but KEEPS C++
-# exception unwinding intact, so it is safe for the C++ deps (rubberband,
-# libplacebo). Add this to every platform's shared dep CFLAGS/CXXFLAGS export
+# exception unwinding intact, so it is safe for the C++ deps (libplacebo, and
+# rubberband in the GPL build). Add this to every platform's shared dep CFLAGS/CXXFLAGS export
 # (ffmpeg + mpv themselves get the stronger C-only eh_frame_cflags via their own
 # --extra-cflags / -Dc_args). Shared so the policy lives in one place.
 dep_unwind_cflags() {

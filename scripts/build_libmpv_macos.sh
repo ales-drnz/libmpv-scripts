@@ -208,7 +208,10 @@ build_for_arch() {
   build_libplacebo "$PREFIX"
 
   build_speexdsp   "$PREFIX"
-  build_rubberband "$PREFIX"
+  # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
+  if gpl_build; then
+    build_rubberband "$PREFIX"
+  fi
   # OpenSSL Configure honours the exported CFLAGS/LDFLAGS (which carry
   # -arch + -isysroot via arch_flags); the darwin64-<arch>-cc target
   # handles cross-compiling x86_64 on an arm64 host. OpenSSL's canonical
@@ -700,7 +703,7 @@ build_mpv() {
   local ehf_arg="" _f
   for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
   # mpv orchestration code favours size: -Oz (placed after meson's own
-  # -Os so it wins). DSP stays in ffmpeg/rubberband, untouched by this.
+  # -Os so it wins). DSP stays in ffmpeg (and rubberband), untouched by this.
   ehf_arg="$ehf_arg, '-Oz'"
 
   pushd "$bdir" >/dev/null

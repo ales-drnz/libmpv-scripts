@@ -5,8 +5,8 @@
 """Keep the end of file when a filter change drops the filter holding it.
 
 mp_output_chain_update_filters frees the filters a new `af` list no longer
-has, with every frame they hold. A filter with latency (rubberband,
-dynaudnorm, loudnorm, afir) can hold the decoder's EOF frame for a few
+has, with every frame they hold. A filter with latency (dynaudnorm,
+loudnorm, afir, rubberband in the GPL build) can hold the decoder's EOF frame for a few
 hundred milliseconds near the end of a file. Removing or rebuilding it
 then loses that EOF: the decoder does not send another, the audio chain
 never reports the end, and playback stops at the end of the file for

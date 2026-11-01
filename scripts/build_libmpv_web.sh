@@ -284,8 +284,8 @@ build_ffmpeg() {
   pushd "$bdir" >/dev/null
   # -pthread in the test links too, or configure turns pthreads off
   # (FFmpeg's configure probes pthread_join with the extra flags). The test
-  # links go through em++: the rubberband probe links C++ with -lstdc++,
-  # which only em++ maps to libc++.
+  # links go through em++: the rubberband probe of the GPL build links C++
+  # with -lstdc++, which only em++ maps to libc++.
   # shellcheck disable=SC2046
   "$dir/configure" \
     --prefix="$PREFIX" \
@@ -340,10 +340,13 @@ build_mpv() {
 # Link: the module and the harness
 # =============================================================================
 
-# Archives in dependency order. C++ (rubberband, libplacebo) is why the link
-# goes through em++.
-WEB_LIBS=(-lmpv -lavfilter -lavformat -lavcodec -lswresample -lavutil
-          -lplacebo -lrubberband -lxml2 -lz -lm)
+# Archives in dependency order. C++ (libplacebo, rubberband in the GPL build)
+# is why the link goes through em++.
+WEB_LIBS=(-lmpv -lavfilter -lavformat -lavcodec -lswresample -lavutil -lplacebo)
+if gpl_build; then
+  WEB_LIBS+=(-lrubberband)
+fi
+WEB_LIBS+=(-lxml2 -lz -lm)
 
 # Settings shared by the module and the harness:
 #   PTHREAD_POOL_SIZE=16      workers made at start: core, demux, decoder,
@@ -483,7 +486,11 @@ main() {
   if [[ "$STAGE" != "link" ]]; then
     build_zlib
     build_libxml2
-    build_rubberband
+    # librubberband (GPL-2.0+) only in the GPL build (gpl_build in
+    # _audio_only.sh).
+    if gpl_build; then
+      build_rubberband
+    fi
     build_libplacebo
     build_ffmpeg
     build_mpv

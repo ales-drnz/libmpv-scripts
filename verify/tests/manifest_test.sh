@@ -251,11 +251,11 @@ build_record "$w/out" macos "$w/arm64" "$w/x86_64"; check $? "write: two slices 
 python3 - "$w/out/build_macos.json" "$RELEASE" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert r == {"release": sys.argv[2], "target": "macos",
+assert r == {"release": sys.argv[2], "target": "macos", "license": "LGPL-3.0-or-later",
              "patches": ["chain_eof", "dash_keepalive", "libsmb2", "pcm_tap"],
              "audioFilters": ["equalizer", "volume"]}, r
 PY
-check $? "write: the record has the patches of both trees and the filters FFmpeg was configured with"
+check $? "write: the record has the license, the patches of both trees and the filters FFmpeg was configured with"
 
 # A stage built again starts its record afresh.
 stage "$w/x86_64" mpv chain_eof
@@ -271,6 +271,16 @@ build_record "$w/out3" macos "$w/arm64" "$w/x86_64" 2>/dev/null; r=$?
 stage "$w/nompv" ffmpeg libsmb2
 build_record "$w/out4" linux-x86_64 "$w/nompv" 2>/dev/null; r=$?
 [[ $r != 0 && ! -e "$w/out4/build_linux-x86_64.json" ]]; check $? "write: a stage without a record fails (exit $r)"
+
+# A stage cached from a build with the other license setting (LIBMPV_GPL).
+LIBMPV_GPL=1 stage "$w/gpl" ffmpeg libsmb2
+LIBMPV_GPL=1 stage "$w/gpl" mpv pcm_tap
+build_record "$w/out5" linux-x86_64 "$w/gpl" 2>/dev/null; r=$?
+[[ $r != 0 && ! -e "$w/out5/build_linux-x86_64.json" ]]; check $? "write: a stage built GPL in an LGPL build fails (exit $r)"
+grep -q 'GPL-3.0-or-later' "$w/out5.log"; check $? "write: the error names the license of the stage"
+LIBMPV_GPL=1 build_record "$w/out6" linux-x86_64 "$w/gpl"; check $? "write: a GPL build of GPL stages"
+python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["license"] == "GPL-3.0-or-later", r' \
+  "$w/out6/build_linux-x86_64.json"; check $? "write: the record of a GPL build says GPL-3.0-or-later"
 
 if (( fails > 0 )); then echo "$fails check(s) failed"; exit 1; fi
 echo "all checks passed"

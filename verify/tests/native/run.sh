@@ -197,7 +197,7 @@ if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   ) > "$WORK/logs/apply.log" 2>&1
   (( $? == 0 )) || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
   ( cd "$SRC" && meson setup "$BLD" -Dbuildtype=debug -Doptimization=1 -Dauto_features=disabled \
-      -Dgpl=true -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
+      -Dgpl=false -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
       -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Db_sanitize=address -Db_lundef=false
   ) > "$WORK/logs/setup.log" 2>&1 || { tail -30 "$WORK/logs/setup.log"; die "meson setup failed"; }
   ninja -C "$BLD" -j"$JOBS" > "$WORK/logs/ninja.log" 2>&1 || {

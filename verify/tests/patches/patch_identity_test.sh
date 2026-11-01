@@ -13,11 +13,13 @@
 # patch scripts proven here needs no rebuild. The cases: every platform with
 # everything on (iOS for both SDKs, the Apple export filter with a fake
 # prefix), each toggle off alone where it acts, the coupled strips, FFmpeg
-# with each of its toggles off, and the two rubberband patches.
+# with each of its toggles off, and the two rubberband patches (librubberband
+# is only in the GPL build, LIBMPV_GPL=1).
 #
 # Usage: bash verify/tests/patches/patch_identity_test.sh <reference root>
 #        <pristine mpv> <pristine ffmpeg> <pristine rubberband> <work dir>
 # <reference root> holds patches/, e.g. `git archive <rev> patches | tar -x`.
+# <pristine rubberband> may be `-`: the rubberband case is then left out.
 # CASES="name ..." runs only the cases named. CHANGED="id ..." names toggles
 # whose patch changed on purpose since the reference: they are left out on
 # both sides of every case, so the cases prove the other scripts unchanged.
@@ -116,6 +118,7 @@ for c in "${CASE_LIST[@]}"; do
   read -r name kind disabled <<< "$c"
   disabled="$disabled ${CHANGED:-}"
   if [[ -n "${CASES:-}" && " $CASES " != *" $name "* ]]; then continue; fi
+  if [[ "$kind" == rubberband && "$RB" == - ]]; then echo "skip $name: no pristine rubberband"; continue; fi
   ran=$((ran + 1))
   case "$kind" in
     ffmpeg) src="$FFMPEG" ;;
