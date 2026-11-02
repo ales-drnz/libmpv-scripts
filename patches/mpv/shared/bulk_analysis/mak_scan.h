@@ -51,9 +51,10 @@ struct mak_scan_track {
  *   - **HTTP + non-seekable + not adaptive, with [duration_hint] > 0** (a
  *     transcode that tells no length, the per-file option
  *     waveform-duration-hint): decoded from [demuxer]'s cache like a
- *     seekable HTTP file below, on an axis of [duration_hint] seconds, and
- *     never re-opened (see mak_feed.h). Grown from playback on that axis
- *     when the cache cannot be fed.
+ *     seekable HTTP file below, and never re-opened (see mak_feed.h). The
+ *     axis is [duration_secs] when mpv knows it, [duration_hint] seconds
+ *     otherwise. Grown from playback on that axis when the cache cannot be
+ *     fed.
  *   - **network + adaptive** ([format_name] hls/dash/applehttp) OR
  *     **network + non-seekable**: arm PROGRESSIVE ([duration_secs] > 0) or
  *     ROLLING (unknown) DIRECTLY — grown from playback by the af-tap, NO
@@ -66,8 +67,12 @@ struct mak_scan_track {
  *     the coordinator's own probe.
  *
  * [format_name] is the lavf format name (mpv's `demuxer->filetype`, e.g.
- * "hls" / "flac"; may be NULL). [is_network] / [seekable] come straight from
- * mpv's demuxer. The coordinator takes its own copy of the URL.
+ * "hls" / "flac"; may be NULL). [is_network] comes straight from mpv's
+ * demuxer; [seekable] is whether the stream seeks of its own (the demuxer's
+ * seekable without partially_seekable): force-seekable lets the player try
+ * seeks on a stream that cannot, and must not send such a stream (a
+ * transcode) to the re-open, a second request. The coordinator takes its
+ * own copy of the URL.
  *
  * [global] and [log] are the core's (mpctx->global / mpctx->log). The
  * coordinator and its workers re-open [url] with the SAME network options mpv

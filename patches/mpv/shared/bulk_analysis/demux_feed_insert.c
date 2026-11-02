@@ -65,6 +65,9 @@ struct mak_demux_feed *mak_demux_feed_attach(struct demuxer *demuxer,
     r->active = q->head != NULL;
     r->bof = q->head && q->is_bof;
     r->stream_size = in->stream_size > 0 ? in->stream_size : -1;
+#ifdef MAK_DEMUX_READ_ERROR
+    r->read_error = in->mak_read_error;  /* the reading may be over already */
+#endif
     mak_demux_feed_continue(f, q, r->active);
 
     in->mak_feed = f;

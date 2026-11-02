@@ -81,7 +81,8 @@ static int mp_property_loudness_scan_enabled(void *ctx,
                                    mpctx->opts->mak_waveform_duration_hint,
                                    mpctx->demuxer ? mpctx->demuxer->filetype : NULL,
                                    mpctx->demuxer ? mpctx->demuxer->is_network : false,
-                                   mpctx->demuxer ? mpctx->demuxer->seekable : false,
+                                   mpctx->demuxer ? mpctx->demuxer->seekable &&
+                                       !mpctx->demuxer->partially_seekable : false,
                                mpctx->global, mpctx->log, mpctx->demuxer,
                                mpctx->current_track[0][STREAM_AUDIO]
                                    ? mpctx->current_track[0][STREAM_AUDIO]->stream : NULL);

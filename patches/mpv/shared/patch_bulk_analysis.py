@@ -125,18 +125,22 @@ has to care which path produced the envelope:
   * **HTTP stream that cannot seek and tells no length, with a hint** (a
     transcode from a music server: chunked, no byte ranges, no
     Content-Length). The client sets the per-file option
-    `waveform-duration-hint` (seconds, 0 for none) to the length it knows,
-    and the cache feed above decodes the stream with that length as its
-    axis, `decoding` while the cache fills. The pass ends at the first of
-    the end of the stream and the hinted length, so a wrong hint still ends
-    `ready`: a short one covers the hint and leaves the rest of the stream
-    out; a long one ends at the end of the stream, its bins trimmed after
-    the last one filled as for a duration that overshoots (the reader
-    leaves them out, `total_bins` keeps the hinted axis). A pass that
-    cannot be clean grows from playback on the hinted axis instead of
-    opening the stream again, which would start a second transcode. Not
-    read for any other source; without a hint the stream goes to one of
-    the two strategies below.
+    `waveform-duration-hint` (seconds, 0 for none, at most 5e6) to the
+    length it knows, and the cache feed above decodes the stream with that
+    length as its axis, `decoding` while the cache fills. A duration mpv
+    knows (Content-Length from a server without byte ranges) wins over the
+    hint, and a stream that only seeks with `force-seekable` counts as one
+    that cannot. The pass ends at the first of the end of the stream and
+    the hinted length, so a wrong hint still ends `ready`: a short one
+    covers the hint and leaves the rest of the stream out; a long one ends
+    at the end of the stream, its bins trimmed after the last one filled as
+    for a duration that overshoots (the reader leaves them out,
+    `total_bins` keeps the hinted axis). A pass that cannot be clean, or
+    that ends on a read error (the connection dropped before the end),
+    grows from playback on the hinted axis instead of opening the stream
+    again, which would start a second transcode, and the loudness scan
+    reports unavailable. Not read for any other source; without a hint the
+    stream goes to one of the two strategies below.
 
   * **Unknown duration** (true live): no fixed `[0, total]` axis exists, so
     state `rolling` — a sliding window of ABSOLUTE media-time bins, grown by
@@ -252,7 +256,8 @@ LOADFILE_NOTIFY_PATCHED = (
     '                   mpctx->opts->mak_waveform_duration_hint,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->filetype : NULL,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->is_network : false,\n'
-    '                   mpctx->demuxer ? mpctx->demuxer->seekable : false,\n'
+    '                   mpctx->demuxer ? mpctx->demuxer->seekable &&\n'
+    '                       !mpctx->demuxer->partially_seekable : false,\n'
     '                   mpctx->global, mpctx->log, mpctx->demuxer,\n'
     '                   mpctx->current_track[0][STREAM_AUDIO]\n'
     '                       ? mpctx->current_track[0][STREAM_AUDIO]->stream\n'
@@ -285,9 +290,12 @@ LOADFILE_CLOSE_PATCHED = (
 
 # The per-file option waveform-duration-hint: the length a client already
 # knows for a network stream that tells none (a transcode from a music
-# server), read by mak_scan_start at FILE_LOADED. Next to prefetch-playlist,
-# whose opener never reads it (patch_prefetch.py ignores it when it compares
-# the per-file options of two entries). Pristine lines lifted from mpv
+# server), read by mak_scan_start at FILE_LOADED. At most
+# MAK_WAVEFORM_FED_MAX_SECS (5e6 s, mak_waveform.h), the longest axis the
+# analysis lays out: a longer hint is refused, as the option refuses any
+# value out of range, and the file plays without one. Next to
+# prefetch-playlist, whose opener never reads it (patch_prefetch.py ignores
+# it when it compares the per-file options of two entries). Pristine lines lifted from mpv
 # 0.41.0.
 OPTIONS_H_PRISTINE = '    bool prefetch_open;\n'
 
@@ -303,7 +311,7 @@ OPTIONS_C_PATCHED = (
     '    {"prefetch-playlist", OPT_BOOL(prefetch_open)},\n'
     '    /* ' + MARKER + ' */\n'
     '    {"waveform-duration-hint", OPT_DOUBLE(mak_waveform_duration_hint),\n'
-    '        M_RANGE(0, DBL_MAX)},\n'
+    '        M_RANGE(0, 5e6)}, /* MAK_WAVEFORM_FED_MAX_SECS */\n'
 )
 
 
@@ -442,10 +450,17 @@ DEMUX_EDITS = [
      '    if (!ds->eof) {\n'
      '        ds->eof = true;\n'
      '        /* ' + MARKER + ' ─── a cancelled read also ends here: not an\n'
-     '         * end of file for the analysis. */\n'
+     '         * end of file for the analysis. With patch_read_error.py,\n'
+     '         * read_packet() sets the read error before it marks the end,\n'
+     '         * and the feed takes it with the end. */\n'
      '        if (ds->in->mak_feed && !demux_cancel_test(ds->in->d_thread) &&\n'
-     '            ds->index == mak_demux_feed_stream(ds->in->mak_feed))\n'
-     '            mak_demux_feed_mark(ds->in->mak_feed, MAK_FEED_EOF);\n'),
+     '            ds->index == mak_demux_feed_stream(ds->in->mak_feed)) {\n'
+     '#ifdef MAK_DEMUX_READ_ERROR\n'
+     '            mak_demux_feed_replay_state(ds->in->mak_feed)->read_error =\n'
+     '                ds->in->mak_read_error;\n'
+     '#endif\n'
+     '            mak_demux_feed_mark(ds->in->mak_feed, MAK_FEED_EOF);\n'
+     '        }\n'),
     ('execute_seek',
      'static void execute_seek(struct demux_internal *in)\n'
      '{\n'

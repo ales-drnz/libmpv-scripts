@@ -23,8 +23,9 @@ same end, the same playlist advance, the same keep-open park.
     keeps, so a read that resumes and reaches the real end is not taken
     for the old error.
   - After a read error a seek of the demuxer tries the read again
-    (stream->mak_reopen, armed by demux_lavf.c with mak_retry); a read
-    without one fails with the error, as before. avio keeps its end
+    (stream->mak_reopen, armed by execute_seek() of demux.c with
+    mak_retry, for every demuxer: lavf, mpv's own Matroska and WebM, raw);
+    a read without one fails with the error, as before. avio keeps its end
     until a seek that reads, serves a seek into its buffer or a short one
     forward from the old connection, and http.c answers a seek to the
     offset it stands at without a new request. So stream_lavf.c seeks the
@@ -39,25 +40,35 @@ same end, the same playlist advance, the same keep-open park.
     there and the count stays 0).
   - demux.c keeps, with eof, whether the read that ended the file failed
     (demuxer or stream), false again once a read gets on, and the count;
-    struct demux_reader_state hands both to the player. A cached range
-    that ends on a read error is no end of the file: a seek past it is a
-    seek of the demuxer, and a seek into it resumes the demuxer at its
-    end, as for another range, so that the read is tried again there.
+    struct demux_reader_state hands both to the player. It is set before
+    the streams are marked at their end, so the analysis feed of
+    bulk_analysis takes it with the end (MAK_DEMUX_READ_ERROR in demux.h
+    tells that patch it is there). A cached range that ends on a read
+    error is no end of the file: a seek past it is a seek of the demuxer,
+    and a seek into it resumes the demuxer at its end, as for another
+    range, so that the read is tried again there. Nor does it count for
+    eof-cached of demuxer-cache-state.
   - Two properties of the current file, unavailable without one:
     demuxer-read-error (flag) and demuxer-skipped-segments (int64). They
     change when the demuxer stops reading, before eof-reached, and are
     notified with the cache properties. With keep-open the last entry
     parks without END_FILE: these properties are how a client reads it
     there.
-  - MPV_EVENT_END_FILE gets two fields at the end, mak_read_error and
-    mak_skipped_segments: the properties when the file was closed, for
-    every reason. The error field keeps its documented meaning (0 unless
-    the reason is MPV_END_FILE_REASON_ERROR): a client that tests error
-    or counts errors sees no change. The struct grows at the end, so a
+  - MPV_EVENT_END_FILE gets four fields at the end, mak_read_error and
+    mak_skipped_segments, the properties when the file was closed, for
+    every reason, and mak_duration and mak_position, the entry's duration
+    and time-pos then (-1 when unknown). A client that reads the
+    properties from change events gets none for an entry that opens and
+    ends in one burst of events (mpv sends the changes only once its event
+    queue is empty): these fields carry them with the end. The error field
+    keeps its documented meaning (0 unless the reason is
+    MPV_END_FILE_REASON_ERROR): a client that tests error or counts errors
+    sees no change. The struct grows at the end, so a
     client built against the upstream header reads it as before; a client
     that reads the new fields checks first that the libmpv has the
     demuxer-read-error property. The node form of the event (scripts,
-    JSON IPC) gets read_error and skipped_segments.
+    JSON IPC) gets read_error and skipped_segments, and duration and
+    position when known.
 
 Limits. A response with neither Content-Length nor chunked encoding ends
 where its connection closes, and no cut can be told from that end: from a
@@ -77,9 +88,9 @@ Files patched
                                   on a seek, the protocol opened again
     demux/demux.h                 struct demuxer and demux_reader_state
     demux/demux.c                 kept with eof, read by the reader state,
-                                  the cached range of a read error
-    demux/demux_lavf.c            av_read_frame() errors, skipped_segments,
-                                  a seek arms the retry of the stream
+                                  the cached range of a read error, a seek
+                                  arms the retry of the stream
+    demux/demux_lavf.c            av_read_frame() errors, skipped_segments
     player/loadfile.c             the END_FILE fields
     player/command.c              the two properties and their notification
     player/client.c               the node form of END_FILE
@@ -124,7 +135,8 @@ STREAM_FIELD_NEW = STREAM_FIELD + (
     '    // ' + MARKER + ': mak_reopen, a read of the protocol failed with an\n'
     '    // error and it has not opened again since: stream_lavf.c seeks the\n'
     '    // protocol itself, and fails every read. mak_retry, a seek of the\n'
-    '    // demuxer since (demux_lavf.c): the next read opens it again first.\n'
+    '    // demuxer since (execute_seek of demux.c): the next read opens it\n'
+    '    // again first.\n'
     '    bool mak_reopen, mak_retry;\n'
 )
 
@@ -271,6 +283,11 @@ DEMUXER_END_NEW = (
     '    bool mak_read_error;\n'
     '    int64_t mak_skipped_segments;\n'
     '} demuxer_t;\n'
+    '\n'
+    '// ' + MARKER + ': demux.c keeps the read error with eof\n'
+    '// (demux_internal.mak_read_error), set before the streams are marked at\n'
+    '// their end. The analysis feed of bulk_analysis reads it there.\n'
+    '#define MAK_DEMUX_READ_ERROR 1\n'
 )
 
 RANGE_EOF = '    bool is_eof;            // set if the file ends with this range\n'
@@ -290,6 +307,22 @@ INTERNAL_EOF_NEW = INTERNAL_EOF + (
     '    int64_t mak_skipped_segments;\n'
 )
 
+READ_PACKET_EOF = (
+    '    if (!in->seeking) {\n'
+    '        if (eof) {\n'
+)
+
+READ_PACKET_EOF_NEW = (
+    '    if (!in->seeking) {\n'
+    '        // ' + MARKER + ': false again as soon as a read gets on. Set\n'
+    '        // before the streams are marked at their end, which the analysis\n'
+    '        // feed (bulk_analysis) reads with it.\n'
+    '        in->mak_read_error = eof && (demux->mak_read_error ||\n'
+    '                             (demux->stream && demux->stream->mak_read_error));\n'
+    '        in->current_range->mak_read_error = in->mak_read_error;\n'
+    '        if (eof) {\n'
+)
+
 READ_PACKET_END = (
     '        in->eof = eof;\n'
     '        in->reading = !eof;\n'
@@ -301,10 +334,6 @@ READ_PACKET_END = (
 READ_PACKET_END_NEW = (
     '        in->eof = eof;\n'
     '        in->reading = !eof;\n'
-    '        // ' + MARKER + ': false again as soon as a read gets on.\n'
-    '        in->mak_read_error = eof && (demux->mak_read_error ||\n'
-    '                             (demux->stream && demux->stream->mak_read_error));\n'
-    '        in->current_range->mak_read_error = in->mak_read_error;\n'
     '    }\n'
     '    in->mak_skipped_segments = demux->mak_skipped_segments; // ' + MARKER + '\n'
     '    return true;\n'
@@ -348,6 +377,31 @@ CACHE_RESUME_NEW = (
     '            switch_current_range(in, range);\n'
 )
 
+EXECUTE_SEEK = (
+    '    if (in->d_thread->desc->seek)\n'
+    '        in->d_thread->desc->seek(in->d_thread, pts, flags);\n'
+)
+
+EXECUTE_SEEK_NEW = (
+    '    // ' + MARKER + ': after a read error of the stream, a seek of the\n'
+    '    // demuxer tries the read again, whatever the demuxer (lavf, mkv,\n'
+    '    // raw) and whatever asked for it (the user, a cache range resumed):\n'
+    '    // the stream opens the protocol again at its next read. The demuxer\n'
+    '    // may not move the stream at all, when the target is in its buffer.\n'
+    '    if (in->d_thread->stream && in->d_thread->stream->mak_reopen)\n'
+    '        in->d_thread->stream->mak_retry = true;\n'
+    '\n'
+    + EXECUTE_SEEK
+)
+
+EOF_CACHED = '            r->eof_cached |= range->is_eof;\n'
+
+EOF_CACHED_NEW = (
+    '            // ' + MARKER + ': a range that ends on a read error does not\n'
+    '            // hold the end of the file.\n'
+    '            r->eof_cached |= range->is_eof && !range->mak_read_error;\n'
+)
+
 READER_STATE_INIT = (
     '        .file_cache_bytes = in->cache ? demux_cache_get_size(in->cache) : -1,\n'
 )
@@ -375,24 +429,6 @@ LAVF_OPEN_NEW = LAVF_OPEN + (
     '    int64_t mak_skipped = 0;\n'
     '    priv->mak_skips = av_opt_get_int(avfc, "skipped_segments",\n'
     '                                     AV_OPT_SEARCH_CHILDREN, &mak_skipped) >= 0;\n'
-)
-
-LAVF_SEEK_START = (
-    '    int seek_stream = -1;\n'
-    '\n'
-    '    if (priv->any_ts_fixed)  {\n'
-)
-
-LAVF_SEEK_START_NEW = (
-    '    int seek_stream = -1;\n'
-    '\n'
-    '    // ' + MARKER + ': after a read error of the stream, this seek tries\n'
-    '    // the read again: the stream opens the protocol again at its next\n'
-    '    // read.\n'
-    '    if (priv->stream && priv->stream->mak_reopen)\n'
-    '        priv->stream->mak_retry = true;\n'
-    '\n'
-    '    if (priv->any_ts_fixed)  {\n'
 )
 
 LAVF_READ = (
@@ -425,14 +461,34 @@ UNINIT_DEMUXER = (
 
 UNINIT_DEMUXER_NEW = (
     '    // ' + MARKER + ': how the reading of the file ended, for\n'
-    '    // MPV_EVENT_END_FILE (demuxer-read-error, demuxer-skipped-segments).\n'
+    '    // MPV_EVENT_END_FILE (demuxer-read-error, demuxer-skipped-segments),\n'
+    '    // and the duration and time-pos of the entry then (-1 unknown, a\n'
+    '    // known position is never negative).\n'
     '    if (mpctx->demuxer) {\n'
     '        struct demux_reader_state mak_rs;\n'
     '        demux_get_reader_state(mpctx->demuxer, &mak_rs);\n'
     '        end_event.mak_read_error = mak_rs.mak_read_error;\n'
     '        end_event.mak_skipped_segments = mak_rs.mak_skipped_segments;\n'
+    '        double mak_len = get_time_length(mpctx);\n'
+    '        double mak_pos = get_current_time(mpctx);\n'
+    '        end_event.mak_duration = mak_len >= 0 ? mak_len : -1;\n'
+    '        end_event.mak_position = mak_pos != MP_NOPTS_VALUE ? MPMAX(mak_pos, 0) : -1;\n'
     '    }\n'
     + UNINIT_DEMUXER
+)
+
+END_EVENT_INIT = (
+    '    mpv_event_end_file end_event = {\n'
+    '        .playlist_entry_id = start_event.playlist_entry_id,\n'
+    '    };\n'
+)
+
+END_EVENT_INIT_NEW = (
+    '    mpv_event_end_file end_event = {\n'
+    '        .playlist_entry_id = start_event.playlist_entry_id,\n'
+    '        .mak_duration = -1, // ' + MARKER + ': unknown until set\n'
+    '        .mak_position = -1,\n'
+    '    };\n'
 )
 
 COMMAND_GETTERS = (
@@ -473,6 +529,10 @@ CLIENT_NODE_NEW = CLIENT_NODE + (
     '        // ' + MARKER + '\n'
     '        node_map_add_flag(dst, "read_error", eef->mak_read_error);\n'
     '        node_map_add_int64(dst, "skipped_segments", eef->mak_skipped_segments);\n'
+    '        if (eef->mak_duration >= 0)\n'
+    '            node_map_add_double(dst, "duration", eef->mak_duration);\n'
+    '        if (eef->mak_position >= 0)\n'
+    '            node_map_add_double(dst, "position", eef->mak_position);\n'
 )
 
 END_FILE_STRUCT = (
@@ -499,18 +559,23 @@ def apply(p):
         ('struct demux_cached_range is_eof', RANGE_EOF, RANGE_EOF_NEW),
         ('struct demux_internal eof', INTERNAL_EOF, INTERNAL_EOF_NEW),
         ('attempt_range_joining', RANGE_JOIN, RANGE_JOIN_NEW),
+        ('read_packet eof', READ_PACKET_EOF, READ_PACKET_EOF_NEW),
         ('read_packet end', READ_PACKET_END, READ_PACKET_END_NEW),
         ('find_cache_seek_range', CACHE_RANGE, CACHE_RANGE_NEW),
         ('execute_cache_seek', CACHE_RESUME, CACHE_RESUME_NEW),
+        ('execute_seek', EXECUTE_SEEK, EXECUTE_SEEK_NEW),
         ('demux_get_reader_state', READER_STATE_INIT, READER_STATE_INIT_NEW),
+        ('demux_get_reader_state eof_cached', EOF_CACHED, EOF_CACHED_NEW),
     ])
     p.edits(DEMUX_LAVF, [
         ('lavf_priv_t', LAVF_PRIV, LAVF_PRIV_NEW),
         ('demux_open_lavf', LAVF_OPEN, LAVF_OPEN_NEW),
         ('demux_lavf_read_packet', LAVF_READ, LAVF_READ_NEW),
-        ('demux_seek_lavf', LAVF_SEEK_START, LAVF_SEEK_START_NEW),
     ])
-    p.edits(LOADFILE, [('play_current_file end', UNINIT_DEMUXER, UNINIT_DEMUXER_NEW)])
+    p.edits(LOADFILE, [
+        ('play_current_file end_event', END_EVENT_INIT, END_EVENT_INIT_NEW),
+        ('play_current_file end', UNINIT_DEMUXER, UNINIT_DEMUXER_NEW),
+    ])
     p.edits(COMMAND, [
         ('property getters', COMMAND_GETTERS,
          p.asset('read_error/read_error_command_insert.c') + COMMAND_GETTERS),

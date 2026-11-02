@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 env:
-  LIBS_RUN: ${{ inputs.libs_run || '39769294284' }}
+  LIBS_RUN: ${{ inputs.libs_run || '41422329285' }}
   KIT_REPO: ales-drnz/mpv_audio_kit
   KIT_REF: ${{ inputs.kit_ref || 'main' }}
   GH_TOKEN: ${{ github.token }}

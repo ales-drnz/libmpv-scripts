@@ -16,11 +16,19 @@ reinit_audio_filters already issues a refresh seek when the rebuild drops
 0.2 s or more of buffered audio while playing. This patch tracks, per user
 filter, an EOF that went in and has not come out, flags the chain when such
 a filter is freed, and makes reinit_audio_filters refresh-seek in that case
-too, in any state but the end of playback, so the decoder produces the tail
-and its EOF again. That includes the time between a seek and the restart of
-playback: a filter with a long look-ahead (dynaudnorm) takes a short file
-whole, EOF included, before it outputs, and a filter change then left the
-audio stalled after the little it had already passed on.
+too, in any state but the end of playback. That includes the time between
+a seek and the restart of playback: a filter with a long look-ahead
+(dynaudnorm) takes a short file whole, EOF included, before it outputs, and
+a filter change then left the audio stalled after the little it had already
+passed on.
+
+When the stream can seek (or its cache holds the position), the refresh
+seek decodes the tail and its EOF again. When it cannot (a live PCM
+source, a stream without byte ranges and no seekable cache), the seek
+fails: mp_seek then resets the audio decoder alone and connects it to the
+chain again, so it reads the EOF the demuxer repeats and sends it on.
+The audio the freed filter held is lost then, but the file ends instead
+of stalling.
 
 Usage: patch_chain_eof.py <mpv source dir>
 """
@@ -89,6 +97,31 @@ def apply(p):
         ),
     ])
 
+    p.edits("player/core.h", [(
+        "    unsigned flags; // MPSEEK_FLAG_*\n};\n",
+        "    unsigned flags; // MPSEEK_FLAG_*\n"
+        f"    // {MARKER}: a refresh for an EOF a filter change dropped.\n"
+        "    bool mak_eof;\n};\n",
+    )])
+
+    p.edits("player/playloop.c", [(
+        "    if (!demux_seek(mpctx->demuxer, demux_pts, demux_flags)) {\n",
+        "    if (!demux_seek(mpctx->demuxer, demux_pts, demux_flags)) {\n"
+        f"        // {MARKER}: the refresh for a dropped EOF cannot seek. The\n"
+        "        // demuxer repeats its EOF: a reset decoder reads it again, and\n"
+        "        // the new connection makes the chain ask the decoder again.\n"
+        "        struct ao_chain *eof_c = mpctx->ao_chain;\n"
+        "        struct track *eof_t = eof_c ? eof_c->track : NULL;\n"
+        "        if (seek.mak_eof && eof_t && eof_t->dec && eof_c->dec_src) {\n"
+        "            MP_VERBOSE(mpctx, \"Cannot refresh, resending the audio EOF.\\n\");\n"
+        "            mp_filter_reset(eof_t->dec->f);\n"
+        "            mp_pin_disconnect(eof_c->filter->f->pins[0]);\n"
+        "            mp_pin_connect(eof_c->filter->f->pins[0], eof_c->dec_src);\n"
+        "            mp_wakeup_core(mpctx);\n"
+        "            return;\n"
+        "        }\n",
+    )])
+
     p.edits("player/audio.c", [(
         "    if (mpctx->audio_status == STATUS_PLAYING && delay - ndelay >= 0.2)\n"
         "        issue_refresh_seek(mpctx, MPSEEK_EXACT);\n",
@@ -96,12 +129,16 @@ def apply(p):
         "    // send again: without the refresh the file would never end. That\n"
         "    // holds before playback restarts too: right after a seek a filter\n"
         "    // with a long look-ahead (dynaudnorm) can hold the rest of a short\n"
-        "    // file and its EOF, and the refresh then repeats the seek.\n"
-        "    bool dropped_eof = ao_c->filter->dropped_eof;\n"
+        "    // file and its EOF, and the refresh then repeats the seek. A stream\n"
+        "    // that cannot seek gets its EOF from the decoder again (mp_seek).\n"
+        "    bool dropped_eof = ao_c->filter->dropped_eof &&\n"
+        "                       mpctx->audio_status != STATUS_EOF;\n"
         "    ao_c->filter->dropped_eof = false;\n"
         "    if ((mpctx->audio_status == STATUS_PLAYING && delay - ndelay >= 0.2) ||\n"
-        "        (dropped_eof && mpctx->audio_status != STATUS_EOF))\n"
-        "        issue_refresh_seek(mpctx, MPSEEK_EXACT);\n",
+        "        dropped_eof)\n"
+        "        issue_refresh_seek(mpctx, MPSEEK_EXACT);\n"
+        "    if (dropped_eof && mpctx->seek.type)\n"
+        "        mpctx->seek.mak_eof = true;\n",
     )])
 
 

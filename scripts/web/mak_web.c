@@ -30,7 +30,7 @@
  * removed or changed, the layout table below, the wakeup bridge, the API of
  * Module.makWebAudio or the makblob:// scheme. build_libmpv_web.sh writes
  * it into build_web.json, and the manifest lists it. */
-#define MAK_WEB_ABI 1
+#define MAK_WEB_ABI 2
 
 __attribute__((constructor)) static void mak_web_one_cpu(void)
 {
@@ -102,15 +102,19 @@ EMSCRIPTEN_KEEPALIVE int mak_web_abi_version(void)
     return MAK_WEB_ABI;
 }
 
-/* The two fields patch_read_error.py adds at the end of mpv_event_end_file.
+/* The four fields patch_read_error.py adds at the end of mpv_event_end_file.
  * build_libmpv_web.sh defines MAK_WEB_READ_ERROR when the archive has the
- * patch; without it the table gives 0 for both, where no field can sit. */
+ * patch; without it the table gives 0 for each, where no field can sit. */
 #ifdef MAK_WEB_READ_ERROR
 #define MAK_WEB_END_FILE_READ_ERROR offsetof(mpv_event_end_file, mak_read_error)
 #define MAK_WEB_END_FILE_SKIPPED offsetof(mpv_event_end_file, mak_skipped_segments)
+#define MAK_WEB_END_FILE_DURATION offsetof(mpv_event_end_file, mak_duration)
+#define MAK_WEB_END_FILE_POSITION offsetof(mpv_event_end_file, mak_position)
 #else
 #define MAK_WEB_END_FILE_READ_ERROR 0
 #define MAK_WEB_END_FILE_SKIPPED 0
+#define MAK_WEB_END_FILE_DURATION 0
+#define MAK_WEB_END_FILE_POSITION 0
 #endif
 
 /* sizeof and offsetof of the structs the JS side reads, in this order. The
@@ -133,6 +137,7 @@ EMSCRIPTEN_KEEPALIVE const int *mak_web_layout(void)
         offsetof(mpv_event_end_file, playlist_insert_id),
         offsetof(mpv_event_end_file, playlist_insert_num_entries),
         MAK_WEB_END_FILE_READ_ERROR, MAK_WEB_END_FILE_SKIPPED,
+        MAK_WEB_END_FILE_DURATION, MAK_WEB_END_FILE_POSITION,
         sizeof(mpv_event_hook), offsetof(mpv_event_hook, id),
         -1,
     };
