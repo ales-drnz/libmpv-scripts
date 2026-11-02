@@ -28,5 +28,5 @@ ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269  https://source
 64c1954570f1cd57f8570a57e51fb0249b57bb90  https://code.videolan.org/videolan/libplacebo.git#v6.338.2
 1fd3c7bde7b943fe8985c893310b5269a09b46c5  https://code.videolan.org/videolan/libplacebo.git#v7.349.0
 b9444620ba7f26ed216a663bf2282a9427e36c36  https://github.com/sahlberg/libsmb2.git#v6.0.0
-38407510e232fed1b4bc642b5752f93295e6a8bca66df6557eb979ee159ccd91  emsdk:6.0.12/upstream/bin/clang
+38407510e232fed1b4bc642b5752f93295e6a8bca66df6557eb979ee159ccd91  emsdk:6.0.12/linux-x86_64/upstream/bin/clang
 5ccd3b66c9433389b0338706182197340bfdf241777cc8985821e7d150818e46  emsdk:6.0.12/upstream/emscripten/emcc.py

@@ -1070,7 +1070,7 @@ apply_ffmpeg_patches() {
 
   # advanced_editlist patch: idempotent (MARKER-guarded), safe on every build.
   if patch_on advanced_editlist; then
-    log "Patching FFmpeg mov demuxer to honor edit list on fragmented MP4..."
+    log "Patching FFmpeg mov demuxer: AAC priming of fragmented MP4, none cut at DASH segments..."
     python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_advanced_editlist.py" "$ffmpeg_dir"
     record_patch advanced_editlist
   else
