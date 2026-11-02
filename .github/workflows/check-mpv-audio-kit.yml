@@ -11,8 +11,9 @@ name: Check mpv_audio_kit
 #
 # Started by hand with the run, the kit's branch and the tags, or by a push
 # to a ci/ branch whose commit sets LIBS_RUN and KIT_REF below and names the
-# tags in its message. With no tag it runs the tests, the per file Windows
-# run, the app builds and the iOS simulator; '[full check]' adds the Android
+# tags in its message. With no tag it runs the tests on macOS, the Windows
+# run (each file on its own, then the whole suite), the app builds and the
+# iOS simulator; '[full check]' adds the Android
 # emulators, and '[android emu]', '[native]', '[cpu diag]', '[underrun diag]',
 # '[ios only]' and '[macos test only]' run just their part.
 #
@@ -53,8 +54,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # '[macos test only]' in the commit message runs just this job on macOS.
-        os: ${{ fromJSON(contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && '["macos-latest"]' || '["windows-latest", "macos-latest"]') }}
+        # '[macos test only]' in the commit message runs just this job.
+        # Windows runs the whole suite in windows-per-file.
+        os: [macos-latest]
     defaults:
       run:
         shell: bash
@@ -149,20 +151,25 @@ jobs:
             echo "rc=$rc assert=$assert $f $last" | tee -a ../summary.txt
           done
           true
+      # The only whole run on Windows: it finds what one file leaves to
+      # the next. Its result counts in the summary.
       - name: The whole suite in one run
         working-directory: kit
         run: |
           set +e
           flutter test -j 1 -r expanded 2>&1 | tee ../whole.log | tail -3
+          echo "rc=${PIPESTATUS[0]}" > ../whole-rc.txt
           true
       - name: Summary
         if: always()
         run: |
           tail -1 whole.log
+          grep -E '\[E\]$' whole.log | sort -u > failures-whole.txt || true
+          echo "Failing tests of the whole run:"; cat failures-whole.txt
           echo "Files with an assertion:"; grep -v 'assert=0' summary.txt || true
           # 79 is "No tests ran": a file whose @TestOn excludes Windows.
           echo "Files that did not pass:"; grep -vE 'rc=(0|79) ' summary.txt || true
-          ! grep -qvE 'rc=(0|79) ' summary.txt
+          ! grep -qvE 'rc=(0|79) ' summary.txt && grep -qx 'rc=0' whole-rc.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -170,6 +177,7 @@ jobs:
           path: |
             summary.txt
             whole.log
+            failures-whole.txt
             logs/
 
   build:
