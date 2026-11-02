@@ -1415,11 +1415,16 @@ void mak_scan_start(const char *url, double duration_secs,
      * waveform grows from playback on the same axis. mpv's own duration,
      * when it has one (a body with Content-Length from a server without
      * byte ranges), wins over the hint: the hint stands in for a length
-     * mpv does not know, and the axis follows the stream. [seekable] is
+     * mpv does not know, and the axis follows the stream. Not one lavf
+     * estimated from the bitrate (an MP3 without a Xing header, a length
+     * the server guessed, as Subsonic's estimateContentLength does): it
+     * can be far off, and a short one cut the waveform. [seekable] is
      * the stream's own: a stream that only seeks with force-seekable
      * still takes this branch. */
     if (is_http && !name_adaptive && !seekable && duration_hint > 0) {
-        double axis = duration_secs > 0 ? duration_secs : duration_hint;
+        bool estimated = demuxer && demuxer->mak_duration_estimated;
+        double axis = duration_secs > 0 && !estimated ? duration_secs
+                                                      : duration_hint;
         if (!mak_feed_start(new_gen, demuxer, audio, axis, true, url,
                             &track, global, log))
             mak_waveform_arm_progressive(new_gen, axis);

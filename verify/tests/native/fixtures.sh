@@ -26,6 +26,9 @@
 #             estimated duration overshoots
 #   hint.opus Ogg Opus at 128 kb/s, 30 s of pink noise (about 330 KB): read
 #             as a chunked stream, mpv knows no length for it
+#   est.mp3   VBR MP3 without a Xing header, 3 s of loud white noise then
+#             27 s of a quiet sine: lavf estimates 13 s from the bitrate of
+#             its first frames
 # playback/ (pcm_*, chapter_list_test, af_command_args_test): constant (DC)
 # files, so a sample tells which file it came from, 3 s each unless said
 #   p_st48.flac   +0.25, stereo, 48 kHz     p_mono48.flac +0.25, mono, 48 kHz
@@ -100,6 +103,12 @@ fi
 # A transcode served without a length (mpv_audio_kit #29).
 [[ -f "$d/hint.opus" ]] || ff -f lavfi -i "anoisesrc=color=pink:amplitude=0.5:sample_rate=48000:duration=30" \
   -ac 2 -c:a libopus -b:a 128k "$d/hint.opus"
+# A transcode whose length lavf estimates short (Subsonic's MP3 with an
+# estimated Content-Length).
+[[ -f "$d/est.mp3" ]] || ff -f lavfi -i "anoisesrc=color=white:amplitude=0.9:sample_rate=44100:duration=3" \
+  -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=27" \
+  -filter_complex "[1]volume=0.05[q];[0][q]concat=n=2:v=0:a=1" \
+  -ac 2 -c:a libmp3lame -q:a 4 -write_xing 0 "$d/est.mp3"
 
 d="$D/playback"; mkdir -p "$d"
 dc() { [[ -f "$d/$1" ]] || ff -f lavfi -i "aevalsrc=$2:s=$3:d=$4" -c:a flac "$d/$1"; }

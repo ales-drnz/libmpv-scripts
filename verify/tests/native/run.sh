@@ -89,7 +89,7 @@ CASES=(
   "lib analysis_hint_test analysis 60000::chunked exact short long none full nocache forced forcednone huge"
   "lib analysis_hint_test analysis 60000:165000:chunked cut"
   "lib analysis_hint_test analysis 600000 range"
-  "lib analysis_hint_test analysis 600000::norange known"
+  "lib analysis_hint_test analysis 600000::norange known estimate"
   "unit loudness_lock_test - - run"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek"

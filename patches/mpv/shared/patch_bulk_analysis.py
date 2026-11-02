@@ -172,7 +172,11 @@ Files patched
     audio/mak_scan.c       NEW — coordinator + workers + decode + classify
     audio/mak_feed.h/.c    NEW — cache-fed engine
     demux/mak_demux_feed.h/.c  NEW — packet feed queue
-    demux/demux.c          feed field, push, end of file, release, attach
+    demux/demux.c          feed field, push, end of file, release, attach,
+                           copy of the estimated duration flag
+    demux/demux.h          the estimated duration flag of struct demuxer
+    demux/demux_lavf.c     sets it when lavf took the duration from the
+                           bitrate
     player/loadfile.c      kicks `mak_scan_start` after FILE_LOADED, and
                            `mak_scan_file_closed` when the file closes
     player/command.c       property registration + getter/setter
@@ -387,12 +391,42 @@ MAIN_CREATE_PATCHED = (
 )
 
 
+# ─── demux/demux.h, demux/demux_lavf.c: an estimated duration ──────────
+
+# Whether lavf estimated the duration from the bitrate (an MP3 without a
+# Xing header, a body whose length a server guessed). The waveform of a
+# stream with a duration hint takes the hint over such a duration (see
+# mak_scan_start). Copied to the player's demuxer with the duration.
+# Pristine lines lifted from mpv 0.41.0.
+DEMUX_H_EDITS = [
+    ('demuxer field',
+     '    double duration;  // -1 if unknown\n',
+     '    double duration;  // -1 if unknown\n'
+     '    /* ' + MARKER + ' */\n'
+     '    bool mak_duration_estimated; // duration from the bitrate\n'),
+]
+
+DEMUX_LAVF_EDITS = [
+    ('duration set',
+     '    demuxer->duration = duration;\n',
+     '    demuxer->duration = duration;\n'
+     '    /* ' + MARKER + ' */\n'
+     '    demuxer->mak_duration_estimated =\n'
+     '        priv->avfc->duration_estimation_method == AVFMT_DURATION_FROM_BITRATE;\n'),
+]
+
+
 # ─── demux/demux.c ────────────────────────────────────────────────────
 
 # The packet feed of the cache-fed analysis (mak_demux_feed.h): the demuxer
 # owns one reference, pushes each new packet of the fed stream and its end of
 # file, and lets go when it is freed. Pristine lines lifted from mpv 0.41.0.
 DEMUX_EDITS = [
+    ('demux_copy estimated duration',
+     '    dst->duration = src->duration;\n',
+     '    dst->duration = src->duration;\n'
+     '    /* ' + MARKER + ' */\n'
+     '    dst->mak_duration_estimated = src->mak_duration_estimated;\n'),
     ('includes',
      '#include "packet_pool.h"',
      '#include "packet_pool.h"\n'
@@ -592,6 +626,8 @@ def apply(p):
     # after this patch, and redoes its edits on the fresh copies.
     for d, name in NEW_FILES:
         p.new_file(f'{d}/{name}', p.asset(f'bulk_analysis/{name}'))
+    p.edits('demux/demux.h', DEMUX_H_EDITS)
+    p.edits('demux/demux_lavf.c', DEMUX_LAVF_EDITS)
     if p.edits('demux/demux.c', DEMUX_EDITS):
         p.write('demux/demux.c', p.text('demux/demux.c').rstrip('\n') + '\n'
                 + p.asset('bulk_analysis/demux_feed_insert.c'))
