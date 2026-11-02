@@ -1,10 +1,11 @@
     /**
      * MAK_READ_ERROR_PATCH_V1 ─── an mpv_audio_kit extension
      * (libmpv-scripts patch_read_error.py). A libmpv without it has a
-     * shorter struct, which ends at playlist_insert_num_entries: read these
-     * four fields only from a libmpv that has the demuxer-read-error
-     * property (mpv_get_property() does not answer
-     * MPV_ERROR_PROPERTY_NOT_FOUND for it).
+     * shorter struct, which ends at playlist_insert_num_entries. Read
+     * these fields as far as the int64 property mak-end-file-fields says:
+     * 4 here. A libmpv without that property (libmpv-r20) has only
+     * mak_read_error and mak_skipped_segments when it has the
+     * demuxer-read-error property, else none of them.
      *
      * 1 if the reading of the file stopped on a read error (a connection
      * that dropped, a server that closed before the length it announced)

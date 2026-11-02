@@ -38,3 +38,15 @@ static int mp_property_demuxer_skipped_segments(void *ctx,
     return m_property_int64_ro(action, arg, s.mak_skipped_segments);
 }
 
+
+/* MAK_READ_ERROR_PATCH_V1 ─── read-only int64: how many mak_ fields
+ * MPV_EVENT_END_FILE carries, 4 (mak_read_error, mak_skipped_segments,
+ * mak_duration, mak_position). A client reads a field only when its
+ * number is within this one; a libmpv without the property has 2 (r20:
+ * the first two, with demuxer-read-error) or none. Available without a
+ * file. */
+static int mp_property_mak_end_file_fields(void *ctx, struct m_property *prop,
+                                           int action, void *arg)
+{
+    return m_property_int64_ro(action, arg, 4);
+}

@@ -64,9 +64,10 @@ same end, the same playlist advance, the same keep-open park.
     keeps its documented meaning (0 unless the reason is
     MPV_END_FILE_REASON_ERROR): a client that tests error or counts errors
     sees no change. The struct grows at the end, so a
-    client built against the upstream header reads it as before; a client
-    that reads the new fields checks first that the libmpv has the
-    demuxer-read-error property. The node form of the event (scripts,
+    client built against the upstream header reads it as before. A client
+    reads the new fields only as far as the mak-end-file-fields property
+    says (4); without it, mak_read_error and mak_skipped_segments only
+    when the libmpv has the demuxer-read-error property (libmpv-r20). The node form of the event (scripts,
     JSON IPC) gets read_error and skipped_segments, and duration and
     position when known.
 
@@ -92,7 +93,7 @@ Files patched
                                   arms the retry of the stream
     demux/demux_lavf.c            av_read_frame() errors, skipped_segments
     player/loadfile.c             the END_FILE fields
-    player/command.c              the two properties and their notification
+    player/command.c              the three properties, the notification
     player/client.c               the node form of END_FILE
     include/mpv/client.h          the END_FILE fields
 
@@ -501,6 +502,7 @@ COMMAND_TABLE_NEW = COMMAND_TABLE + (
     '    /* ' + MARKER + ' */\n'
     '    {"demuxer-read-error", mp_property_demuxer_read_error},\n'
     '    {"demuxer-skipped-segments", mp_property_demuxer_skipped_segments},\n'
+    '    {"mak-end-file-fields", mp_property_mak_end_file_fields},\n'
 )
 
 # The properties change when the demuxer stops reading, which the playloop

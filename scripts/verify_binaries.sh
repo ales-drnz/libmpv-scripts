@@ -186,7 +186,7 @@ EXPECTED_FORMATS=(
 #                       waveform-duration-hint (an option)
 #   loudness_scan     : loudness-scan-data, loudness-scan-enabled
 #   af_command_args   : af-command-saves-args
-#   read_error        : demuxer-read-error, demuxer-skipped-segments
+#   read_error        : demuxer-read-error, demuxer-skipped-segments, mak-end-file-fields
 MPV_PATCHED_PROPS=(
   prefetch-state prefetch-cache-duration
   prefetch-open-filename prefetch-playlist-entry-id
@@ -197,7 +197,7 @@ MPV_PATCHED_PROPS=(
   waveform-data waveform-enabled waveform-duration-hint
   loudness-scan-data loudness-scan-enabled
   af-command-saves-args
-  demuxer-read-error demuxer-skipped-segments
+  demuxer-read-error demuxer-skipped-segments mak-end-file-fields
 )
 
 # mak_frag_editlist is the option patch_ffmpeg_advanced_editlist.py adds to
