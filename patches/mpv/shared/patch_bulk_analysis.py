@@ -127,17 +127,20 @@ has to care which path produced the envelope:
     Content-Length). The client sets the per-file option
     `waveform-duration-hint` (seconds, 0 for none) to the length it knows,
     and the cache feed above decodes the stream with that length as its
-    axis, `decoding` while the cache fills. The pass ends at the first of
-    the end of the stream and the hinted length, so a wrong hint still ends
-    `ready`: a short one covers the hint and leaves the rest of the stream
-    out; a long one ends at the end of the stream, its bins trimmed after
-    the last one filled as for a duration that overshoots (the reader
-    leaves them out, `total_bins` keeps the hinted axis). A pass that
-    cannot be clean, or that ends on a read error (the connection dropped
-    before the end), grows from playback on the hinted axis instead of
-    opening the stream again, which would start a second transcode, and
-    the loudness scan reports unavailable. Not read for any other source;
-    without a hint the stream goes to one of the two strategies below.
+    axis, `decoding` while the cache fills. A duration mpv knows
+    (Content-Length from a server without byte ranges) wins over the hint,
+    and a stream that only seeks with `force-seekable` counts as one that
+    cannot. The pass ends at the first of the end of the stream and the
+    hinted length, so a wrong hint still ends `ready`: a short one covers
+    the hint and leaves the rest of the stream out; a long one ends at the
+    end of the stream, its bins trimmed after the last one filled as for a
+    duration that overshoots (the reader leaves them out, `total_bins`
+    keeps the hinted axis). A pass that cannot be clean, or that ends on a
+    read error (the connection dropped before the end), grows from playback
+    on the hinted axis instead of opening the stream again, which would
+    start a second transcode, and the loudness scan reports unavailable.
+    Not read for any other source; without a hint the stream goes to one
+    of the two strategies below.
 
   * **Unknown duration** (true live): no fixed `[0, total]` axis exists, so
     state `rolling` — a sliding window of ABSOLUTE media-time bins, grown by
@@ -253,7 +256,8 @@ LOADFILE_NOTIFY_PATCHED = (
     '                   mpctx->opts->mak_waveform_duration_hint,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->filetype : NULL,\n'
     '                   mpctx->demuxer ? mpctx->demuxer->is_network : false,\n'
-    '                   mpctx->demuxer ? mpctx->demuxer->seekable : false,\n'
+    '                   mpctx->demuxer ? mpctx->demuxer->seekable &&\n'
+    '                       !mpctx->demuxer->partially_seekable : false,\n'
     '                   mpctx->global, mpctx->log, mpctx->demuxer,\n'
     '                   mpctx->current_track[0][STREAM_AUDIO]\n'
     '                       ? mpctx->current_track[0][STREAM_AUDIO]->stream\n'

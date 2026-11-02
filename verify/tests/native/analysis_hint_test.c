@@ -30,9 +30,15 @@
 //          no end of the stream. Not ready, no loudness of half the
 //          stream: grown from playback on the 30 s axis, the loudness
 //          scan unavailable, one GET, and eof-cached never yes.
+//   forced  hint 30 s with force-seekable: a stream that only seeks on
+//          request is decoded from the cache as in exact, with one GET.
+//   forcednone  no hint, with force-seekable: rolls as in none, one GET.
 //   range  b.flac (30 s) with byte ranges at 600000 bytes a second and a
 //          hint of 10 s: a seekable file does not read the hint, ready on
 //          mpv's own 30 s.
+//   known  b.flac without byte ranges, with Content-Length (cannot seek,
+//          mpv knows its 30 s), hint 10 s: mpv's duration wins, ready on
+//          30 s with the loudness of the whole file, one GET.
 //
 // The FFmpeg of run.sh (the system one) decides the end of a chunked body
 // alone: FFmpeg 9 ends a whole one with an error and one cut inside a
@@ -87,32 +93,37 @@ static int eof_cached(mpv_handle *h)
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s exact|short|long|none|full|nocache|cut|range "
-                "<fixtures> <tmpdir>\n",
+        fprintf(stderr, "usage: %s exact|short|long|none|full|nocache|cut|forced|forcednone"
+                "|range|known <fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
     const char *mode = argv[1];
-    int range = !strcmp(mode, "range");
+    int range = !strcmp(mode, "range"), known = !strcmp(mode, "known");
     int cut = !strcmp(mode, "cut");
+    int forced = !strncmp(mode, "forced", 6);
     int grown = !strcmp(mode, "full") || !strcmp(mode, "nocache") || cut;
-    const char *hint = !strcmp(mode, "exact") || grown ? "30"
+    const char *hint = !strcmp(mode, "exact") || grown || !strcmp(mode, "forced") ? "30"
                      : !strcmp(mode, "short") ? "20" : !strcmp(mode, "long") ? "45"
-                     : range ? "10" : NULL;
+                     : range || known ? "10" : NULL;
+    // The modes that roll from playback: no hint.
+    int rolls = !hint;
     char url[256], opt[64], path[1100];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s",
              getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0",
-             range ? "b.flac" : "hint.opus");
+             range || known ? "b.flac" : "hint.opus");
     snprintf(opt, sizeof opt, "waveform-duration-hint=%s", hint ? hint : "");
     snprintf(path, sizeof path, "%s/hint.opus", argv[2]);
     struct stat st;
-    if (!range && stat(path, &st) == 0)
+    if (!range && !known && stat(path, &st) == 0)
         chunked_size = st.st_size;
     mpv_handle *h = an_create();
     if (!strcmp(mode, "full"))
         mpv_set_option_string(h, "demuxer-max-bytes", "100KiB");
     if (!strcmp(mode, "nocache"))
         mpv_set_option_string(h, "cache", "no");
+    if (forced)
+        mpv_set_option_string(h, "force-seekable", "yes");
     mpv_initialize(h);
     an_flag(h, "waveform-enabled", 1);
     an_flag(h, "loudness-scan-enabled", 1);
@@ -140,7 +151,7 @@ int main(int argc, char **argv)
             break;
         // Without a hint nothing ends: give up a while after the whole
         // stream is cached.
-        if (!hint && t_eof && mt_now() - t_eof > 1.5)
+        if (rolls && t_eof && mt_now() - t_eof > 1.5)
             break;
         // Nor once it grows from playback: give up a while after.
         if (!strcmp(w.state, "progressive") && an_final_loud(l.state) && !t_grown)
@@ -187,14 +198,15 @@ int main(int argc, char **argv)
             mt_check(rerr == 1, "the cut is a read error (%d)", rerr);
             mt_check(!t_eof, "eof-cached never yes for the cut stream");
         }
-    } else if (!hint) {
+    } else if (rolls) {
         mt_check(t_eof > 0, "the whole stream reached the cache");
         mt_check(!strcmp(w.state, "rolling"), "the waveform rolls from playback (%s)",
                  w.state);
         mt_check(!strcmp(l.state, "unavailable"), "the loudness scan is unavailable (%s)",
                  l.state);
+        mt_check(gets == 1, "no second request (%d GETs from the start)", gets);
     } else {
-        int64_t want_us = range ? 30000000 : (int64_t)atoi(hint) * 1000000;
+        int64_t want_us = range || known ? 30000000 : (int64_t)atoi(hint) * 1000000;
         mt_check(!strcmp(w.state, "ready"), "the waveform is ready (%s)", w.state);
         mt_check(!other, "it reads decoding until it is ready (%d read %s)", other,
                  other ? other_state : "otherwise");
@@ -205,7 +217,7 @@ int main(int argc, char **argv)
         mt_check(!strcmp(l.state, "ready") && l.integrated > -30 && l.integrated < -10,
                  "the loudness is ready (%s, %.2f LUFS)", l.state, l.integrated);
         mt_check(gets == 1, "no second download (%d GETs from the start)", gets);
-        if (!strcmp(mode, "exact") || !strcmp(mode, "range"))
+        if (!strcmp(mode, "exact") || forced || range || known)
             mt_check(w.bins >= w.total_bins - 2, "the axis is filled to its end "
                      "(%d of %lld bins)", w.bins, (long long)w.total_bins);
         if (!strcmp(mode, "exact"))

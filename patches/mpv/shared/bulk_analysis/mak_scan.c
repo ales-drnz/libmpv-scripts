@@ -1412,11 +1412,17 @@ void mak_scan_start(const char *url, double duration_secs,
      * cache feed decodes it on that axis, as for a seekable HTTP file below,
      * instead of growing it from playback. Never re-opened: a second request
      * would start a second transcode. When the cache cannot be fed, the
-     * waveform grows from playback on the same axis. */
+     * waveform grows from playback on the same axis. mpv's own duration,
+     * when it has one (a body with Content-Length from a server without
+     * byte ranges), wins over the hint: the hint stands in for a length
+     * mpv does not know, and the axis follows the stream. [seekable] is
+     * the stream's own: a stream that only seeks with force-seekable
+     * still takes this branch. */
     if (is_http && !name_adaptive && !seekable && duration_hint > 0) {
-        if (!mak_feed_start(new_gen, demuxer, audio, duration_hint, true, url,
+        double axis = duration_secs > 0 ? duration_secs : duration_hint;
+        if (!mak_feed_start(new_gen, demuxer, audio, axis, true, url,
                             &track, global, log))
-            mak_waveform_arm_progressive(new_gen, duration_hint);
+            mak_waveform_arm_progressive(new_gen, axis);
         return;
     }
 
