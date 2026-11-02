@@ -60,6 +60,13 @@
 //             offset, and the seek to 2.9 s, 3 KB past the cut, is short
 //             enough to stay in the avio of the demuxer, which must not
 //             stop on the end it kept from the cut.
+//   retrymka, retrybackmka, retrywebm, retrybackwebm, retrycues,
+//   retrybackcues  retry and retryback with n.mka (FLAC in Matroska),
+//             n.webm (Opus in WebM) and nf.webm (the same with its Cues
+//             before the cluster), cut at 2/3: mpv's own Matroska
+//             demuxer, not lavf. The 46 KB of the WebM files stay in the
+//             stream buffer, so the seek moves no connection: the seek of
+//             the demuxer must still try the read again.
 //   hls       hls.m3u8 (n.flac in 1 s segments) whose seg2.ts answers 404,
 //             then short.flac: END_FILE of the stream has
 //             mak_skipped_segments 1 and mak_read_error 0 (a skipped
@@ -310,14 +317,18 @@ int main(int argc, char **argv)
 {
     static const char *modes[] = {"cutlist", "cutpark", "norange", "whole", "vbr", "resume",
                                   "seekback", "hls", "retry", "retryback", "retrynocache",
-                                  "retrybacknocache", "retrymp3", NULL};
+                                  "retrybacknocache", "retrymp3", "retrymka", "retrybackmka",
+                                  "retrywebm", "retrybackwebm", "retrycues", "retrybackcues",
+                                  NULL};
     const char *mode = argc > 1 ? argv[1] : "";
     int known = 0;
     for (int n = 0; modes[n]; n++)
         known |= !strcmp(mode, modes[n]);
     if (argc < 4 || !known) {
         fprintf(stderr, "usage: %s cutlist|cutpark|norange|whole|vbr|resume|seekback|hls|retry"
-                "|retryback|retrynocache|retrybacknocache|retrymp3 <fixtures> <tmpdir>\n", argv[0]);
+                "|retryback|retrynocache|retrybacknocache|retrymp3|retrymka|retrybackmka"
+                "|retrywebm|retrybackwebm|retrycues|retrybackcues <fixtures> <tmpdir>\n",
+                argv[0]);
         return 2;
     }
     int m_cutlist = !strcmp(mode, "cutlist"), m_cutpark = !strcmp(mode, "cutpark"),
@@ -330,10 +341,13 @@ int main(int argc, char **argv)
     int retry_back = m_retry && strstr(mode, "back") != NULL;
     int retry_nocache = m_retry && strstr(mode, "nocache") != NULL;
     int retry_mp3 = !strcmp(mode, "retrymp3");
+    const char *retry_file = !m_retry ? NULL : retry_mp3 ? "n.mp3"
+                           : strstr(mode, "mka") ? "n.mka" : strstr(mode, "webm") ? "n.webm"
+                           : strstr(mode, "cues") ? "nf.webm" : NULL;
     const char *port = getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0";
     char url[256], local[1024];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s", port,
-             m_vbr ? "vbr.mp3" : m_hls ? "hls.m3u8" : retry_mp3 ? "n.mp3" : "n.flac");
+             m_vbr ? "vbr.mp3" : m_hls ? "hls.m3u8" : retry_file ? retry_file : "n.flac");
     snprintf(local, sizeof local, "%s/short.flac", argv[2]);
     int playlist = m_cutlist || m_whole || m_hls;
     int park = m_cutpark || m_whole || m_vbr || m_resume || m_seekback || m_retry;

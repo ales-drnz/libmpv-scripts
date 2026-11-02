@@ -23,8 +23,9 @@ same end, the same playlist advance, the same keep-open park.
     keeps, so a read that resumes and reaches the real end is not taken
     for the old error.
   - After a read error a seek of the demuxer tries the read again
-    (stream->mak_reopen, armed by demux_lavf.c with mak_retry); a read
-    without one fails with the error, as before. avio keeps its end
+    (stream->mak_reopen, armed by execute_seek() of demux.c with
+    mak_retry, for every demuxer: lavf, mpv's own Matroska and WebM, raw);
+    a read without one fails with the error, as before. avio keeps its end
     until a seek that reads, serves a seek into its buffer or a short one
     forward from the old connection, and http.c answers a seek to the
     offset it stands at without a new request. So stream_lavf.c seeks the
@@ -77,9 +78,9 @@ Files patched
                                   on a seek, the protocol opened again
     demux/demux.h                 struct demuxer and demux_reader_state
     demux/demux.c                 kept with eof, read by the reader state,
-                                  the cached range of a read error
-    demux/demux_lavf.c            av_read_frame() errors, skipped_segments,
-                                  a seek arms the retry of the stream
+                                  the cached range of a read error, a seek
+                                  arms the retry of the stream
+    demux/demux_lavf.c            av_read_frame() errors, skipped_segments
     player/loadfile.c             the END_FILE fields
     player/command.c              the two properties and their notification
     player/client.c               the node form of END_FILE
@@ -124,7 +125,8 @@ STREAM_FIELD_NEW = STREAM_FIELD + (
     '    // ' + MARKER + ': mak_reopen, a read of the protocol failed with an\n'
     '    // error and it has not opened again since: stream_lavf.c seeks the\n'
     '    // protocol itself, and fails every read. mak_retry, a seek of the\n'
-    '    // demuxer since (demux_lavf.c): the next read opens it again first.\n'
+    '    // demuxer since (execute_seek of demux.c): the next read opens it\n'
+    '    // again first.\n'
     '    bool mak_reopen, mak_retry;\n'
 )
 
@@ -348,6 +350,23 @@ CACHE_RESUME_NEW = (
     '            switch_current_range(in, range);\n'
 )
 
+EXECUTE_SEEK = (
+    '    if (in->d_thread->desc->seek)\n'
+    '        in->d_thread->desc->seek(in->d_thread, pts, flags);\n'
+)
+
+EXECUTE_SEEK_NEW = (
+    '    // ' + MARKER + ': after a read error of the stream, a seek of the\n'
+    '    // demuxer tries the read again, whatever the demuxer (lavf, mkv,\n'
+    '    // raw) and whatever asked for it (the user, a cache range resumed):\n'
+    '    // the stream opens the protocol again at its next read. The demuxer\n'
+    '    // may not move the stream at all, when the target is in its buffer.\n'
+    '    if (in->d_thread->stream && in->d_thread->stream->mak_reopen)\n'
+    '        in->d_thread->stream->mak_retry = true;\n'
+    '\n'
+    + EXECUTE_SEEK
+)
+
 READER_STATE_INIT = (
     '        .file_cache_bytes = in->cache ? demux_cache_get_size(in->cache) : -1,\n'
 )
@@ -375,24 +394,6 @@ LAVF_OPEN_NEW = LAVF_OPEN + (
     '    int64_t mak_skipped = 0;\n'
     '    priv->mak_skips = av_opt_get_int(avfc, "skipped_segments",\n'
     '                                     AV_OPT_SEARCH_CHILDREN, &mak_skipped) >= 0;\n'
-)
-
-LAVF_SEEK_START = (
-    '    int seek_stream = -1;\n'
-    '\n'
-    '    if (priv->any_ts_fixed)  {\n'
-)
-
-LAVF_SEEK_START_NEW = (
-    '    int seek_stream = -1;\n'
-    '\n'
-    '    // ' + MARKER + ': after a read error of the stream, this seek tries\n'
-    '    // the read again: the stream opens the protocol again at its next\n'
-    '    // read.\n'
-    '    if (priv->stream && priv->stream->mak_reopen)\n'
-    '        priv->stream->mak_retry = true;\n'
-    '\n'
-    '    if (priv->any_ts_fixed)  {\n'
 )
 
 LAVF_READ = (
@@ -502,13 +503,13 @@ def apply(p):
         ('read_packet end', READ_PACKET_END, READ_PACKET_END_NEW),
         ('find_cache_seek_range', CACHE_RANGE, CACHE_RANGE_NEW),
         ('execute_cache_seek', CACHE_RESUME, CACHE_RESUME_NEW),
+        ('execute_seek', EXECUTE_SEEK, EXECUTE_SEEK_NEW),
         ('demux_get_reader_state', READER_STATE_INIT, READER_STATE_INIT_NEW),
     ])
     p.edits(DEMUX_LAVF, [
         ('lavf_priv_t', LAVF_PRIV, LAVF_PRIV_NEW),
         ('demux_open_lavf', LAVF_OPEN, LAVF_OPEN_NEW),
         ('demux_lavf_read_packet', LAVF_READ, LAVF_READ_NEW),
-        ('demux_seek_lavf', LAVF_SEEK_START, LAVF_SEEK_START_NEW),
     ])
     p.edits(LOADFILE, [('play_current_file end', UNINIT_DEMUXER, UNINIT_DEMUXER_NEW)])
     p.edits(COMMAND, [
