@@ -43,7 +43,8 @@ same end, the same playlist advance, the same keep-open park.
     struct demux_reader_state hands both to the player. A cached range
     that ends on a read error is no end of the file: a seek past it is a
     seek of the demuxer, and a seek into it resumes the demuxer at its
-    end, as for another range, so that the read is tried again there.
+    end, as for another range, so that the read is tried again there. Nor
+    does it count for eof-cached of demuxer-cache-state.
   - Two properties of the current file, unavailable without one:
     demuxer-read-error (flag) and demuxer-skipped-segments (int64). They
     change when the demuxer stops reading, before eof-reached, and are
@@ -367,6 +368,14 @@ EXECUTE_SEEK_NEW = (
     + EXECUTE_SEEK
 )
 
+EOF_CACHED = '            r->eof_cached |= range->is_eof;\n'
+
+EOF_CACHED_NEW = (
+    '            // ' + MARKER + ': a range that ends on a read error does not\n'
+    '            // hold the end of the file.\n'
+    '            r->eof_cached |= range->is_eof && !range->mak_read_error;\n'
+)
+
 READER_STATE_INIT = (
     '        .file_cache_bytes = in->cache ? demux_cache_get_size(in->cache) : -1,\n'
 )
@@ -505,6 +514,7 @@ def apply(p):
         ('execute_cache_seek', CACHE_RESUME, CACHE_RESUME_NEW),
         ('execute_seek', EXECUTE_SEEK, EXECUTE_SEEK_NEW),
         ('demux_get_reader_state', READER_STATE_INIT, READER_STATE_INIT_NEW),
+        ('demux_get_reader_state eof_cached', EOF_CACHED, EOF_CACHED_NEW),
     ])
     p.edits(DEMUX_LAVF, [
         ('lavf_priv_t', LAVF_PRIV, LAVF_PRIV_NEW),

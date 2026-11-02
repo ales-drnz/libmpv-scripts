@@ -76,6 +76,9 @@
 //             by network_test.sh): av_opt_get_int below stands in for it on
 //             an HLS demuxer, with the 1 segment the server dropped. Where
 //             the option exists the real count is read.
+// At each park on a read error with the seekable cache, eof-cached of
+// demuxer-cache-state reads no (the cached range ends on the error, not at
+// the end of the file), and yes at the real end.
 // A reply with an error status to the resume (503, 403), and a chunked
 // stream that stops before its last chunk, end as EOF in upstream http.c
 // whatever mpv does: patch_ffmpeg_http_read_errors.py, checked by
@@ -263,6 +266,20 @@ static int read_error_now(mpv_handle *h)
     return mpv_get_property(h, "demuxer-read-error", MPV_FORMAT_FLAG, &f) >= 0 ? f : -1;
 }
 
+// eof-cached of demuxer-cache-state now: 1, 0, or -1 when unavailable.
+static int eof_cached_now(mpv_handle *h)
+{
+    mpv_node n;
+    int f = -1;
+    if (mpv_get_property(h, "demuxer-cache-state", MPV_FORMAT_NODE, &n) < 0)
+        return -1;
+    mpv_node *v = pb_field(&n, "eof-cached");
+    if (v && v->format == MPV_FORMAT_FLAG)
+        f = v->u.flag;
+    mpv_free_node_contents(&n);
+    return f;
+}
+
 static int64_t skipped_now(mpv_handle *h)
 {
     int64_t n = -1;
@@ -426,6 +443,11 @@ int main(int argc, char **argv)
         mt_check(s.ends == last - 1, "no END_FILE at the park (%d)", s.ends);
         pos = park_pos(h, &s);
         printf("park: time-pos %.2f, demuxer-read-error %d\n", pos, now);
+        // The seekable cache holds the file up to the cut: no end of it.
+        int seekable_cache = m_cutpark || (m_retry && !retry_nocache);
+        if (seekable_cache)
+            mt_check(eof_cached_now(h) == 0, "eof-cached no at the park on the read error (%d)",
+                     eof_cached_now(h));
         if (m_cutpark || m_seekback || m_retry) {
             mt_check(now == 1, "demuxer-read-error yes at the park (%d)", now);
             mt_check(s.yes_seen, "demuxer-read-error notified yes");
@@ -471,6 +493,9 @@ int main(int argc, char **argv)
             pos = park_pos(h, &s);
             printf("park with the server down: time-pos %.2f, demuxer-read-error %d\n", pos, now);
             mt_check(now == 1, "demuxer-read-error yes while the server is down (%d)", now);
+            if (seekable_cache)
+                mt_check(eof_cached_now(h) == 0, "eof-cached no with the server down (%d)",
+                         eof_cached_now(h));
             if (retry_back && !retry_nocache)
                 mt_check(pos > 2.0 && pos < 3.2, "the cache played up to the cut, 2.7 s (%.2f)", pos);
             mt_check(http_get(port, "/up"), "the server is back (/up)");
@@ -484,6 +509,9 @@ int main(int argc, char **argv)
             mt_check(s.no_after_yes, "demuxer-read-error back to no once the read resumed");
             mt_check(now == 0, "demuxer-read-error no at the real end (%d)", now);
             mt_check(pos > 3.8, "the second park is at the real end (%.2f)", pos);
+            if (seekable_cache)
+                mt_check(eof_cached_now(h) == 1, "eof-cached yes at the real end (%d)",
+                         eof_cached_now(h));
         }
         int before = s.ends;
         mt_cmd(h, "stop", NULL, NULL, NULL);
