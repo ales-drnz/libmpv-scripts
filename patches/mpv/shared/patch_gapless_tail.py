@@ -29,8 +29,18 @@ output thread in the last 0.4 s of the last entry. gapless-audio=no does
 not show it: there the status stays DRAINING until the output stopped,
 and the recovery restarts it. Pull outputs (CoreAudio, AudioUnit, AAudio,
 WASAPI, PipeWire, AudioTrack) read the queue in their callback, which can
-run dry only once the queue is empty: they are not affected. Upstream mpv
-master (2026-10-29) has the same code.
+run dry only once the queue is empty: the underrun does not hit them.
+Upstream mpv master (2026-10-29) has the same code.
+
+A pull output parks early instead. ao_read_data() clears p->playing in
+the callback that reads the last sample, while the device still holds
+what it just read: end_time_ns, the time the callback gave for its last
+sample, is ahead (two periods on SDL, the device latency on PipeWire and
+AudioUnit). handle_keep_open() parks at once: time-pos stops short of the
+end by that much and keeps creeping while paused (ao_get_delay() counts
+end_time_ns down), and the pause resets the device with the tail in it.
+The checks of the park were also separate locked reads (playing, then the
+queue), which an output thread can change between.
 
 Fix
 ===
@@ -43,10 +53,15 @@ Fix
     (the existing path: warn, then ao_start() since out_eof is set), and
     "AO signaled EOF" requires that nothing is queued, so it no longer
     resets away a rest held in p->pending.
-  - player/playloop.c handle_keep_open(): no park while audio is queued.
+  - audio/out/buffer.c: ao_played_out(), the park signal in one locked
+    read: not playing, nothing queued, and for a pull output not paused
+    the device past end_time_ns. Otherwise it gives the time still to wait.
+  - player/playloop.c handle_keep_open(): no park before ao_played_out().
     fill_audio_out_buffers() runs first in the pass, but the output thread
     can stop between the two: then the next pass restarts it, and the park
-    comes when the output really played out.
+    comes when the output really played out. A pull output that read its
+    last sample sets a timeout for the end of its device, which nothing
+    else would wake the core for.
   - player/audio.c uninit_audio_out(): an output that stopped with audio
     queued is started again before the drain, so the end of a playlist
     without keep-open plays the tail too.
@@ -73,7 +88,9 @@ AO_H = [(
     'bool ao_is_playing(struct ao *ao);\n',
     'bool ao_is_playing(struct ao *ao);\n'
     f'// {MARKER}: samples still wait for the device.\n'
-    'bool ao_has_queued_audio(struct ao *ao);\n',
+    'bool ao_has_queued_audio(struct ao *ao);\n'
+    f'// {MARKER}: the output played all it was given.\n'
+    'bool ao_played_out(struct ao *ao, double *wait);\n',
 )]
 
 BUFFER_C = [(
@@ -104,6 +121,34 @@ BUFFER_C = [(
     '    mp_mutex_unlock(&p->lock);\n'
     '\n'
     '    return queued;\n'
+    '}\n'
+    '\n'
+    f'// {MARKER}: whether the output played all it was given, in one\n'
+    '// locked read: not playing, nothing queued, and for a pull output that\n'
+    '// is not paused the device past the last sample its callback read.\n'
+    '// Otherwise *wait (if set) is the time still to wait for that, 0 if\n'
+    '// the output still plays or waits for data.\n'
+    'bool ao_played_out(struct ao *ao, double *wait)\n'
+    '{\n'
+    '    struct buffer_state *p = ao->buffer_state;\n'
+    '    double left = 0;\n'
+    '\n'
+    '    mp_mutex_lock(&p->lock);\n'
+    '    bool done = !p->playing && mp_async_queue_get_samples(p->queue) <= 0 &&\n'
+    '                !(!ao->driver->write_frames && p->pending &&\n'
+    '                  mp_aframe_get_size(p->pending) > 0);\n'
+    '    if (done && !ao->driver->write && !p->paused) {\n'
+    '        int64_t now = mp_time_ns();\n'
+    '        if (p->end_time_ns > now) {\n'
+    '            left = MP_TIME_NS_TO_S(p->end_time_ns - now);\n'
+    '            done = false;\n'
+    '        }\n'
+    '    }\n'
+    '    mp_mutex_unlock(&p->lock);\n'
+    '\n'
+    '    if (wait)\n'
+    '        *wait = left;\n'
+    '    return done;\n'
     '}\n',
 )]
 
@@ -153,11 +198,19 @@ PLAYLOOP_C = [(
     '            if (mpctx->ao && ao_is_playing(mpctx->ao))\n'
     '                return;\n',
     '        if (opts->keep_open_pause) {\n'
-    f'            // {MARKER}: nor while audio is queued (the output\n'
-    '            // stopped on an underrun; the next pass starts it again).\n'
-    '            if (mpctx->ao && (ao_is_playing(mpctx->ao) ||\n'
-    '                (mpctx->ao_chain && ao_has_queued_audio(mpctx->ao))))\n'
-    '                return;\n',
+    f'            // {MARKER}: nor before the output played out: audio\n'
+    '            // still queued (it stopped on an underrun; the next pass\n'
+    '            // starts it again), or a pull device still playing the\n'
+    '            // last samples its callback read (woken at their end).\n'
+    '            double wait = 0;\n'
+    '            if (mpctx->ao && (mpctx->ao_chain\n'
+    '                    ? !ao_played_out(mpctx->ao, &wait)\n'
+    '                    : ao_is_playing(mpctx->ao)))\n'
+    '            {\n'
+    '                if (wait > 0)\n'
+    '                    mp_set_timeout(mpctx, wait);\n'
+    '                return;\n'
+    '            }\n',
 )]
 
 

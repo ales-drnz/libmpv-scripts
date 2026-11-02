@@ -623,7 +623,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
             libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev zlib1g-dev
+            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev
       - name: Fewer mmap random bits for ASan
         run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: mpv patches

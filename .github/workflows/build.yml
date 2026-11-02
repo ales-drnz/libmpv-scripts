@@ -450,7 +450,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
             libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev zlib1g-dev libssl-dev libxml2-dev openssl python3-venv
+            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev libssl-dev libxml2-dev openssl python3-venv
       # The ASan runtime of gcc 13 can crash at start with the 32 bits of
       # mmap randomness of newer kernels.
       - name: Fewer mmap random bits for ASan

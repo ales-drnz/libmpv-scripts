@@ -1,0 +1,5 @@
+# LeakSanitizer suppressions of the native tests.
+# SDL keeps what SDL_InitSubSystem allocated until SDL_Quit, which ao_sdl
+# never calls (gapless_tail_test pull).
+leak:libSDL2
+leak:libSDL3
