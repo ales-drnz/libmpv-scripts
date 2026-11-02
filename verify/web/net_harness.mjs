@@ -214,6 +214,55 @@ export async function runNetHarness(factory, env, log) {
       JSON.stringify(es.map((x) => [x.range, x.status, !!x.dropped])));
   }, { extra: { cache: 'no' } });
 
+  // ── a resume answered 416 before the end the file announced ─────────
+  // The file is not shorter than its size said: a read error, after the
+  // retries of reconnect_delay_max (mpv: 7, so about 11 s), as on native.
+  await run('truncated_416', async (core) => {
+    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&again=416&hold=1&tag=t416`);
+    await release('t416');
+    check(l.ok, 'truncated_416.loaded');
+    const e = await l.ended;
+    check(e && e.reason === END.EOF && e.readError === true, 'truncated_416.read_error',
+      JSON.stringify(e && { reason: e.reason, readError: e.readError }));
+    const es = await tagged('t416');
+    check(es.length >= 2 && es.slice(1).every((x) => x.status === 416), 'truncated_416.resume_refused',
+      JSON.stringify(es.map((x) => [x.range, x.status, !!x.dropped])));
+  }, { extra: { cache: 'no' } });
+
+  // ── the network gone for a while after a break: asked again, waiting ──
+  // As http.c with reconnect: the waits of reconnect_delay_max (0, 1, 3 s),
+  // a request that fails for the network included.
+  await run('reconnect_outage', async (core) => {
+    const l = await load(core, `${env.base}/media/drop/long_60s.flac?after=600000&hold=1&down=2.5&tag=outage`);
+    await release('outage');
+    check(l.ok, 'reconnect_outage.loaded');
+    const e = await l.ended;
+    check(e && e.reason === END.EOF && e.readError === false, 'reconnect_outage.eof',
+      JSON.stringify(e && { reason: e.reason, readError: e.readError }));
+    const size = (await env.fixture('long_60s.flac')).length;
+    const es = await tagged('outage');
+    const last = es[es.length - 1];
+    const from = last ? rangeStart(last) : -1;
+    check(es.length >= 3 && es[0].dropped && es.slice(1, -1).every((x) => x.unanswered) &&
+      from > 0 && from <= 600000 && last.bytes === size - from, 'reconnect_outage.rest_of_file',
+      JSON.stringify(es.map((x) => [x.range, x.bytes, !!x.dropped, !!x.unanswered])));
+  }, { extra: { cache: 'no' } });
+
+  // ── a server that caps each answer: the file is asked for piece by piece ──
+  // A 206 that ends before the size it announces is not the end of the file.
+  await run('limited', async (core) => {
+    const l = await load(core, `${env.base}/media/limited/long_60s.flac?tag=lim`);
+    check(l.ok, 'limited.loaded');
+    const e = await l.ended;
+    check(e && e.reason === END.EOF && e.readError === false, 'limited.eof',
+      JSON.stringify(e && { reason: e.reason, readError: e.readError }));
+    const size = (await env.fixture('long_60s.flac')).length;
+    const es = await tagged('lim');
+    const got = es.reduce((n, x) => n + x.bytes, 0);
+    check(got === size && es.length >= Math.ceil(size / 32768), 'limited.every_byte',
+      `${got} of ${size} bytes in ${es.length} answers`);
+  }, { extra: { cache: 'no' } });
+
   // ── HLS with a segment that is not there: one segment skipped ─────────
   await run('hls_gap', async (core) => {
     const l = await load(core, `${env.base}/media/range/hls/gap.m3u8?tag=gap`);
@@ -342,6 +391,25 @@ export async function runNetHarness(factory, env, log) {
     check(hops.length === 1 && finals.some((x) => x > 1500000), 'redirect.seek_on_final_url',
       `redirects ${hops.length}, final Range starts ${finals.join(',')}`);
   }, { extra: PAUSED });
+  // A signed URL behind a redirect that expires before a seek: the seek asks
+  // the original URL again, as http.c does on every seek.
+  await run('redirect_expired', async (core) => {
+    const to = encodeURIComponent('/media/signed/long_60s.flac?tag=rexp2&expire=2');
+    const l = await load(core, `${env.base}/media/redirect/long_60s.flac?tag=rexp&sign=1&to=${to}`);
+    check(l.ok, 'redirect_expired.loaded');
+    await sleep(3000);
+    const s = await seekTo(core, 50);
+    check(s.ok && Math.abs(s.pos - 50) < 1.5, 'redirect_expired.seek', `time-pos ${s.pos}`);
+    await resume(core);
+    const e = await l.ended;
+    check(e && e.reason === END.EOF && e.readError === false, 'redirect_expired.eof',
+      JSON.stringify(e && { reason: e.reason, readError: e.readError }));
+    const hops = await tagged('rexp');
+    const signed = await tagged('rexp2');
+    check(hops.length >= 2 && signed.some((x) => x.status === 403) &&
+      signed.some((x) => x.status === 206 && rangeStart(x) > 1500000), 'redirect_expired.original_url_again',
+      JSON.stringify({ hops: hops.length, signed: signed.map((x) => [x.range, x.status]) }));
+  }, { extra: PAUSED });
   if (env.browser) {
     await run('redirect_cross', async (core) => {
       const to = encodeURIComponent(`${env.cross}/media/range/mp3_44100_stereo.mp3?tag=redirx2`);
@@ -408,6 +476,21 @@ export async function runNetHarness(factory, env, log) {
     check(g.length && g[0].xmak === 'hello', 'headers_same.custom_header', String(g[0] && g[0].xmak));
     measure('headers_same.user_agent', JSON.stringify(g[0] && g[0].ua));
   }, { extra: hdrCore });
+  // Credentials in the URL: fetch refuses them, webio sends them as Basic
+  // auth (http.c does after a 401), and no message of webio shows them.
+  await run('credentials', async (core) => {
+    // basic: the header the server wants, the base64 of user:s3cr!t.
+    const url = `${env.base.replace('://', '://user:s3cr%21t@')}/media/auth/mp3_44100_stereo.mp3?basic=dXNlcjpzM2NyIXQ%3D&tag=cred`;
+    const l = await load(core, url);
+    check(l.ok, 'credentials.loaded', logs(core, /webio/).slice(-2).join(' | '));
+    const e = await l.ended;
+    check(e && e.reason === END.EOF, 'credentials.eof', String(e && e.reason));
+    const g = (await tagged('cred')).filter((x) => x.method === 'GET');
+    check(g.length >= 1 && g.every((x) => x.status === 206), 'credentials.basic_auth',
+      JSON.stringify(g.map((x) => [x.status, x.auth])));
+    const shown = logs(core, /webio/).filter((x) => /s3cr/.test(x));
+    check(shown.length === 0, 'credentials.not_logged', shown.slice(0, 2).join(' | '));
+  });
   if (env.browser) {
     await run('headers_cross_allowed', async (core) => {
       const l = await load(core, `${env.cross}/media/range/mp3_44100_stereo.mp3?tag=hdr2`);
@@ -418,6 +501,19 @@ export async function runNetHarness(factory, env, log) {
       check(es.some((e) => e.method === 'OPTIONS') && g.length && g[0].xmak === 'hello',
         'headers_cross_allowed.custom_header', JSON.stringify(es.map((e) => [e.method, e.xmak, e.acrh])));
       measure('headers_cross_allowed.user_agent', JSON.stringify(g[0] && g[0].ua));
+    }, { extra: hdrCore });
+    // A request with extra headers that fails for the network, preflight and
+    // all: the origin did not refuse them, and the next file sends them.
+    await run('headers_cross_network_error', async (core) => {
+      const d = await load(core, `${env.cross}/media/dead/x?tag=hdr4dead`, 5000);
+      const de = await d.ended;
+      check(de && de.reason === END.ERROR, 'headers_cross_network_error.first_fails', String(de && de.reason));
+      const l = await load(core, `${env.cross}/media/range/mp3_44100_stereo.mp3?tag=hdr4`);
+      check(l.ok, 'headers_cross_network_error.loaded');
+      await l.ended;
+      const g = (await tagged('hdr4')).filter((x) => x.method === 'GET');
+      check(g.length && g.every((x) => x.xmak === 'hello'), 'headers_cross_network_error.header_sent',
+        JSON.stringify(g.map((x) => x.xmak)));
     }, { extra: hdrCore });
     await run('headers_cross_refused', async (core) => {
       const l = await load(core, `${env.cross}/media/range/mp3_44100_stereo.mp3?hdrs=deny&tag=hdr3`);

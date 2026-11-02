@@ -57,5 +57,18 @@ for f in ('hls.c', 'dashdec.c'):
 PY
 check $? "hls.c and dashdec.c export the read-only option patch_read_error.py reads"
 
+# verify_binaries.sh finds each patched file in the binaries: one of its
+# FFmpeg markers is in the patched file and not in the pristine one.
+python3 - "$ROOT/scripts/verify_binaries.sh" "$REF/libavformat" "$T/alone/libavformat" $FILES <<'PY'
+import re, sys
+script, ref, patched, *files = sys.argv[1:]
+table = re.search(r'^FFMPEG_PATCH_MARKERS=\((.*?)^\)', open(script).read(), re.S | re.M).group(1)
+markers = [m.split('|')[0] for m in re.findall(r'"([^"]*)"', table)]
+for f in files:
+    new, old = open(f'{patched}/{f}').read(), open(f'{ref}/{f}').read()
+    assert any(m in new and m not in old for m in markers), f'{f}: no marker of verify_binaries.sh'
+PY
+check $? "verify_binaries.sh has a marker for each patched file (http.c, hls.c, dashdec.c)"
+
 if (( fails > 0 )); then echo "$fails check(s) failed"; exit 1; fi
 echo "all checks passed"

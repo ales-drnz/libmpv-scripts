@@ -17,7 +17,7 @@
 #       waveform-duration-hint,
 #       loudness-scan-data/-enabled, af-command-saves-args,
 #       demuxer-read-error and demuxer-skipped-segments)
-#   4.  FFmpeg patches present (libsmb2 protocol, mov advanced_editlist,
+#   4.  FFmpeg patches present (libsmb2 protocol, mak_frag_editlist of mov,
 #       the segment count of HLS and DASH, filter bounds)
 #   5.  Required audio decoder whitelist sample present
 #   6.  Required audio filter whitelist sample present
@@ -200,12 +200,18 @@ MPV_PATCHED_PROPS=(
   demuxer-read-error demuxer-skipped-segments
 )
 
+# mak_frag_editlist is the option patch_ffmpeg_advanced_editlist.py adds to
+# mov.c (upstream has advanced_editlist itself, so that name proves nothing).
 # "ended on a read error" is the warning patch_ffmpeg_segment_skips.py adds to
 # hls.c and dashdec.c; its option name is no marker, since mpv reads it.
+# "Chunked stream ends without its last chunk" is the error
+# patch_ffmpeg_http_read_errors.py adds to http.c, which the web build has
+# not (webio reads http there).
 FFMPEG_PATCH_MARKERS=(
   "libsmb2|libsmb2 SMB2 protocol patch"
-  "advanced_editlist|mov demuxer fragmented-MP4 editlist patch"
+  "mak_frag_editlist|mov demuxer fragmented-MP4 editlist patch"
   "ended on a read error|HLS and DASH segment count (read_error)"
+  "Chunked stream ends without its last chunk|http read errors (read_error)"
 )
 
 # FFmpeg components the kit relies on outside the decoder and filter lists:
@@ -2019,7 +2025,7 @@ PY
   local entry marker desc
   for entry in "${FFMPEG_PATCH_MARKERS[@]}" "makblob|webio protocols (http, https, blob: through fetch)"; do
     marker="${entry%%|*}" desc="${entry#*|}"
-    [[ "$marker" == libsmb2 ]] && continue
+    [[ "$marker" == libsmb2 || "$marker" == "Chunked stream ends"* ]] && continue
     if grep -qF "$marker" <<<"$str_text"; then
       pass "ffmpeg patch present: $desc"
     else

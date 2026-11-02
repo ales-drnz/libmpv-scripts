@@ -51,7 +51,8 @@
 #   WEB_SIMD=0|1            (-msimd128; default 0)
 #   WEB_POOL=16             (pthread workers made at start; 0 makes each on
 #                           demand, which counts the threads mpv needs)
-#   WEB_INITIAL_MEMORY=128MB (wasm memory at start; it grows up to 2GB)
+#   WEB_INITIAL_MEMORY=32MB (wasm memory at start; it grows up to 2GB, or
+#                           up to the maximum of a memory the client passes)
 #   BUILD_DIR=<dir>         (default: builds/work/Web/<variant>)
 #   RELEASE_DIR=<dir>       (default: builds/release/libmpv_web)
 #   PACKAGE_DIR=<dir>       (where libmpv_web.zip, build_web.json and
@@ -94,7 +95,7 @@ WEB_OPT="${WEB_OPT:--Oz}"
 WEB_LTO="${WEB_LTO:-0}"
 WEB_SIMD="${WEB_SIMD:-0}"
 WEB_POOL="${WEB_POOL:-16}"
-WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-128MB}"
+WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-32MB}"
 
 # The variant names the build dir, so a flag change never reuses archives
 # built with other flags.
@@ -123,6 +124,21 @@ check_toolchain() {
   got="$(emcc --version | sed -n '1s/.* \([0-9][0-9.]*\) (.*/\1/p')"
   [[ "$got" == "$EMSDK_VERSION" ]] || \
     die "emcc $got found, the web build pins $EMSDK_VERSION (./emsdk activate $EMSDK_VERSION)"
+  # The compiler and the driver of the release, against their pins in
+  # _sources.sha256 ("emsdk:<version>/upstream/<file>"): emsdk downloads its
+  # binaries with no checksum, and the version string alone does not tell
+  # them apart.
+  local upstream f want have
+  upstream="$(cd "$(dirname "$(readlink -f "$(command -v emcc)")")/.." && pwd)"
+  for f in bin/clang emscripten/emcc.py; do
+    have="$(sha256_of "$(readlink -f "$upstream/$f")")"
+    want="$(pinned_source "emsdk:$EMSDK_VERSION/upstream/$f")"
+    if [[ -z "$want" ]]; then
+      unpinned_source "$have" "emsdk:$EMSDK_VERSION/upstream/$f"
+    elif [[ "$have" != "$want" ]]; then
+      die "emsdk $EMSDK_VERSION upstream/$f: SHA-256 $have, pinned $want"
+    fi
+  done
   ok "Toolchain OK (emcc $got)"
 }
 
@@ -361,7 +377,21 @@ WEB_LIBS+=(-lxml2 -lz -lm)
 #   WASMFS                    the file system lives in wasm memory and every
 #                             pthread reads it without a proxy to the main
 #                             thread.
-#   ALLOW_MEMORY_GROWTH       a 2 GB ceiling for the demuxer cache.
+#   ALLOW_MEMORY_GROWTH       a 2 GB ceiling for the demuxer cache, from
+#                             32 MB (one core uses about 8 MB).
+#   INCOMING_MODULE_JS_API    the default list of emsdk (settings.js) and
+#                             wasmMemory: a client may pass its own shared
+#                             WebAssembly.Memory, with a maximum below 2 GB
+#                             (WebKit on phones refuses a shared memory that
+#                             large). It must be shared and have at least the
+#                             initial pages (32 MB, 512 pages), or the
+#                             factory rejects; the heap then grows up to its
+#                             maximum, and an allocation past it fails.
+WEB_INCOMING_API=ENVIRONMENT,arguments,canvas,dynamicLibraries,elementPointerLock
+WEB_INCOMING_API+=,instantiateWasm,locateFile,monitorRunDependencies,noExitRuntime
+WEB_INCOMING_API+=,noInitialRun,onAbort,onExit,onRuntimeInitialized,postRun,preInit
+WEB_INCOMING_API+=,preRun,print,printErr,setStatus,statusMessage,stderr,stdin,stdout
+WEB_INCOMING_API+=,thisProgram,wasm,websocket,wasmMemory
 web_link_common() {
   printf '%s\n' \
     -sENVIRONMENT=web,worker,node \
@@ -369,6 +399,7 @@ web_link_common() {
     -sPTHREAD_POOL_SIZE="$WEB_POOL" \
     -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sSTACK_SIZE=1MB \
     -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY" -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
+    -sINCOMING_MODULE_JS_API="$WEB_INCOMING_API" \
     -sWASMFS -sFORCE_FILESYSTEM
 }
 
@@ -431,7 +462,7 @@ link_web() {
     $(web_link_common) --js-library "$webio_js" \
     -sEXPORT_NAME=createSpike \
     -sPROXY_TO_PTHREAD -sEXIT_RUNTIME -sINVOKE_RUN=0 \
-    -sEXPORTED_RUNTIME_METHODS=FS,callMain \
+    -sEXPORTED_RUNTIME_METHODS=FS,callMain,wasmMemory \
     -o "$BUILD_DIR/spike/spike.mjs"
   ok "spike.mjs ✓"
 }

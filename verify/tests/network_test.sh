@@ -10,8 +10,9 @@
 # builds) and a minimal FFmpeg: the file, tcp, udp, tls (system OpenSSL),
 # http and libsmb2 protocols, the wav, hls, mpegts, dash (libxml2) and mov
 # demuxers and the aac decoder, with patch_ffmpeg_libsmb2.py,
-# patch_ffmpeg_embed_cacert.py, patch_ffmpeg_http_read_errors.py and
-# patch_ffmpeg_segment_skips.py applied.
+# patch_ffmpeg_embed_cacert.py, patch_ffmpeg_advanced_editlist.py,
+# patch_ffmpeg_http_read_errors.py and patch_ffmpeg_segment_skips.py
+# applied.
 # Then it runs, each mode in its own process:
 #   - smb_url_test: the URL handling of libsmb2.c, password and percent
 #     decoding (F85, F86);
@@ -22,8 +23,12 @@
 #     slowed by slow_connect.py (F83, F84, F85);
 #   - read_errors_test: an HTTP body cut short ends with EIO when the
 #     reconnect gets an error reply or a chunked stream stops before its
-#     last chunk, and the HLS and DASH demuxers count the segments they
-#     lose, against native/slow_http.py (one per mode).
+#     last chunk (with Accept-Ranges too, its resume refused), and the HLS
+#     and DASH demuxers count the segments they lose, against
+#     native/slow_http.py (one per mode);
+#   - editlist_test: the AAC priming of a fragmented MP4 is skipped once in
+#     a file, and the DASH demuxer, which opens the mov demuxer again at
+#     every segment, cuts nothing at the boundaries.
 # A mode passes when its process exits 0: it printed RESULT PASS and
 # AddressSanitizer and LeakSanitizer found nothing. open-hang and pause-read
 # wait about 35 s each and run in the background meanwhile. The logs stay
@@ -44,7 +49,8 @@
 # sets the build jobs (default 4), CC and FFMPEG_TOOLCHAIN the compiler
 # (default gcc and gcc-asan, or clang and clang-asan), and
 # DISABLED_PATCHES=read_error leaves out patch_ffmpeg_http_read_errors.py and
-# patch_ffmpeg_segment_skips.py, to see read_errors_test fail without them.
+# patch_ffmpeg_segment_skips.py, to see read_errors_test fail without them
+# (advanced_editlist the same for editlist_test dash).
 # About two minutes at JOBS=4, half of it building.
 #
 # Usage: bash verify/tests/network_test.sh [--reuse] <work dir> [test[:mode,...] ...]
@@ -79,7 +85,8 @@ CASES=(
   "smb_url_test strip decode parse"
   "tls_roots_test verify"
   "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read"
-  "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
+  "editlist_test fmp4 dash"
+  "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid ranged-between ranged-mid ranged-resume ranged-ok ranged-seek hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
 LONG_MODES=" open-hang pause-read "
@@ -139,7 +146,7 @@ if [[ ! -f "$BLD/config.h" ]]; then
   rm -rf "$SRC" "$BLD" "$FFPREFIX" "$WORK/pristine"
   tar -xzf "$TARBALL" -C "$WORK/src" || die "cannot extract $TARBALL"
   mkdir -p "$WORK/pristine" "$BLD"
-  for f in tls_openssl.c http.c hls.c dashdec.c; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
+  for f in tls_openssl.c http.c hls.c dashdec.c mov.c isom.h; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" \
     > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "patch_ffmpeg_libsmb2.py failed"; }
   ( cd "$BLD" && "$SRC/configure" --prefix="$FFPREFIX" --cc="$CC" --toolchain="$TOOLCHAIN" \
@@ -155,8 +162,11 @@ fi
 # keeps them newer than their objects, so make rebuilds them).
 { python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" &&
   touch "$SRC/libavformat/libsmb2.c" &&
-  for f in tls_openssl.c http.c hls.c dashdec.c; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
+  for f in tls_openssl.c http.c hls.c dashdec.c mov.c isom.h; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$SRC" &&
+  if patch_on advanced_editlist; then
+    python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_advanced_editlist.py" "$SRC"
+  fi &&
   if patch_on read_error; then
     python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_http_read_errors.py" "$SRC" &&
       python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_segment_skips.py" "$SRC"
@@ -324,6 +334,10 @@ read_errors_mode() {
     chunked-ok) opts=(chunked) ;;
     chunked-between) opts=(233287 chunked between) ;;
     chunked-mid) opts=(233287 chunked close) ;;
+    ranged-between) opts=(233287 chunked between ranges) ;;
+    ranged-mid) opts=(233287 chunked ranges) ;;
+    ranged-resume) opts=(233287 chunked ranges resume) ;;
+    ranged-ok|ranged-seek) opts=(chunked ranges) ;;
     hls-404) opts=(missing=seg2.ts) ;;
     hls-cut) opts=(cutfile=seg2.ts) ;;
     dash-404) opts=(missing=chunk3.m4s) ;;
@@ -334,7 +348,7 @@ read_errors_mode() {
     2> "$log.http" &
   srv=$!; echo "$srv" >> "$PIDS"
   wait_port "$port" || echo "slow_http.py did not start on port $port" >> "$log.http"
-  timeout 120 "$BIN/read_errors_test" "$m" "$port" > "$log" 2>&1; r=$?
+  timeout 120 "$BIN/read_errors_test" "$m" "$port" "$WORK/errors/data.bin" > "$log" 2>&1; r=$?
   kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null
   # A live chunked stream is read with one request: no reconnect starts it
   # again.
@@ -365,6 +379,29 @@ run_read_errors() {
   for m in "$@"; do read_errors_mode "$m"; done
 }
 
+run_editlist() {
+  local d="$WORK/editlist" m f r log
+  compile editlist_test || return
+  if [[ ! -f "$d/e.mpd" ]]; then
+    rm -rf "$d"; mkdir -p "$d"
+    {
+      ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=1000:sample_rate=48000:duration=4" \
+        -ac 1 -c:a aac -b:a 128k -movflags frag_keyframe+empty_moov+delay_moov "$d/e.m4a" &&
+      ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=1000:sample_rate=48000:duration=4" \
+        -ac 1 -c:a aac -b:a 128k -f dash -seg_duration 1 -use_template 1 -use_timeline 0 \
+        -init_seg_name init.m4s -media_seg_name 'chunk$Number$.m4s' "$d/e.mpd"
+    } > "$WORK/logs/editlist_fixtures.log" 2>&1 || {
+      tail -5 "$WORK/logs/editlist_fixtures.log"; echo "FAIL editlist_test: no fixtures"
+      FAILED+=("editlist_test (fixtures)"); return; }
+  fi
+  for m in "$@"; do
+    case "$m" in fmp4) f="$d/e.m4a" ;; dash) f="$d/e.mpd" ;; esac
+    log="$RUNS/editlist_test-$m.log"
+    timeout 120 "$BIN/editlist_test" "$m" "$f" > "$log" 2>&1; r=$?
+    report "editlist_test $m" "$r" "$log"
+  done
+}
+
 smb_report() {
   local m="$1" label="smb_client_test ${1%@*}" log="$RUNS/smb_client_test-$1.log"
   [[ "$m" == *@* ]] && label+=" (timeout ${m#*@} s)"
@@ -382,6 +419,7 @@ for c in "${CASES[@]}"; do
     tls_roots_test) run_tls ;;
     smb_client_test) run_smb "${modes[@]}" ;;
     read_errors_test) run_read_errors "${modes[@]}" ;;
+    editlist_test) run_editlist "${modes[@]}" ;;
   esac
 done
 

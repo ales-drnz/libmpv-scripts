@@ -389,6 +389,38 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
     `${tracks.length} audio track, ${tracks[0]?.readyState}`);
   wa.output(0).disconnect(dest);
 
+  // ── A second init that fails: an error, no context left open ─────────
+  // The worklet module is missing: init rejects, the context it made is
+  // closed, and the open output fails as with no context, not plays into a
+  // ring nobody reads.
+  st.warnings.length = 0;
+  st.outState.length = 0;
+  const made = [];
+  const Ctx = globalThis.AudioContext;
+  globalThis.AudioContext = class extends Ctx {
+    constructor(o) {
+      super(o);
+      made.push(this);
+    }
+  };
+  let initErr = null;
+  try {
+    await wa.init({ channels: 2, resumeOnGesture: false,
+      processorUrl: new URL('missing_processor.js', location.href).href });
+  } catch (e) {
+    initErr = e;
+  } finally {
+    globalThis.AudioContext = Ctx;
+  }
+  const failedInit = await core.until(() => st.outState.at(-1) === 'failed', 5000);
+  const saidInit = st.warnings.find((w) => /No AudioContext/.test(w));
+  check(initErr && made.length === 1 && made[0].state === 'closed' && wa.state === 'none' && failedInit && !!saidInit,
+    'context.init_fails', `error ${initErr && initErr.message}, made ${made.length}, state ${made[0]?.state}, ` +
+    `api ${wa.state}, audio-output-state ${st.outState.join(' > ')}, mpv: ${saidInit}`);
+  await wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false });
+  await loadAndStart('/in/tone_48k_20s.flac');
+  await sleep(300);
+
   // ── No context any more: the output fails and mpv says why ───────────
   st.warnings.length = 0;
   st.outState.length = 0;

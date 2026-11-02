@@ -334,6 +334,20 @@ LIBMPV_GPL=1 build_record "$w/out6" linux-x86_64 "$w/gpl"; check $? "write: a GP
 python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); assert r["license"] == "GPL-3.0-or-later", r' \
   "$w/out6/build_linux-x86_64.json"; check $? "write: the record of a GPL build says GPL-3.0-or-later"
 
+# read_error has a side in each tree: a cached FFmpeg stage built with it
+# and mpv built again without it (or the reverse) is not a build with it.
+stage "$w/half" ffmpeg dash_keepalive read_error
+stage "$w/half" mpv pcm_tap
+build_record "$w/out7" linux-x86_64 "$w/half"; r=$?
+[[ $r != 0 && ! -e "$w/out7/build_linux-x86_64.json" ]]; check $? "write: read_error in the FFmpeg stage only fails (exit $r)"
+grep -q 'read_error' "$w/out7.log"; check $? "write: the error names read_error"
+stage "$w/half" ffmpeg dash_keepalive
+stage "$w/half" mpv pcm_tap read_error
+build_record "$w/out8" linux-x86_64 "$w/half"; r=$?
+[[ $r != 0 && ! -e "$w/out8/build_linux-x86_64.json" ]]; check $? "write: read_error in the mpv stage only fails (exit $r)"
+stage "$w/half" ffmpeg dash_keepalive read_error
+build_record "$w/out9" linux-x86_64 "$w/half"; check $? "write: read_error in both stages"
+
 # ── write_licenses, on fake source trees ───────────────────────────────────
 # The source lines of README.txt are the sources the build checked
 # (SOURCES_FETCHED), not every pin of the component's name: FFmpeg, xz and

@@ -52,6 +52,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
@@ -66,6 +67,7 @@
 #include "config_components.h"
 
 #include "libavutil/avstring.h"
+#include "libavutil/base64.h"
 #include "libavutil/bprint.h"
 #include "libavutil/error.h"
 #include "libavutil/mem.h"
@@ -73,6 +75,7 @@
 #include "libavutil/time.h"
 #include "avformat.h"
 #include "url.h"
+#include "urldecode.h"
 
 /* Flags of mak_webio_js_start. */
 #define WEBIO_F_ICY      1   /* ask for ICY metadata */
@@ -88,7 +91,7 @@
 #define WEBIO_END_HTTP     2 /* an HTTP error status */
 #define WEBIO_END_BROKEN   3 /* the body broke off */
 #define WEBIO_END_PROTOCOL 4 /* an answer that cannot serve the request */
-#define WEBIO_END_RANGE    5 /* 416: the offset is at or past the end */
+#define WEBIO_END_RANGE    5 /* 416: past the end, or a read error before it */
 #define WEBIO_END_NOSEEK   6 /* the server ignored Range on a seek */
 
 enum { WEBIO_CONNECTING, WEBIO_OPEN, WEBIO_EOF, WEBIO_ERROR };
@@ -98,7 +101,8 @@ enum { WEBIO_CONNECTING, WEBIO_OPEN, WEBIO_EOF, WEBIO_ERROR };
 #define WEBIO_READ_WAIT_MS 100
 /* The poll of the open and of a seek, between two interrupt checks. */
 #define WEBIO_OPEN_WAIT_MS 50
-/* Requests again from the break before a broken body fails the read. */
+/* Requests again from the break, each answered and broken again before any
+ * data, before a broken body fails the read. */
 #define WEBIO_RECONNECTS 3
 
 typedef struct IcyPacket {
@@ -155,6 +159,7 @@ typedef struct WebioContext {
     int64_t off, end_off;
     int buffer_size;
     int reconnect;
+    int reconnect_delay_max;
 } WebioContext;
 
 /* The JS side (scripts/web/mak_webio.js), on the net thread. */
@@ -419,8 +424,17 @@ EMSCRIPTEN_KEEPALIVE void mak_webio_end(WebioStream *s, uint32_t gen,
         return;
     }
     switch (kind) {
-    case WEBIO_END_EOF:
     case WEBIO_END_RANGE:
+        /* 416 before the end the file announced: it is not shorter than
+         * that, the resume was refused (http.c retries it, then EIO). */
+        if (s->size >= 0 && s->req_off < s->size) {
+            s->status = status;
+            s->error = AVERROR(EIO);
+            s->state = WEBIO_ERROR;
+            break;
+        }
+        /* fall through */
+    case WEBIO_END_EOF:
         s->state = WEBIO_EOF;
         break;
     case WEBIO_END_HTTP:
@@ -579,6 +593,38 @@ static char *make_headers(WebioContext *c)
     return str;
 }
 
+/* fetch refuses a URL with credentials (user:pass@host). Returns the URL
+ * without them, and in *auth an Authorization header with them as Basic
+ * auth, percent-decoded as http.c does; NULL when the URL has none. */
+static char *strip_userinfo(const char *uri, char **auth)
+{
+    const char *host = strstr(uri, "://");
+    *auth = NULL;
+    if (!host)
+        return NULL;
+    host += 3;
+    const char *end = host + strcspn(host, "/?#"), *at = NULL;
+    for (const char *q = host; q < end; q++)
+        if (*q == '@')
+            at = q;
+    if (!at)
+        return NULL;
+    char *userinfo = av_strndup(host, at - host);
+    char *plain = userinfo ? ff_urldecode(userinfo, 0) : NULL;
+    av_free(userinfo);
+    if (!plain)
+        return NULL;
+    size_t len = strlen(plain);
+    char b64[AV_BASE64_SIZE(512)];
+    if (len <= 512 && av_base64_encode(b64, sizeof(b64), plain, len))
+        *auth = av_asprintf("Authorization: Basic %s\r\n", b64);
+    av_free(plain);
+    char *out = *auth ? av_asprintf("%.*s%s", (int)(host - uri), uri, at + 1) : NULL;
+    if (!out)
+        av_freep(auth);
+    return out;
+}
+
 static void export_string(char **dst, const char *src)
 {
     av_freep(dst);
@@ -605,13 +651,23 @@ static int webio_open(URLContext *h, const char *uri, int flags)
     if (!s)
         return AVERROR(ENOMEM);
 
+    char *auth = NULL;
     if (av_strstart(uri, "makblob://", &rest)) {
         s->url = av_asprintf("blob:%s", rest);
         s->flags |= WEBIO_F_BLOB;
+    } else if ((s->url = strip_userinfo(uri, &auth))) {
+        uri = s->url;
     } else {
         s->url = av_strdup(uri);
     }
     s->headers = make_headers(c);
+    /* The Authorization of the app, if it set one, wins. */
+    if (s->headers && auth && !av_stristr(s->headers, "authorization:")) {
+        char *h = av_asprintf("%s%s", auth, s->headers);
+        av_free(s->headers);
+        s->headers = h;
+    }
+    av_free(auth);
     if (!s->url || !s->headers) {
         stream_close(s);
         c->s = NULL;
@@ -698,6 +754,35 @@ static int64_t restart(URLContext *h, WebioContext *c, int64_t target)
     return target;
 }
 
+/* A broken body asked again from the break, as http.c's reconnect does:
+ * the waits 0, 1, 3, 7... s up to reconnect_delay_max, each one
+ * interruptible, and a request that fails (network, HTTP error, refused
+ * range) waits and tries again. Returns 0 once a request got its answer. */
+static int reconnect(URLContext *h, WebioContext *c)
+{
+    int delay = 0, ret = AVERROR(EIO);
+    while (delay <= c->reconnect_delay_max) {
+        if (delay) {
+            av_log(h, AV_LOG_WARNING, "webio: asking again from byte %"PRId64" in %d s\n",
+                   c->pos, delay);
+            int64_t until = av_gettime_relative() + delay * INT64_C(1000000);
+            while (av_gettime_relative() < until) {
+                if (ff_check_interrupt(&h->interrupt_callback))
+                    return AVERROR_EXIT;
+                av_usleep(WEBIO_OPEN_WAIT_MS * 1000);
+            }
+        }
+        int64_t r = restart(h, c, c->pos);
+        if (r >= 0)
+            return 0;
+        ret = (int)r;
+        if (ret == AVERROR_EXIT)
+            return ret;
+        delay = 1 + 2 * delay;
+    }
+    return ret;
+}
+
 static int webio_read(URLContext *h, unsigned char *buf, int size)
 {
     WebioContext *c = h->priv_data;
@@ -750,8 +835,8 @@ static int webio_read(URLContext *h, unsigned char *buf, int size)
 
     if (again) {
         c->reconnects++;
-        int64_t r = restart(h, c, c->pos);
-        return r < 0 ? (int)r : AVERROR(EAGAIN);
+        int r = reconnect(h, c);
+        return r < 0 ? r : AVERROR(EAGAIN);
     }
     if (n > 0)
         c->reconnects = 0;
@@ -849,6 +934,7 @@ static const AVOption webio_options[] = {
     { "offset", "initial byte offset", OFFSET(off), AV_OPT_TYPE_INT64, { .i64 = 0 }, 0, INT64_MAX, D },
     { "end_offset", "try to limit the request to bytes preceding this offset", OFFSET(end_off), AV_OPT_TYPE_INT64, { .i64 = 0 }, 0, INT64_MAX, D },
     { "reconnect", "ask again from the break when a seekable body breaks off", OFFSET(reconnect), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, D },
+    { "reconnect_delay_max", "max reconnect delay in seconds after which to give up", OFFSET(reconnect_delay_max), AV_OPT_TYPE_INT, { .i64 = 120 }, 0, UINT_MAX / 1000 / 1000, D },
     { "webio_buffer", "read-ahead ring of each stream, in bytes", OFFSET(buffer_size), AV_OPT_TYPE_INT, { .i64 = 1 << 20 }, 1 << 16, 1 << 26, D },
     { NULL }
 };

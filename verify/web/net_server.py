@@ -19,7 +19,18 @@ Media: /media/<mode>/<file under --media>?<query>
             (default 48000). With icy=1 and Icy-MetaData: 1 in the request,
             icy-metaint 8192 and a StreamTitle "Mak title N" that changes
             every titlesecs (default 1)
-  redirect  302 to the query's to (a path or a URL)
+  redirect  302 to the query's to (a path or a URL); with sign=1 the server
+            adds issued=<now> to it, for signed
+  signed    as range while the query's issued is less than expire seconds
+            old (default 2), then 403: a signed URL that expires
+  limited   as range, but each answer stops after max bytes (default
+            32768) with a Content-Range that says so, as servers that cap
+            an open range do
+  auth      as range with Authorization: Basic and the query's basic (the
+            base64 of user:password, so the password is not in the URL),
+            else 401
+  dead      the connection closes before any answer, the preflight too: a
+            network error to the browser
   slow      no answer for delay seconds (default 30), then as range
   trickle   the answer at once, then the body at 64 bytes/s
   status    the query's code (default 404)
@@ -29,7 +40,9 @@ Media: /media/<mode>/<file under --media>?<query>
             With hold=1 the break waits for GET /release?tag=<tag> (30 s at
             most), so the reader takes the bytes first, as over a real
             network: Chrome drops the part of a broken body it has not
-            handed to the page yet
+            handed to the page yet. With down=<secs>, for that long after
+            the break every request of the tag closes before an answer (a
+            network that is gone for a while), then as range
 Query on any mode: cors=0 (no CORS headers), cors=1 (the default:
 Access-Control-Allow-Origin, nothing exposed), cors=expose (Content-Range
 and icy-* exposed too); hdrs=deny answers the preflight without
@@ -122,12 +135,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                          mode=mode, file=rel, tag=q.get('tag'), range=h.get('Range'),
                          ua=h.get('User-Agent'), xmak=h.get('X-Mak-Test'),
                          icy=h.get('Icy-MetaData'), origin=h.get('Origin'),
+                         auth=h.get('Authorization'),
                          status=None, bytes=0, aborted=False, **kw)
 
     def do_OPTIONS(self):
         self.media = True
         path, q = self.parse()
         e = self.entry('preflight', path, q, acrh=self.headers.get('Access-Control-Request-Headers'))
+        if path.startswith('/media/dead/'):
+            return self.close_unanswered(e)
         self.send_response(204)
         e['status'] = 204
         if q.get('cors', '1') != '0':
@@ -216,8 +232,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
         self.wfile.write(body)
 
+    def close_unanswered(self, e):
+        e['unanswered'] = True
+        self.close_connection = True
+        try:
+            self.connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def media_dead(self, rel, q, e):
+        self.close_unanswered(e)
+
     def media_redirect(self, rel, q, e):
         to = q.get('to', '/media/range/' + rel)
+        if q.get('sign') == '1':
+            to += ('&' if '?' in to else '?') + f'issued={time.time():.3f}'
         self.send_response(302)
         e['status'] = 302
         self.common(q)
@@ -239,7 +268,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if rate:
                 time.sleep(len(chunk) / rate)
 
-    def media_range(self, rel, q, e, ignore_range=False, rate=None):
+    def media_signed(self, rel, q, e):
+        if time.time() - float(q.get('issued', '0')) > float(q.get('expire', '2')):
+            return self.media_status(rel, {**q, 'code': '403'}, e)
+        self.media_range(rel, q, e)
+
+    def media_limited(self, rel, q, e):
+        self.media_range(rel, q, e, cap=int(q.get('max', '32768')))
+
+    def media_auth(self, rel, q, e):
+        if self.headers.get('Authorization') != 'Basic ' + q.get('basic', ''):
+            return self.media_status(rel, {**q, 'code': '401'}, e)
+        self.media_range(rel, q, e)
+
+    def media_range(self, rel, q, e, ignore_range=False, rate=None, cap=None):
         p = self.file(rel)
         if not p:
             return self.media_status(rel, {**q, 'code': '404'}, e)
@@ -262,6 +304,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     self.send_header('Content-Length', '0')
                     super().end_headers()
                     return
+        if rng and cap:
+            end = min(end, start + cap - 1)
         length = end - start + 1
         code = 206 if rng else 200
         self.send_response(code)
@@ -282,11 +326,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         with LOG_LOCK:
             first = key not in self.server.dropped
             self.server.dropped.add(key)
+        p = self.file(rel)
         if not first:
+            with LOG_LOCK:
+                until = self.server.down_until.get(key, 0)
+            if time.time() < until:
+                return self.close_unanswered(e)
+            if q.get('again') == '416' and p:
+                # A refused resume of a file that is not that long any more.
+                self.send_response(416)
+                e['status'] = 416
+                self.common(q)
+                self.send_header('Content-Range', f'bytes */{os.path.getsize(p)}')
+                self.send_header('Content-Length', '0')
+                super().end_headers()
+                return
             if q.get('again'):
                 return self.media_status(rel, {**q, 'code': q['again']}, e)
             return self.media_range(rel, q, e)
-        p = self.file(rel)
         if not p:
             return self.media_status(rel, {**q, 'code': '404'}, e)
         size = os.path.getsize(p)
@@ -312,6 +369,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 time.sleep(0.01)
             e['held_s'] = round(time.time() - t0, 3)
         e['dropped'] = True
+        if q.get('down'):
+            with LOG_LOCK:
+                self.server.down_until[key] = time.time() + float(q['down'])
         self.connection.shutdown(socket.SHUT_RDWR)
         self.close_connection = True
 
@@ -424,6 +484,7 @@ def main():
         s.result_path = a.result
         s.stop_all = stop_all
         s.dropped = set()
+        s.down_until = {}
     threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in servers]
     for t in threads:
         t.start()

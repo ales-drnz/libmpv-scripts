@@ -257,8 +257,10 @@ record_patch() {
 # build_<target>.json, the record of libmpv_<target>.*: its release, its
 # license, its patches and its filters, from the prefixes it was linked from
 # (one per architecture or slice, which must agree). A stage cached from a
-# build with the other license setting stops it. write_manifest.sh reads it.
-# RELEASE_DIR overrides the directory.
+# build with the other license setting stops it, and so does a toggle with a
+# side in each tree (read_error) found in one record only: a cached FFmpeg
+# stage built with it and mpv built again without it, or the reverse.
+# write_manifest.sh reads it. RELEASE_DIR overrides the directory.
 write_build_record() {
   local target="$1"; shift
   local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
@@ -267,13 +269,15 @@ write_build_record() {
 import json, pathlib, sys
 
 out, target, release, license, *prefixes = sys.argv[1:]
+# The toggles that patch both trees, FFmpeg and mpv.
+TWO_SIDED = {"read_error"}
 records = []
 for prefix in prefixes:
     d = pathlib.Path(prefix, "share", "libmpv-scripts")
     try:
-        patches = set()
+        trees = {}
         for tree in ("ffmpeg", "mpv"):
-            patches.update((d / f"{tree}.patches").read_text().split())
+            trees[tree] = set((d / f"{tree}.patches").read_text().split())
             built = (d / f"{tree}.license").read_text().strip()
             if built != license:
                 sys.exit(f"{prefix}: {tree} was built {built}, this build is "
@@ -283,6 +287,12 @@ for prefix in prefixes:
     except FileNotFoundError as e:
         sys.exit(f"No patch record {e.filename}: a stage built before the "
                  "record existed, clean the build directory and build again")
+    for tree, other in (("ffmpeg", "mpv"), ("mpv", "ffmpeg")):
+        for half in sorted(TWO_SIDED & trees[tree] - trees[other]):
+            sys.exit(f"{prefix}: {half} is in the {tree} stage and not in the "
+                     f"{other} one (a stage built with other patches): clean "
+                     "the build directory and build again")
+    patches = trees["ffmpeg"] | trees["mpv"]
     records.append((sorted(patches), sorted(t for t in filters if t)))
 if not records:
     sys.exit("write_build_record: no prefix")
@@ -1213,6 +1223,10 @@ apply_mpv_patches_common() {
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"
   _mpv_patch chapter_list_reset patch_chapter_list_reset.py "$mpv_dir"
+  # fd_pread: each stream of an fd://N (an Android content:// URI) reads at
+  # its own position, so the prefetch of the same entry does not move the
+  # offset the current file reads at.
+  _mpv_patch fd_pread           patch_fd_pread.py           "$mpv_dir"
   # af_command_args: a successful af-command updates the arguments af and
   # the filter keep, so a seek, a track switch or the next file keeps the
   # value, and the af-command-saves-args flag tells a client so.

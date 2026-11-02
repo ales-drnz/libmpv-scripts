@@ -87,7 +87,10 @@ Module['makWebAudio'] = (() => {
   // destination's), processorUrl, connect (false leaves output 0
   // unconnected), resumeOnGesture (false leaves resuming to the page). A
   // second call replaces the context: every open output reopens at the new
-  // rate, once it is ready (they wait meanwhile, with no reader).
+  // rate, once it is ready (they wait meanwhile, with no reader). A call
+  // that fails (the worklet module does not load) rejects and leaves no
+  // device, as close() does: the context it made is closed and the open
+  // outputs fail until the next init.
   async function init(opts = {}) {
     if (ctx) await teardown();
     table = Module['_mak_wa_table_get']();
@@ -95,23 +98,28 @@ Module['makWebAudio'] = (() => {
     if (Atomics.load(u, word(T.ABI)) !== ABI) {
       throw new Error(`makWebAudio: table version ${Atomics.load(u, word(T.ABI))}, expected ${ABI}`);
     }
-    ownContext = !opts.context;
-    ctx = opts.context ?? new AudioContext({
-      latencyHint: opts.latencyHint ?? 'playback',
-      ...(opts.sampleRate ? { sampleRate: opts.sampleRate } : {}),
-    });
-    await ctx.audioWorklet.addModule(
-      opts.processorUrl ?? new URL('mak_webaudio_processor.js', import.meta.url).href);
-    const max = Math.min(ctx.destination.maxChannelCount || 2, 8);
-    channels = Math.max(1, Math.min(opts.channels ?? 2, max));
-    Atomics.store(u, word(T.RATE), ctx.sampleRate);
-    Atomics.store(u, word(T.CHANNELS), channels);
-    publish();
-    Atomics.add(u, word(T.DEVICE_GEN), 1);
-    ctx.addEventListener('statechange', onState);
-    timer = setInterval(publish, 1000);
-    if (opts.resumeOnGesture !== false) resumeOnGesture();
-    if (opts.connect !== false) output(0).connect(ctx.destination);
+    try {
+      ownContext = !opts.context;
+      ctx = opts.context ?? new AudioContext({
+        latencyHint: opts.latencyHint ?? 'playback',
+        ...(opts.sampleRate ? { sampleRate: opts.sampleRate } : {}),
+      });
+      await ctx.audioWorklet.addModule(
+        opts.processorUrl ?? new URL('mak_webaudio_processor.js', import.meta.url).href);
+      const max = Math.min(ctx.destination.maxChannelCount || 2, 8);
+      channels = Math.max(1, Math.min(opts.channels ?? 2, max));
+      Atomics.store(u, word(T.RATE), ctx.sampleRate);
+      Atomics.store(u, word(T.CHANNELS), channels);
+      publish();
+      Atomics.add(u, word(T.DEVICE_GEN), 1);
+      ctx.addEventListener('statechange', onState);
+      timer = setInterval(publish, 1000);
+      if (opts.resumeOnGesture !== false) resumeOnGesture();
+      if (opts.connect !== false) output(0).connect(ctx.destination);
+    } catch (e) {
+      await close().catch(() => {});
+      throw e;
+    }
     return api;
   }
 

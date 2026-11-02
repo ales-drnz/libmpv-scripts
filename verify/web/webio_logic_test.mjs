@@ -164,6 +164,16 @@ test('sameOrigin: Node has no origin, a page compares origins', () => {
   }
 });
 
+test('refusing: an origin that refused the extra headers, for REFUSED_MS', () => {
+  W.refused = new Map();
+  assert.equal(W.refusing('http://a'), false);
+  W.refused.set('http://a', Date.now() + W.REFUSED_MS);
+  assert.equal(W.refusing('http://a'), true);
+  W.refused.set('http://b', Date.now() - 1);
+  assert.equal(W.refusing('http://b'), false);
+  assert.equal(W.refused.has('http://b'), false, 'an expired mark is forgotten');
+});
+
 test('fetchError names CORS, network and mixed content', () => {
   globalThis.location = new URL('https://app.example/');
   try {

@@ -98,7 +98,7 @@ SHARED = [
     'patch_chain_eof.py', 'patch_gapless_tail.py',
     'patch_lavfi_eof_passthrough.py',
     'patch_hotplug_core_thread.py', 'patch_playlist_prev_dos_path.py',
-    'patch_chapter_list_reset.py', 'patch_af_command_args.py',
+    'patch_chapter_list_reset.py', 'patch_fd_pread.py', 'patch_af_command_args.py',
     'patch_read_error.py',
 ]
 audio_only = (ROOT / 'scripts/shared/_audio_only.sh').read_text()

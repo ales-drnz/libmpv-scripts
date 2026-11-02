@@ -34,6 +34,10 @@ with Content-Length 0 (a download cut short for good). The options:
   between         with chunked, cut stops at the last chunk boundary before
                   it instead
   close           with chunked, the response says Connection: close
+  ranges          with chunked, the response says Accept-Ranges: bytes, and
+                  a request with a range from past 0 gets 503 with
+                  Content-Length 0 (with resume: 206 with the rest,
+                  chunked); a range that starts at or past the end gets 416
   missing=<name>  that file answers 404
   cutfile=<name>  every response for that file stops at half of it
 
@@ -52,6 +56,7 @@ for a in sys.argv[4:]:
 RESUME, NORANGE, NOLENGTH = 'resume' in OPTS, 'norange' in OPTS, 'nolength' in OPTS
 DROP, DOWN, OUTAGE = 'drop' in OPTS, 'down' in OPTS, 'outage' in OPTS
 CHUNKED, BETWEEN, CLOSE = 'chunked' in OPTS, 'between' in OPTS, 'close' in OPTS
+RANGES = 'ranges' in OPTS
 TYPES = {'.flac': 'audio/flac', '.mp3': 'audio/mpeg', '.opus': 'audio/ogg', '.m3u8': 'application/vnd.apple.mpegurl',
          '.ts': 'video/mp2t', '.mpd': 'application/dash+xml', '.m4s': 'audio/mp4'}
 cut_done = False
@@ -76,7 +81,17 @@ class H(http.server.BaseHTTPRequestHandler):
             return
         size = os.path.getsize(p)
         if CHUNKED:
-            self.send_chunked(p, size)
+            m = re.match(r'bytes=(\d+)-', self.headers.get('Range', '')) if RANGES else None
+            start = int(m.group(1)) if m else 0
+            if m and start >= size:
+                sys.stderr.write(f'GET {self.path} range={start}- 416\n')
+                self.send_response(416); self.send_header('Content-Range', f'bytes */{size}')
+                self.send_header('Content-Length', '0'); self.end_headers()
+            elif start and not RESUME:
+                sys.stderr.write(f'GET {self.path} range={start}- refused\n')
+                self.send_response(503); self.send_header('Content-Length', '0'); self.end_headers()
+            else:
+                self.send_chunked(p, size, start, size if start else CUT)
             return
         start, end = 0, size - 1
         m = None if NORANGE else re.match(r'bytes=(\d+)-(\d*)', self.headers.get('Range', ''))
@@ -132,24 +147,30 @@ class H(http.server.BaseHTTPRequestHandler):
                     b = f.read(n); self.wfile.write(b); left -= len(b); pos += len(b); time.sleep(len(b) / RATE)
             except (BrokenPipeError, ConnectionResetError):
                 pass
-    def send_chunked(self, p, size):
+    def send_chunked(self, p, size, start, cut):
         self.protocol_version = 'HTTP/1.1'
         self.close_connection = True
-        self.send_response(200); self.send_header('Transfer-Encoding', 'chunked')
+        if start:
+            self.send_response(206); self.send_header('Content-Range', f'bytes {start}-{size - 1}/{size}')
+        else:
+            self.send_response(200)
+        self.send_header('Transfer-Encoding', 'chunked')
+        if RANGES:
+            self.send_header('Accept-Ranges', 'bytes')
         if CLOSE:
             self.send_header('Connection', 'close')
         self.send_header('Content-Type', TYPES.get(os.path.splitext(p)[1], 'application/octet-stream'))
         self.end_headers()
-        sys.stderr.write(f'GET {self.path} chunked\n')
+        sys.stderr.write(f'GET {self.path} chunked{f" range={start}-" if start else ""}\n')
         with open(p, 'rb') as f:
             try:
-                pos = 0
+                f.seek(start); pos = start
                 while pos < size:
                     b = f.read(16384)
-                    if CUT and pos + len(b) > CUT:
+                    if cut and pos + len(b) > cut:
                         if not BETWEEN:
-                            self.wfile.write(b'%x\r\n' % len(b) + b[:CUT - pos])
-                        sys.stderr.write(f'CUT at {CUT if not BETWEEN else pos}\n')
+                            self.wfile.write(b'%x\r\n' % len(b) + b[:cut - pos])
+                        sys.stderr.write(f'CUT at {cut if not BETWEEN else pos}\n')
                         return
                     self.wfile.write(b'%x\r\n' % len(b) + b + b'\r\n')
                     pos += len(b); time.sleep(len(b) / RATE)
