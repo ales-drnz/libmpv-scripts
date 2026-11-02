@@ -1,4 +1,4 @@
-## [0.3.0] - Unreleased
+## [0.3.0] - 2-11-2026
 
 ### Breaking
 - The libraries are LGPL, version 3 or later, instead of GPLv3: mpv and FFmpeg are built without their GPL parts, and Rubber Band is left out with the `rubberband` filters of FFmpeg and mpv.
