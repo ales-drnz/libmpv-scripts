@@ -105,12 +105,14 @@ CASES=(
   "lib read_error_test readerror 2000000:43500:outage retrymp3"
   "lib read_error_test readerror 2000000:307000:outage retrymka retrybackmka"
   "lib read_error_test readerror 2000000:30750:outage retrywebm retrybackwebm retrycues retrybackcues"
+  "lib read_error_test readerror - times"
   "lib read_error_test readerror 2000000::missing=seg2.ts hls"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
 PATCH_TESTS=(
   "prefetch_patch_test {mpv}"
+  "end_file_layout_test {src}"
   "ios_audio_stubs_patch_test {mpv}"
   "audiotrack_patch_test {mpv} {src} {build}"
   "apply_order_test {mpv}"

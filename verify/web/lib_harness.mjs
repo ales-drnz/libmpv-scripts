@@ -23,7 +23,7 @@ const EV = {
 const AF_CHAIN = 'lavfi=[equalizer=f=1000:t=q:w=1:g=3],lavfi=[afftdn],lavfi=[loudnorm]';
 // MAK_WEB_ABI of scripts/web/mak_web.c this harness is written for, as a
 // client of the module checks it.
-const EXPECTED_WEB_ABI = 1;
+const EXPECTED_WEB_ABI = 2;
 
 // The struct layout of client.h on wasm32, in the order of mak_web_layout().
 const EXPECTED_LAYOUT = [
@@ -33,8 +33,9 @@ const EXPECTED_LAYOUT = [
   24, 4, 8, 16, // mpv_event: size, error, reply_userdata, data
   12, 4, 8, // mpv_event_property: size, format, data
   16, 8, 12, // mpv_event_log_message: size, text, log_level
-  40, 4, 8, 16, 24, // mpv_event_end_file: size, error, entry, insert, num,
-  28, 32, //           mak_read_error, mak_skipped_segments (patch_read_error.py)
+  56, 4, 8, 16, 24, // mpv_event_end_file: size, error, entry, insert, num,
+  28, 32, 40, 48, //   mak_read_error, mak_skipped_segments, mak_duration,
+  //                   mak_position (patch_read_error.py)
   16, 8, // mpv_event_hook: size, id
 ];
 

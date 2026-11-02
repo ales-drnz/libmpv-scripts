@@ -4,11 +4,11 @@
 
 // read_error_test <mode> <fixtures> <tmpdir>: how the reading of a file
 // ended (patch_read_error.py). The demuxer-read-error and
-// demuxer-skipped-segments properties, and the mak_read_error and
-// mak_skipped_segments fields of END_FILE, read through a copy of the
-// patched layout once the property is found, as a client of a libmpv that
-// may lack the patch does. Upstream ends every one of these files with
-// reason eof and error 0. The files come from slow_http.py on $HTTP_PORT
+// demuxer-skipped-segments properties, and the mak_read_error,
+// mak_skipped_segments, mak_duration and mak_position fields of END_FILE,
+// read through a copy of the patched layout once the property is found,
+// as a client of a libmpv that may lack the patch does. Upstream ends
+// every one of these files with reason eof and error 0. The files come from slow_http.py on $HTTP_PORT
 // (run.sh), which cuts n.flac (4 s, with Range support) where CASES says.
 // FFmpeg's reconnect (mpv sets reconnect=1, reconnect_delay_max=7) then
 // tries for about 11 s before it reports EIO.
@@ -76,6 +76,14 @@
 //             by network_test.sh): av_opt_get_int below stands in for it on
 //             an HLS demuxer, with the 1 segment the server dropped. Where
 //             the option exists the real count is read.
+//   times     short.flac, n.flac, a missing file, short.flac, with
+//             ao-null-untimed: each entry opens and ends in a burst of
+//             events, before a client gets any property change of it.
+//             END_FILE carries the entry's own duration and position at
+//             its close (mak_duration, mak_position): 1 s and 4 s, at the
+//             end; -1 for both for the missing file, which never opened.
+//             Then n.flac paused at start=1.5 and stopped: reason stop,
+//             duration 4, position 1.5.
 // At each park on a read error with the seekable cache, eof-cached of
 // demuxer-cache-state reads no (the cached range ends on the error, not at
 // the end of the file), and yes at the real end.
@@ -87,6 +95,7 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <dlfcn.h>
+#include <math.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -103,6 +112,8 @@ struct mak_end_file {
     int playlist_insert_num_entries;
     int mak_read_error;
     int64_t mak_skipped_segments;
+    double mak_duration;
+    double mak_position;
 };
 
 // The skipped_segments of an HLS demuxer, when its FFmpeg has none (hls
@@ -156,9 +167,9 @@ int av_opt_get_int(void *obj, const char *name, int search_flags, int64_t *out_v
 struct st {
     int patched;
     int starts, loaded, ends;
-    int end_reason[4], end_error[4];
-    struct mak_end_file end[4];
-    int64_t end_skipped_seen[4]; // demuxer-skipped-segments notified before it
+    int end_reason[8], end_error[8];
+    struct mak_end_file end[8];
+    int64_t end_skipped_seen[8]; // demuxer-skipped-segments notified before it
     int read_error;     // last notified demuxer-read-error, -1 unavailable
     int64_t skipped;    // last notified demuxer-skipped-segments
     int eof;            // last notified eof-reached
@@ -183,7 +194,7 @@ static void pump(mpv_handle *h, int ms, struct st *s)
         }
         if (e->event_id == MPV_EVENT_FILE_LOADED)
             s->loaded++;
-        if (e->event_id == MPV_EVENT_END_FILE && s->ends < 4) {
+        if (e->event_id == MPV_EVENT_END_FILE && s->ends < 8) {
             mpv_event_end_file *ef = e->data;
             s->end_reason[s->ends] = ef->reason;
             s->end_error[s->ends] = ef->error;
@@ -192,9 +203,10 @@ static void pump(mpv_handle *h, int ms, struct st *s)
                 s->end[s->ends] = *(struct mak_end_file *)e->data;
             printf("END_FILE %d: reason %d, error %d", s->ends, ef->reason, ef->error);
             if (s->patched)
-                printf(", mak_read_error %d, mak_skipped_segments %lld",
-                       s->end[s->ends].mak_read_error,
-                       (long long)s->end[s->ends].mak_skipped_segments);
+                printf(", mak_read_error %d, mak_skipped_segments %lld, mak_duration %.3f, "
+                       "mak_position %.3f", s->end[s->ends].mak_read_error,
+                       (long long)s->end[s->ends].mak_skipped_segments,
+                       s->end[s->ends].mak_duration, s->end[s->ends].mak_position);
             printf("\n");
             s->ends++;
         }
@@ -227,6 +239,8 @@ static int wait_for(mpv_handle *h, struct st *s, int ms, int (*cond)(struct st *
 }
 
 static int one_loaded(struct st *s) { return s->loaded >= 1; }
+static int four_ends(struct st *s) { return s->ends >= 4; }
+static int five_ends(struct st *s) { return s->ends >= 5; }
 static int one_end(struct st *s) { return s->ends >= 1; }
 static int two_ends(struct st *s) { return s->ends >= 2; }
 static int two_loaded(struct st *s) { return s->loaded >= 2; }
@@ -336,7 +350,7 @@ int main(int argc, char **argv)
                                   "seekback", "hls", "retry", "retryback", "retrynocache",
                                   "retrybacknocache", "retrymp3", "retrymka", "retrybackmka",
                                   "retrywebm", "retrybackwebm", "retrycues", "retrybackcues",
-                                  NULL};
+                                  "times", NULL};
     const char *mode = argc > 1 ? argv[1] : "";
     int known = 0;
     for (int n = 0; modes[n]; n++)
@@ -344,14 +358,15 @@ int main(int argc, char **argv)
     if (argc < 4 || !known) {
         fprintf(stderr, "usage: %s cutlist|cutpark|norange|whole|vbr|resume|seekback|hls|retry"
                 "|retryback|retrynocache|retrybacknocache|retrymp3|retrymka|retrybackmka"
-                "|retrywebm|retrybackwebm|retrycues|retrybackcues <fixtures> <tmpdir>\n",
+                "|retrywebm|retrybackwebm|retrycues|retrybackcues|times <fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
     int m_cutlist = !strcmp(mode, "cutlist"), m_cutpark = !strcmp(mode, "cutpark"),
         m_norange = !strcmp(mode, "norange"), m_whole = !strcmp(mode, "whole"),
         m_vbr = !strcmp(mode, "vbr"), m_resume = !strcmp(mode, "resume"),
-        m_seekback = !strcmp(mode, "seekback"), m_hls = !strcmp(mode, "hls");
+        m_seekback = !strcmp(mode, "seekback"), m_hls = !strcmp(mode, "hls"),
+        m_times = !strcmp(mode, "times");
     // The retry modes: the seek after the park goes back or past the cut,
     // with or without the seekable cache.
     int m_retry = !strncmp(mode, "retry", 5);
@@ -386,6 +401,8 @@ int main(int argc, char **argv)
             mpv_set_option_string(h, "stream-lavf-o", "reconnect=0");
         }
     }
+    if (m_times)
+        mpv_set_option_string(h, "ao-null-untimed", "yes");
     mpv_initialize(h);
 
     struct st s = {.read_error = -1, .skipped = -1, .eof = -1};
@@ -398,6 +415,56 @@ int main(int argc, char **argv)
     mpv_observe_property(h, 1, "demuxer-read-error", MPV_FORMAT_FLAG);
     mpv_observe_property(h, 2, "demuxer-skipped-segments", MPV_FORMAT_INT64);
     mpv_observe_property(h, 3, "eof-reached", MPV_FORMAT_FLAG);
+
+    if (m_times) {
+        char n4[1024], missing[1024];
+        snprintf(n4, sizeof n4, "%s/n.flac", argv[2]);
+        snprintf(missing, sizeof missing, "%s/missing.flac", argv[2]);
+        mt_cmd(h, "loadfile", local, NULL, NULL);
+        mt_cmd(h, "loadfile", n4, "append", NULL);
+        mt_cmd(h, "loadfile", missing, "append", NULL);
+        mt_cmd(h, "loadfile", local, "append", NULL);
+        mt_check(wait_for(h, &s, 20000, four_ends), "four END_FILE (%d)", s.ends);
+        static const struct { int reason; double dur; } want[] = {
+            {MPV_END_FILE_REASON_EOF, 1}, {MPV_END_FILE_REASON_EOF, 4},
+            {MPV_END_FILE_REASON_ERROR, -1}, {MPV_END_FILE_REASON_EOF, 1},
+        };
+        for (int i = 0; i < 4 && i < s.ends && s.patched; i++) {
+            struct mak_end_file *e = &s.end[i];
+            mt_check(e->reason == want[i].reason, "END_FILE %d: reason %d (%d)", i,
+                     want[i].reason, e->reason);
+            if (want[i].dur < 0) {
+                mt_check(e->mak_duration == -1 && e->mak_position == -1,
+                         "END_FILE %d: duration and position -1 for a file that never "
+                         "opened (%.3f, %.3f)", i, e->mak_duration, e->mak_position);
+                continue;
+            }
+            mt_check(fabs(e->mak_duration - want[i].dur) < 0.02, "END_FILE %d: duration %.0f s "
+                     "(%.3f)", i, want[i].dur, e->mak_duration);
+            mt_check(e->mak_position > want[i].dur - 0.1 && e->mak_position < want[i].dur + 0.05,
+                     "END_FILE %d: position at the end, %.0f s (%.3f)", i, want[i].dur,
+                     e->mak_position);
+        }
+        const char *paused[] = {"loadfile", n4, "replace", "-1", "start=1.5,pause=yes", NULL};
+        int loaded = s.loaded;
+        mpv_command(h, paused);
+        for (double t0 = mt_now(); s.loaded == loaded && mt_now() - t0 < 5;)
+            pump(h, 20, &s);
+        mt_check(s.loaded > loaded, "n.flac loaded paused");
+        pump(h, 300, &s);
+        mt_cmd(h, "stop", NULL, NULL, NULL);
+        mt_check(wait_for(h, &s, 5000, five_ends), "END_FILE of the stop");
+        if (s.ends >= 5 && s.patched) {
+            struct mak_end_file *e = &s.end[4];
+            mt_check(e->reason == MPV_END_FILE_REASON_STOP, "stop: reason stop (%d)", e->reason);
+            mt_check(fabs(e->mak_duration - 4) < 0.02, "stop: duration 4 s (%.3f)",
+                     e->mak_duration);
+            mt_check(fabs(e->mak_position - 1.5) < 0.05, "stop: position 1.5 s (%.3f)",
+                     e->mak_position);
+        }
+        mpv_terminate_destroy(h);
+        return mt_result();
+    }
 
     mt_cmd(h, "loadfile", url, NULL, NULL);
     if (playlist)

@@ -2,7 +2,7 @@
      * MAK_READ_ERROR_PATCH_V1 ─── an mpv_audio_kit extension
      * (libmpv-scripts patch_read_error.py). A libmpv without it has a
      * shorter struct, which ends at playlist_insert_num_entries: read these
-     * two fields only from a libmpv that has the demuxer-read-error
+     * four fields only from a libmpv that has the demuxer-read-error
      * property (mpv_get_property() does not answer
      * MPV_ERROR_PROPERTY_NOT_FOUND for it).
      *
@@ -21,3 +21,23 @@
      * mak_read_error for when the field exists.
      */
     int64_t mak_skipped_segments;
+    /**
+     * MAK_READ_ERROR_PATCH_V1 ─── the duration of the entry when the file
+     * was closed, in seconds (the duration property then), or -1 when mpv
+     * knew none: a live stream, a file that never opened. See
+     * mak_read_error for when the field exists.
+     *
+     * With the position below, it reaches a client even for an entry that
+     * opened and ended within one burst of events, which gets no change of
+     * the duration or time-pos property (mpv sends property changes only
+     * once its event queue is empty).
+     */
+    double mak_duration;
+    /**
+     * MAK_READ_ERROR_PATCH_V1 ─── the playback position of the entry when
+     * the file was closed, in seconds (the time-pos property then, never
+     * negative), or -1 when mpv knew none (a file that never opened). With
+     * MPV_END_FILE_REASON_EOF it is where playback stopped, the end for a
+     * whole file. See mak_read_error for when the field exists.
+     */
+    double mak_position;

@@ -54,15 +54,21 @@ same end, the same playlist advance, the same keep-open park.
     notified with the cache properties. With keep-open the last entry
     parks without END_FILE: these properties are how a client reads it
     there.
-  - MPV_EVENT_END_FILE gets two fields at the end, mak_read_error and
-    mak_skipped_segments: the properties when the file was closed, for
-    every reason. The error field keeps its documented meaning (0 unless
-    the reason is MPV_END_FILE_REASON_ERROR): a client that tests error
-    or counts errors sees no change. The struct grows at the end, so a
+  - MPV_EVENT_END_FILE gets four fields at the end, mak_read_error and
+    mak_skipped_segments, the properties when the file was closed, for
+    every reason, and mak_duration and mak_position, the entry's duration
+    and time-pos then (-1 when unknown). A client that reads the
+    properties from change events gets none for an entry that opens and
+    ends in one burst of events (mpv sends the changes only once its event
+    queue is empty): these fields carry them with the end. The error field
+    keeps its documented meaning (0 unless the reason is
+    MPV_END_FILE_REASON_ERROR): a client that tests error or counts errors
+    sees no change. The struct grows at the end, so a
     client built against the upstream header reads it as before; a client
     that reads the new fields checks first that the libmpv has the
     demuxer-read-error property. The node form of the event (scripts,
-    JSON IPC) gets read_error and skipped_segments.
+    JSON IPC) gets read_error and skipped_segments, and duration and
+    position when known.
 
 Limits. A response with neither Content-Length nor chunked encoding ends
 where its connection closes, and no cut can be told from that end: from a
@@ -455,14 +461,34 @@ UNINIT_DEMUXER = (
 
 UNINIT_DEMUXER_NEW = (
     '    // ' + MARKER + ': how the reading of the file ended, for\n'
-    '    // MPV_EVENT_END_FILE (demuxer-read-error, demuxer-skipped-segments).\n'
+    '    // MPV_EVENT_END_FILE (demuxer-read-error, demuxer-skipped-segments),\n'
+    '    // and the duration and time-pos of the entry then (-1 unknown, a\n'
+    '    // known position is never negative).\n'
     '    if (mpctx->demuxer) {\n'
     '        struct demux_reader_state mak_rs;\n'
     '        demux_get_reader_state(mpctx->demuxer, &mak_rs);\n'
     '        end_event.mak_read_error = mak_rs.mak_read_error;\n'
     '        end_event.mak_skipped_segments = mak_rs.mak_skipped_segments;\n'
+    '        double mak_len = get_time_length(mpctx);\n'
+    '        double mak_pos = get_current_time(mpctx);\n'
+    '        end_event.mak_duration = mak_len >= 0 ? mak_len : -1;\n'
+    '        end_event.mak_position = mak_pos != MP_NOPTS_VALUE ? MPMAX(mak_pos, 0) : -1;\n'
     '    }\n'
     + UNINIT_DEMUXER
+)
+
+END_EVENT_INIT = (
+    '    mpv_event_end_file end_event = {\n'
+    '        .playlist_entry_id = start_event.playlist_entry_id,\n'
+    '    };\n'
+)
+
+END_EVENT_INIT_NEW = (
+    '    mpv_event_end_file end_event = {\n'
+    '        .playlist_entry_id = start_event.playlist_entry_id,\n'
+    '        .mak_duration = -1, // ' + MARKER + ': unknown until set\n'
+    '        .mak_position = -1,\n'
+    '    };\n'
 )
 
 COMMAND_GETTERS = (
@@ -503,6 +529,10 @@ CLIENT_NODE_NEW = CLIENT_NODE + (
     '        // ' + MARKER + '\n'
     '        node_map_add_flag(dst, "read_error", eef->mak_read_error);\n'
     '        node_map_add_int64(dst, "skipped_segments", eef->mak_skipped_segments);\n'
+    '        if (eef->mak_duration >= 0)\n'
+    '            node_map_add_double(dst, "duration", eef->mak_duration);\n'
+    '        if (eef->mak_position >= 0)\n'
+    '            node_map_add_double(dst, "position", eef->mak_position);\n'
 )
 
 END_FILE_STRUCT = (
@@ -542,7 +572,10 @@ def apply(p):
         ('demux_open_lavf', LAVF_OPEN, LAVF_OPEN_NEW),
         ('demux_lavf_read_packet', LAVF_READ, LAVF_READ_NEW),
     ])
-    p.edits(LOADFILE, [('play_current_file end', UNINIT_DEMUXER, UNINIT_DEMUXER_NEW)])
+    p.edits(LOADFILE, [
+        ('play_current_file end_event', END_EVENT_INIT, END_EVENT_INIT_NEW),
+        ('play_current_file end', UNINIT_DEMUXER, UNINIT_DEMUXER_NEW),
+    ])
     p.edits(COMMAND, [
         ('property getters', COMMAND_GETTERS,
          p.asset('read_error/read_error_command_insert.c') + COMMAND_GETTERS),

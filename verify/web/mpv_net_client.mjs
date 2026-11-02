@@ -26,12 +26,13 @@ export async function openModule(factory, log) {
   const m = await factory({ print: log, printErr: log });
   const dv = () => new DataView(m.wasmMemory.buffer);
   const u32 = (p) => dv().getUint32(p, true);
-  // Where END_FILE keeps the two fields of patch_read_error.py, from the
-  // module's layout table (scripts/web/mak_web.c): entries 22 and 23 of 26,
+  // Where END_FILE keeps the four fields of patch_read_error.py, from the
+  // module's layout table (scripts/web/mak_web.c): entries 22 to 25 of 28,
   // 0 when the module has no such fields.
   const layout = [];
   for (let p = m._mak_web_layout(); dv().getInt32(p, true) !== -1; p += 4) layout.push(dv().getInt32(p, true));
-  const [readErrorAt, skippedAt] = layout.length === 26 ? [layout[22], layout[23]] : [0, 0];
+  const [readErrorAt, skippedAt, durationAt, positionAt] =
+    layout.length === 28 ? layout.slice(22, 26) : [0, 0, 0, 0];
   const str = (p) => (p ? m.UTF8ToString(p) : null);
   const withStrings = (list, fn) => {
     const ptrs = list.map((s) => m.stringToNewUTF8(s));
@@ -113,6 +114,8 @@ export async function openModule(factory, log) {
               if (readErrorAt) {
                 ev.readError = d.getInt32(data + readErrorAt, true) !== 0;
                 ev.skippedSegments = Number(d.getBigInt64(data + skippedAt, true));
+                ev.duration = d.getFloat64(data + durationAt, true);
+                ev.position = d.getFloat64(data + positionAt, true);
               }
               break;
             case EV.LOG:
