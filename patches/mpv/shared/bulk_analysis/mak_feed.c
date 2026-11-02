@@ -342,7 +342,8 @@ static MP_THREAD_VOID feed_main(void *p)
              * AAC, an MP3 without a Xing header) can lie far past it, and
              * the re-open would download the file again for the same
              * envelope, trimmed to the bins filled. */
-            int64_t size = mak_demux_feed_replay_state(a->feed)->stream_size;
+            struct mak_feed_replay *r = mak_demux_feed_replay_state(a->feed);
+            int64_t size = r->stream_size;
             bool at_duration = d.emitted - d.first_pos >= a->total_samples -
                 (int64_t)(MAK_FEED_END_SLACK_SECS * a->rate);
             bool at_size = size > 0 && d.byte_end > 0 &&
@@ -350,9 +351,12 @@ static MP_THREAD_VOID feed_main(void *p)
             /* A stream on a hinted length ends where it ends: the length is
              * the client's, and a re-open could only download it again. A
              * hint past the end leaves the bins after the last one filled,
-             * which the completion trims as for a duration that overshoots. */
+             * which the completion trims as for a duration that overshoots.
+             * But an end on a read error (a connection that dropped, a body
+             * cut inside a chunk) is no end of the stream: the envelope and
+             * the loudness of part of it are not the stream's. */
             complete = d.from_bof && d.anchored && !d.rate_changed &&
-                (a->hinted || at_duration || at_size);
+                ((a->hinted && !r->read_error) || at_duration || at_size);
             reopen = !complete;
             break;
         }

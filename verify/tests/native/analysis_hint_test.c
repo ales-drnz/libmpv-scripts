@@ -25,10 +25,52 @@
 //          would start a second transcode): the waveform grows from
 //          playback on the 30 s axis, the loudness scan is unavailable.
 //   nocache  hint 30 s, cache off: no cache to feed from, the same.
+//   cut    hint 30 s, the response cut inside a chunk at 165000 bytes
+//          (about 14 s, run.sh): the pass ends on a read error, which is
+//          no end of the stream. Not ready, no loudness of half the
+//          stream: grown from playback on the 30 s axis, the loudness
+//          scan unavailable, one GET, and eof-cached never yes.
 //   range  b.flac (30 s) with byte ranges at 600000 bytes a second and a
 //          hint of 10 s: a seekable file does not read the hint, ready on
 //          mpv's own 30 s.
+//
+// The FFmpeg of run.sh (the system one) decides the end of a chunked body
+// alone: FFmpeg 9 ends a whole one with an error and one cut inside a
+// chunk as a plain end, the reverse of the FFmpeg libmpv-scripts ships
+// (patch_ffmpeg_http_read_errors.py). On hint.opus, avio_read_partial
+// below stands in for the shipped one in both senses: the end of a body
+// that brought the whole file is AVERROR_EOF, any other end AVERROR(EIO).
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <sys/stat.h>
+#include <libavutil/error.h>
 #include "analysis_test.h"
+
+// The size of the file served chunked, 0 off (see above).
+static int64_t chunked_size;
+
+int avio_read_partial(void *s, unsigned char *buf, int size)
+{
+    static int (*real)(void *, unsigned char *, int);
+    static void *player;
+    static int64_t got;
+    if (!real)
+        real = (int (*)(void *, unsigned char *, int))dlsym(RTLD_NEXT, "avio_read_partial");
+    int r = real(s, buf, size);
+    // The player's stream only, the first context to read.
+    if (!chunked_size || (player && s != player))
+        return r;
+    player = s;
+    if (r > 0) {
+        got += r;
+    } else if (r != AVERROR_EXIT) {
+        int whole = got >= chunked_size;
+        printf("     stand-in: the body ends after %lld of %lld bytes (%d): %s\n",
+               (long long)got, (long long)chunked_size, r, whole ? "AVERROR_EOF" : "EIO");
+        r = whole ? AVERROR_EOF : AVERROR(EIO);
+    }
+    return r;
+}
 
 // Whether the end of the stream has reached the demuxer cache.
 static int eof_cached(mpv_handle *h)
@@ -45,22 +87,27 @@ static int eof_cached(mpv_handle *h)
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s exact|short|long|none|full|nocache|range "
+        fprintf(stderr, "usage: %s exact|short|long|none|full|nocache|cut|range "
                 "<fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
     const char *mode = argv[1];
     int range = !strcmp(mode, "range");
-    int grown = !strcmp(mode, "full") || !strcmp(mode, "nocache");
+    int cut = !strcmp(mode, "cut");
+    int grown = !strcmp(mode, "full") || !strcmp(mode, "nocache") || cut;
     const char *hint = !strcmp(mode, "exact") || grown ? "30"
                      : !strcmp(mode, "short") ? "20" : !strcmp(mode, "long") ? "45"
                      : range ? "10" : NULL;
-    char url[256], opt[64];
+    char url[256], opt[64], path[1100];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s",
              getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0",
              range ? "b.flac" : "hint.opus");
     snprintf(opt, sizeof opt, "waveform-duration-hint=%s", hint ? hint : "");
+    snprintf(path, sizeof path, "%s/hint.opus", argv[2]);
+    struct stat st;
+    if (!range && stat(path, &st) == 0)
+        chunked_size = st.st_size;
     mpv_handle *h = an_create();
     if (!strcmp(mode, "full"))
         mpv_set_option_string(h, "demuxer-max-bytes", "100KiB");
@@ -116,7 +163,7 @@ int main(int argc, char **argv)
            partials, other, other ? other_state : "none", l.state, l.integrated);
 
     // The server's log: one line per GET. Each download starts at byte 0.
-    char path[1100], line[256];
+    char line[256];
     snprintf(path, sizeof path, "%s.http.log", argv[3]);
     FILE *f = fopen(path, "r");
     int gets = 0;
@@ -134,6 +181,12 @@ int main(int argc, char **argv)
         mt_check(!strcmp(l.state, "unavailable"), "the loudness scan is unavailable (%s)",
                  l.state);
         mt_check(gets == 1, "no second request (%d GETs from the start)", gets);
+        if (cut) {
+            int rerr = -1;
+            mpv_get_property(h, "demuxer-read-error", MPV_FORMAT_FLAG, &rerr);
+            mt_check(rerr == 1, "the cut is a read error (%d)", rerr);
+            mt_check(!t_eof, "eof-cached never yes for the cut stream");
+        }
     } else if (!hint) {
         mt_check(t_eof > 0, "the whole stream reached the cache");
         mt_check(!strcmp(w.state, "rolling"), "the waveform rolls from playback (%s)",

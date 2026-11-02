@@ -62,6 +62,11 @@ struct mak_feed_replay {
     bool bof;                     /* the first one starts the file */
     bool eof;                     /* the replay reached the end of file */
     int64_t stream_size;          /* the file's size at attach, or -1 */
+    /* The end of file came from a read error and not the real end
+     * (demux-side, patch_read_error.py; always false without it). Set
+     * under the demuxer's lock before the end of file reaches the consumer,
+     * at attach or with the end itself. */
+    bool read_error;
 };
 
 /* Attach a feed of [sh]'s packets to [demuxer] (implemented in demux.c, so

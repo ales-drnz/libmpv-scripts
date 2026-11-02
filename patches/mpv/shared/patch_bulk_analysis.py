@@ -133,10 +133,11 @@ has to care which path produced the envelope:
     out; a long one ends at the end of the stream, its bins trimmed after
     the last one filled as for a duration that overshoots (the reader
     leaves them out, `total_bins` keeps the hinted axis). A pass that
-    cannot be clean grows from playback on the hinted axis instead of
-    opening the stream again, which would start a second transcode. Not
-    read for any other source; without a hint the stream goes to one of
-    the two strategies below.
+    cannot be clean, or that ends on a read error (the connection dropped
+    before the end), grows from playback on the hinted axis instead of
+    opening the stream again, which would start a second transcode, and
+    the loudness scan reports unavailable. Not read for any other source;
+    without a hint the stream goes to one of the two strategies below.
 
   * **Unknown duration** (true live): no fixed `[0, total]` axis exists, so
     state `rolling` — a sliding window of ABSOLUTE media-time bins, grown by
@@ -442,10 +443,17 @@ DEMUX_EDITS = [
      '    if (!ds->eof) {\n'
      '        ds->eof = true;\n'
      '        /* ' + MARKER + ' ─── a cancelled read also ends here: not an\n'
-     '         * end of file for the analysis. */\n'
+     '         * end of file for the analysis. With patch_read_error.py,\n'
+     '         * read_packet() sets the read error before it marks the end,\n'
+     '         * and the feed takes it with the end. */\n'
      '        if (ds->in->mak_feed && !demux_cancel_test(ds->in->d_thread) &&\n'
-     '            ds->index == mak_demux_feed_stream(ds->in->mak_feed))\n'
-     '            mak_demux_feed_mark(ds->in->mak_feed, MAK_FEED_EOF);\n'),
+     '            ds->index == mak_demux_feed_stream(ds->in->mak_feed)) {\n'
+     '#ifdef MAK_DEMUX_READ_ERROR\n'
+     '            mak_demux_feed_replay_state(ds->in->mak_feed)->read_error =\n'
+     '                ds->in->mak_read_error;\n'
+     '#endif\n'
+     '            mak_demux_feed_mark(ds->in->mak_feed, MAK_FEED_EOF);\n'
+     '        }\n'),
     ('execute_seek',
      'static void execute_seek(struct demux_internal *in)\n'
      '{\n'

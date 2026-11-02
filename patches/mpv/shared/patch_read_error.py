@@ -40,11 +40,14 @@ same end, the same playlist advance, the same keep-open park.
     there and the count stays 0).
   - demux.c keeps, with eof, whether the read that ended the file failed
     (demuxer or stream), false again once a read gets on, and the count;
-    struct demux_reader_state hands both to the player. A cached range
-    that ends on a read error is no end of the file: a seek past it is a
-    seek of the demuxer, and a seek into it resumes the demuxer at its
-    end, as for another range, so that the read is tried again there. Nor
-    does it count for eof-cached of demuxer-cache-state.
+    struct demux_reader_state hands both to the player. It is set before
+    the streams are marked at their end, so the analysis feed of
+    bulk_analysis takes it with the end (MAK_DEMUX_READ_ERROR in demux.h
+    tells that patch it is there). A cached range that ends on a read
+    error is no end of the file: a seek past it is a seek of the demuxer,
+    and a seek into it resumes the demuxer at its end, as for another
+    range, so that the read is tried again there. Nor does it count for
+    eof-cached of demuxer-cache-state.
   - Two properties of the current file, unavailable without one:
     demuxer-read-error (flag) and demuxer-skipped-segments (int64). They
     change when the demuxer stops reading, before eof-reached, and are
@@ -274,6 +277,11 @@ DEMUXER_END_NEW = (
     '    bool mak_read_error;\n'
     '    int64_t mak_skipped_segments;\n'
     '} demuxer_t;\n'
+    '\n'
+    '// ' + MARKER + ': demux.c keeps the read error with eof\n'
+    '// (demux_internal.mak_read_error), set before the streams are marked at\n'
+    '// their end. The analysis feed of bulk_analysis reads it there.\n'
+    '#define MAK_DEMUX_READ_ERROR 1\n'
 )
 
 RANGE_EOF = '    bool is_eof;            // set if the file ends with this range\n'
@@ -293,6 +301,22 @@ INTERNAL_EOF_NEW = INTERNAL_EOF + (
     '    int64_t mak_skipped_segments;\n'
 )
 
+READ_PACKET_EOF = (
+    '    if (!in->seeking) {\n'
+    '        if (eof) {\n'
+)
+
+READ_PACKET_EOF_NEW = (
+    '    if (!in->seeking) {\n'
+    '        // ' + MARKER + ': false again as soon as a read gets on. Set\n'
+    '        // before the streams are marked at their end, which the analysis\n'
+    '        // feed (bulk_analysis) reads with it.\n'
+    '        in->mak_read_error = eof && (demux->mak_read_error ||\n'
+    '                             (demux->stream && demux->stream->mak_read_error));\n'
+    '        in->current_range->mak_read_error = in->mak_read_error;\n'
+    '        if (eof) {\n'
+)
+
 READ_PACKET_END = (
     '        in->eof = eof;\n'
     '        in->reading = !eof;\n'
@@ -304,10 +328,6 @@ READ_PACKET_END = (
 READ_PACKET_END_NEW = (
     '        in->eof = eof;\n'
     '        in->reading = !eof;\n'
-    '        // ' + MARKER + ': false again as soon as a read gets on.\n'
-    '        in->mak_read_error = eof && (demux->mak_read_error ||\n'
-    '                             (demux->stream && demux->stream->mak_read_error));\n'
-    '        in->current_range->mak_read_error = in->mak_read_error;\n'
     '    }\n'
     '    in->mak_skipped_segments = demux->mak_skipped_segments; // ' + MARKER + '\n'
     '    return true;\n'
@@ -509,6 +529,7 @@ def apply(p):
         ('struct demux_cached_range is_eof', RANGE_EOF, RANGE_EOF_NEW),
         ('struct demux_internal eof', INTERNAL_EOF, INTERNAL_EOF_NEW),
         ('attempt_range_joining', RANGE_JOIN, RANGE_JOIN_NEW),
+        ('read_packet eof', READ_PACKET_EOF, READ_PACKET_EOF_NEW),
         ('read_packet end', READ_PACKET_END, READ_PACKET_END_NEW),
         ('find_cache_seek_range', CACHE_RANGE, CACHE_RANGE_NEW),
         ('execute_cache_seek', CACHE_RESUME, CACHE_RESUME_NEW),

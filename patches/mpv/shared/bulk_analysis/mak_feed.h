@@ -39,10 +39,11 @@ struct mak_scan_track;
  * The pass then ends at the first of the end of the stream and that length,
  * so a wrong hint still ends READY: a short one covers the hint and leaves
  * the rest of the stream out, a long one keeps the hinted axis with the
- * bins after the end of the stream trimmed. A pass that cannot be clean is
- * not re-opened (a second request would start a second transcode): the
- * waveform grows from playback on the hinted axis, and the loudness scan
- * reports unavailable. */
+ * bins after the end of the stream trimmed. An end on a read error is no
+ * end of the stream. A pass that cannot be clean, or that ends on a read
+ * error, is not re-opened (a second request would start a second
+ * transcode): the waveform grows from playback on the hinted axis, and the
+ * loudness scan reports unavailable. */
 bool mak_feed_start(int gen, struct demuxer *demuxer, struct sh_stream *audio,
                     double duration_secs, bool hinted, const char *url,
                     const struct mak_scan_track *track,
