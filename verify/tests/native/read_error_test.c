@@ -412,6 +412,10 @@ int main(int argc, char **argv)
     mt_check(s.patched, "the libmpv has demuxer-read-error (%s)", mpv_error_string(r));
     mt_check(r == MPV_ERROR_PROPERTY_UNAVAILABLE || !s.patched,
              "demuxer-read-error unavailable without a file (%s)", mpv_error_string(r));
+    int64_t fields = 0;
+    r = mpv_get_property(h, "mak-end-file-fields", MPV_FORMAT_INT64, &fields);
+    mt_check(r >= 0 && fields == 4, "mak-end-file-fields 4 without a file (%s, %lld)",
+             mpv_error_string(r), (long long)fields);
     mpv_observe_property(h, 1, "demuxer-read-error", MPV_FORMAT_FLAG);
     mpv_observe_property(h, 2, "demuxer-skipped-segments", MPV_FORMAT_INT64);
     mpv_observe_property(h, 3, "eof-reached", MPV_FORMAT_FLAG);
