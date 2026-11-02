@@ -114,6 +114,7 @@ PATCH_TESTS=(
   "embed_cacert_patch_test {ffmpeg}"
   "filter_bounds_anchor_test {ffmpeg}"
   "winsock_poll_patch_test {ffmpeg}"
+  "advanced_editlist_patch_test {ffmpeg}"
   "dash_keepalive_patch_test {ffmpeg}"
   "webio_patch_test {ffmpeg}"
   "read_error_patch_test {ffmpeg}"
