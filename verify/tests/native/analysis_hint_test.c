@@ -33,6 +33,8 @@
 //   forced  hint 30 s with force-seekable: a stream that only seeks on
 //          request is decoded from the cache as in exact, with one GET.
 //   forcednone  no hint, with force-seekable: rolls as in none, one GET.
+//   huge   hint 1e300 s, past the longest axis (MAK_WAVEFORM_FED_MAX_SECS):
+//          the option refuses it, as in none.
 //   range  b.flac (30 s) with byte ranges at 600000 bytes a second and a
 //          hint of 10 s: a seekable file does not read the hint, ready on
 //          mpv's own 30 s.
@@ -94,20 +96,20 @@ int main(int argc, char **argv)
 {
     if (argc < 4) {
         fprintf(stderr, "usage: %s exact|short|long|none|full|nocache|cut|forced|forcednone"
-                "|range|known <fixtures> <tmpdir>\n",
+                "|huge|range|known <fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
     const char *mode = argv[1];
     int range = !strcmp(mode, "range"), known = !strcmp(mode, "known");
-    int cut = !strcmp(mode, "cut");
+    int cut = !strcmp(mode, "cut"), huge = !strcmp(mode, "huge");
     int forced = !strncmp(mode, "forced", 6);
     int grown = !strcmp(mode, "full") || !strcmp(mode, "nocache") || cut;
     const char *hint = !strcmp(mode, "exact") || grown || !strcmp(mode, "forced") ? "30"
                      : !strcmp(mode, "short") ? "20" : !strcmp(mode, "long") ? "45"
-                     : range || known ? "10" : NULL;
-    // The modes that roll from playback: no hint.
-    int rolls = !hint;
+                     : range || known ? "10" : huge ? "1e300" : NULL;
+    // The modes that roll from playback: no hint, or one the option refuses.
+    int rolls = !hint || huge;
     char url[256], opt[64], path[1100];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s",
              getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0",

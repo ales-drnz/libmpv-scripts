@@ -125,22 +125,22 @@ has to care which path produced the envelope:
   * **HTTP stream that cannot seek and tells no length, with a hint** (a
     transcode from a music server: chunked, no byte ranges, no
     Content-Length). The client sets the per-file option
-    `waveform-duration-hint` (seconds, 0 for none) to the length it knows,
-    and the cache feed above decodes the stream with that length as its
-    axis, `decoding` while the cache fills. A duration mpv knows
-    (Content-Length from a server without byte ranges) wins over the hint,
-    and a stream that only seeks with `force-seekable` counts as one that
-    cannot. The pass ends at the first of the end of the stream and the
-    hinted length, so a wrong hint still ends `ready`: a short one covers
-    the hint and leaves the rest of the stream out; a long one ends at the
-    end of the stream, its bins trimmed after the last one filled as for a
-    duration that overshoots (the reader leaves them out, `total_bins`
-    keeps the hinted axis). A pass that cannot be clean, or that ends on a
-    read error (the connection dropped before the end), grows from playback
-    on the hinted axis instead of opening the stream again, which would
-    start a second transcode, and the loudness scan reports unavailable.
-    Not read for any other source; without a hint the stream goes to one
-    of the two strategies below.
+    `waveform-duration-hint` (seconds, 0 for none, at most 5e6) to the
+    length it knows, and the cache feed above decodes the stream with that
+    length as its axis, `decoding` while the cache fills. A duration mpv
+    knows (Content-Length from a server without byte ranges) wins over the
+    hint, and a stream that only seeks with `force-seekable` counts as one
+    that cannot. The pass ends at the first of the end of the stream and
+    the hinted length, so a wrong hint still ends `ready`: a short one
+    covers the hint and leaves the rest of the stream out; a long one ends
+    at the end of the stream, its bins trimmed after the last one filled as
+    for a duration that overshoots (the reader leaves them out,
+    `total_bins` keeps the hinted axis). A pass that cannot be clean, or
+    that ends on a read error (the connection dropped before the end),
+    grows from playback on the hinted axis instead of opening the stream
+    again, which would start a second transcode, and the loudness scan
+    reports unavailable. Not read for any other source; without a hint the
+    stream goes to one of the two strategies below.
 
   * **Unknown duration** (true live): no fixed `[0, total]` axis exists, so
     state `rolling` — a sliding window of ABSOLUTE media-time bins, grown by
@@ -290,9 +290,12 @@ LOADFILE_CLOSE_PATCHED = (
 
 # The per-file option waveform-duration-hint: the length a client already
 # knows for a network stream that tells none (a transcode from a music
-# server), read by mak_scan_start at FILE_LOADED. Next to prefetch-playlist,
-# whose opener never reads it (patch_prefetch.py ignores it when it compares
-# the per-file options of two entries). Pristine lines lifted from mpv
+# server), read by mak_scan_start at FILE_LOADED. At most
+# MAK_WAVEFORM_FED_MAX_SECS (5e6 s, mak_waveform.h), the longest axis the
+# analysis lays out: a longer hint is refused, as the option refuses any
+# value out of range, and the file plays without one. Next to
+# prefetch-playlist, whose opener never reads it (patch_prefetch.py ignores
+# it when it compares the per-file options of two entries). Pristine lines lifted from mpv
 # 0.41.0.
 OPTIONS_H_PRISTINE = '    bool prefetch_open;\n'
 
@@ -308,7 +311,7 @@ OPTIONS_C_PATCHED = (
     '    {"prefetch-playlist", OPT_BOOL(prefetch_open)},\n'
     '    /* ' + MARKER + ' */\n'
     '    {"waveform-duration-hint", OPT_DOUBLE(mak_waveform_duration_hint),\n'
-    '        M_RANGE(0, DBL_MAX)},\n'
+    '        M_RANGE(0, 5e6)}, /* MAK_WAVEFORM_FED_MAX_SECS */\n'
 )
 
 

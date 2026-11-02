@@ -196,11 +196,13 @@ int mak_waveform_cancel_running(void)
  * let the af-tap grow the envelope from playback (mak_waveform_fold_samples).
  * Used for sources we cannot parallel-decode (DASH/HLS transcode, live,
  * non-seekable). No-op if a newer generation has started. Without a usable
- * duration there is no axis, so the state goes FAILED. */
+ * duration there is no axis, so the state goes FAILED: none, or one past
+ * MAK_WAVEFORM_FED_MAX_SECS, the longest axis (checked in double, before
+ * any conversion to an integer). */
 void mak_waveform_arm_progressive(int my_gen, double duration_secs)
 {
-    int pbins = duration_secs > 0 ? (int)(duration_secs / 0.04) : 0;
-    if (pbins > MAK_WAVEFORM_BINS) pbins = MAK_WAVEFORM_BINS;
+    bool usable = duration_secs > 0 && duration_secs <= MAK_WAVEFORM_FED_MAX_SECS;
+    int pbins = usable ? (int)fmin(duration_secs / 0.04, MAK_WAVEFORM_BINS) : 0;
     mp_mutex_lock(&g_wave_lock);
     if (atomic_load(&g_wave.current_gen) != my_gen) {
         mp_mutex_unlock(&g_wave_lock);

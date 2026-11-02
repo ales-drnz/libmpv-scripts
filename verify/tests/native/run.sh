@@ -82,7 +82,7 @@ CASES=(
   "lib analysis_tail_test analysis 2000000 over"
   "lib analysis_tail_test analysis 2000000:400000 overcut"
   "lib analysis_feed_test analysis 600000 grow"
-  "lib analysis_hint_test analysis 60000::chunked exact short long none full nocache forced forcednone"
+  "lib analysis_hint_test analysis 60000::chunked exact short long none full nocache forced forcednone huge"
   "lib analysis_hint_test analysis 60000:165000:chunked cut"
   "lib analysis_hint_test analysis 600000 range"
   "lib analysis_hint_test analysis 600000::norange known"
