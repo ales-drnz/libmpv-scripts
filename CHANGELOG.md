@@ -1,32 +1,35 @@
 ## [0.3.0] - Unreleased
 
 ### Breaking
-- The libraries are LGPL, version 3 or later, instead of GPLv3: mpv is built with `-Dgpl=false`, FFmpeg without `--enable-gpl` (with `--enable-version3`, for OpenSSL 3), and Rubber Band (GPL-2.0+) is left out, with FFmpeg's `rubberband` filter, which leaves `audioFilters` of the manifest, and mpv's `af=rubberband`. Pitch and tempo stay through `pitch`, `speed` and the `atempo`, `asetrate` and `aresample` filters. The GPL build with Rubber Band is an opt-in for a library built by hand: `LIBMPV_GPL=1`, or Settings ▸ License in the TUI (see [Licenses](README.md#licenses)); the Build workflow does not set it. A work tree built before stops the build at its record: clean `builds/work/`.
-- The playlist prefetch runs a new hook, `on_prefetch`, before it opens the next entry ahead of time, while the current one plays, with `prefetch-open-filename` and `prefetch-playlist-entry-id` readable during it. `on_load` runs once per entry, when it starts, instead of a second time for the prefetch (`patch_prefetch.py`).
-- `mpv_event_end_file` ends with two new fields, `mak_read_error` and `mak_skipped_segments`, so the struct is 8 bytes longer. A client that reads it through `mpv/client.h` needs nothing more.
-- `patch_prefetch_hook.py` and `patch_prefetch_state.py` are now one script, `patch_prefetch.py`, with one toggle, `prefetch`, in place of `prefetch_hook` and `prefetch_state`: a `DISABLED_PATCHES` or saved TUI setting that turned either old one off is ignored, so the patch is applied, and the manifest lists `prefetch`.
+- The libraries are LGPL, version 3 or later, instead of GPLv3: mpv and FFmpeg are built without their GPL parts, and Rubber Band is left out with the `rubberband` filters of FFmpeg and mpv.
+- The GPL build with Rubber Band is an opt-in for a library built by hand: `LIBMPV_GPL=1`, or Settings ▸ License in the TUI. A work tree built before stops the build: clean `builds/work/`.
+- The playlist prefetch runs a new hook, `on_prefetch`, before it opens the next entry, and `on_load` runs once per entry, when it starts (`patch_prefetch.py`).
+- `mpv_event_end_file` ends with two new fields, `mak_read_error` and `mak_skipped_segments`, so the struct is 8 bytes longer.
+- `patch_prefetch_hook.py` and `patch_prefetch_state.py` are one script, `patch_prefetch.py`, with one toggle, `prefetch`. A saved setting that turned an old toggle off is ignored.
 
 ### Added
-- `licenses.zip`, published with the libraries: the license texts of each component the build compiles and links into each target from the source trees built, the notice of the embedded Mozilla CA bundle, the texts of the toolchain runtimes linked statically whose license asks for a notice (mingw-w64's winpthreads and CRT on Windows, LLVM's libc++, libc++abi, libunwind and compiler-rt on Android, Windows arm64 and web, Emscripten and its musl on web), and a `README.txt` with the commit of this repo and the URL and SHA-256 of each source the build downloaded (`write_licenses`). The build records and `manifest.json` name the license (`"license"`), and the manifest the zip and its hash; Verify checks the license of each library and its texts.
-- libmpv for the browser: `libmpv_web.zip`, a WebAssembly module built with Emscripten and pthreads that exports the mpv client API and `mak_pcm_*` (mpv_audio_kit [#26](https://github.com/ales-drnz/mpv_audio_kit/issues/26)). It reads `http://`, `https://` and `blob:` URLs through `fetch` (`patch_ffmpeg_webio.py`), plays through `ao=webaudio`, a ring an AudioWorklet plays, and states its ABI version and the layout of the client structs. The manifest lists it, and Verify and the Build check it in Chrome.
-- A file cut short by a read error says so: `END_FILE` and the new `demuxer-read-error` tell it from a file that ended, and `demuxer-skipped-segments` counts the HLS and DASH segments lost to an error. FFmpeg reports the read errors it hid from mpv: a resume refused with an error reply and a chunked body that stops before its last chunk end with EIO instead of a complete file (`read_error` toggle).
-- `waveform-duration-hint`, a per-file length in seconds: an HTTP stream that cannot seek and tells no length, such as a music server's transcode, decodes its waveform and loudness from mpv's cache (mpv_audio_kit [#29](https://github.com/ales-drnz/mpv_audio_kit/issues/29)). An entry whose per-file options differ only in it is still prefetched.
+- `licenses.zip`, published with the libraries: the license texts of each target, the statically linked toolchain runtimes included, and the sources the build downloaded (`write_licenses`). The manifest names the license and the hash of the zip.
+- libmpv for the browser: `libmpv_web.zip`, a WebAssembly module that reads `http://`, `https://` and `blob:` URLs through `fetch` and plays through `ao=webaudio` (mpv_audio_kit [#26](https://github.com/ales-drnz/mpv_audio_kit/issues/26)).
+- `prefetch-open-filename` and `prefetch-playlist-entry-id` name the next entry while `on_prefetch` runs.
+- `END_FILE` and the new `demuxer-read-error` tell a file cut short by a read error from one that ended, and `demuxer-skipped-segments` counts the HLS and DASH segments lost (`read_error` toggle).
+- `waveform-duration-hint` gives the length of an HTTP stream that cannot seek and tells none, so its waveform and loudness decode from mpv's cache (mpv_audio_kit [#29](https://github.com/ales-drnz/mpv_audio_kit/issues/29)).
 
 ### Fixed
-- The prefetch hook runs while the current file plays: the audio output no longer runs dry and `time-pos` no longer stands still while a client resolves the next URL, and `playlist-next` and `stop` no longer wait for it.
-- A seek after a read error tries the read again, instead of serving the end of the file from the cache or never resuming the demuxer.
-- A refused `http://` or `smb2://` connection fails at once on Windows, instead of after the network timeout: FFmpeg's poll over `select()` now waits for a failed connect in the exception set, where Winsock reports it (`patch_ffmpeg_winsock_poll.py`).
-- An `af-command` that took is kept in the arguments of its filter, so a seek, a loop, a track switch, the next file or an `af` set rebuild the filter with its live value.
-- The http reconnect puts its state back only for a body of known size: a body without `Content-Length` that ends at its connection's close no longer retries for seconds and ends with EIO.
-- The end of a file with gapless audio is played to its last sample when a push output (ALSA, PulseAudio, the web output, `ao=null`) ran dry in its final buffer: mpv took the stopped output for played out, and `keep-open` parked with up to 0.4 s still queued, `time-pos` short of the end. The output is started again while audio waits in its queue, and before the drain at the end of a playlist (`gapless_tail` toggle).
-- A DASH keep-alive refused for another host, as every segment redirected to a CDN is, logs at verbose level instead of a warning every few seconds.
-- A patch script whose anchor moved leaves the tree as it was: every script now runs on one anchor engine, which checks all anchors before writing and reports each one that fails.
-- The manifest lists the toggleable patches and the audio filters each build recorded, instead of those of the settings present when it ran.
+- The prefetch hook runs while the current file plays: the output no longer runs dry, `time-pos` keeps moving, and `playlist-next` and `stop` no longer wait for it.
+- A seek after a read error tries the read again, instead of serving the end of the file from the cache.
+- FFmpeg ends a resume refused with an error reply, or a chunked body that stops early, with EIO instead of a complete file.
+- An `af-command` value stays in its filter's arguments, so a seek, a loop, a track switch or the next file keep it.
+- The http reconnect no longer retries for seconds on a body without `Content-Length` that ends with its connection.
+- With gapless audio, a push output that ran dry in its last buffer plays the file to its last sample instead of parking up to 0.4 s early (`gapless_tail` toggle).
+- A DASH keep-alive refused for another host logs at verbose level instead of a warning every few seconds.
+- A patch script whose anchor moved leaves the tree as it was and reports every anchor that fails.
+- The manifest lists the patches and the audio filters each build recorded, not those of the current settings.
+- Windows: a refused `http://` or `smb2://` connection fails at once instead of after the network timeout (`patch_ffmpeg_winsock_poll.py`).
 
 ### Build
-- The TUI builds the web module (`./build web`) and lists the `read_error` toggle; Verify checks the web module and the traces of `read_error`.
-- The native tests run the read error, hint, Windows poll and gapless tail cases, and stop when an mpv patch fails. The Android emulators run the media session tests of the kit, a call included.
-- The Build pins its actions by commit, and Check mpv_audio_kit tells the kit's tests which libmpv release they check.
+- The TUI builds the web module (`./build web`) and lists the `read_error` toggle. Verify checks the web module and the license of every library.
+- The native tests cover the read error, hint, Windows poll and gapless tail cases, and the Android emulators run the media session tests of the kit.
+- The Build pins its actions by commit, and Check mpv_audio_kit tells the kit's tests which release they check.
 - Updated the stamp to `libmpv-r20`: `mpv-version` reads `mpv v0.41.0+r20`.
 
 ## [0.2.3] - 22-10-2026
