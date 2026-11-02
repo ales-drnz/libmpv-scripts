@@ -92,7 +92,7 @@ CASES=(
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime"
   "unit pcm_tap_idle_test - - idle slow pause quiet"
-  "lib pcm_loop_test playback - file late ab next abnext off"
+  "lib pcm_loop_test playback - file late ab next abnext off afdrop"
   "lib chapter_list_test playback - meta index observe kit same"
   "lib af_command_args_test playback - prop seek track extern reload next keep rollback order fail labels bridge"
   "lib read_error_test readerror 2000000:233000:drop cutlist"

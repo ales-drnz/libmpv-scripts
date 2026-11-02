@@ -11,6 +11,10 @@
 //   next  loop-file=inf and a second entry (p_st48.flac) after the PCM one
 //   abnext the A-B loop and the second entry
 //   off   no loop (control: parks at the end, no warning)
+//   afdrop no loop, 3 s of PCM, af=dynaudnorm, then af="" 0.5 s after
+//         the source drained, while dynaudnorm holds the EOF (F61): the
+//         entry cannot seek, and must still park within 5 s, with no
+//         "Cannot seek"
 // One second of s16le stereo 48 kHz is written and finished before the
 // load, with the options the kit passes (pcmLoadOptions). After the source
 // drained, the entry must end: the keep-open park (pause yes) or the next
@@ -39,10 +43,10 @@ int main(int argc, char **argv)
     const char *mode = argv[1], *fx = argv[2];
     int m_file = !strcmp(mode, "file"), m_late = !strcmp(mode, "late"),
         m_ab = !strcmp(mode, "ab"), m_next = !strcmp(mode, "next"),
-        m_off = !strcmp(mode, "off");
+        m_off = !strcmp(mode, "off"), m_drop = !strcmp(mode, "afdrop");
     if (!strcmp(mode, "abnext"))
         m_ab = m_next = 1;
-    if (!(m_file || m_late || m_ab || m_next || m_off)) {
+    if (!(m_file || m_late || m_ab || m_next || m_off || m_drop)) {
         printf("unknown mode %s\n", mode);
         return 2;
     }
@@ -56,17 +60,20 @@ int main(int argc, char **argv)
         mpv_set_option_string(h, "ab-loop-a", "0.2");
         mpv_set_option_string(h, "ab-loop-b", "0.6");
     }
+    if (m_drop)
+        mpv_set_option_string(h, "af", "dynaudnorm");
     if (mpv_initialize(h) < 0)
         return 2;
     mpv_request_log_messages(h, "warn");
 
     int64_t id = mak_pcm_create(0);
-    int64_t len = 48000 * 4;
+    int64_t len = 48000 * 4 * (m_drop ? 3 : 1);
     uint8_t *pcm = calloc(1, len);
     for (int64_t i = 0; i < len / 2; i++)
         ((int16_t *)pcm)[i] = 8192;
     mt_check(id > 0 && mak_pcm_write(id, pcm, len) == len && mak_pcm_finish(id) == 0,
-             "1 s of PCM written and finished in id %lld", (long long)id);
+             "%d s of PCM written and finished in id %lld",
+             (int)(len / 192000), (long long)id);
     free(pcm);
 
     char url[64];
@@ -96,6 +103,33 @@ int main(int argc, char **argv)
     }
     mt_check(mak_pcm_state(id) == 3, "the source drained (state %d)",
              mak_pcm_state(id));
+    if (m_drop) {
+        pb_pump(h, 500, &ev);
+        double at = -1;
+        mt_double(h, "time-pos", &at);
+        mt_check(flag(h, "eof-reached") == 0, "still playing at %.3f s", at);
+        mt_check(mpv_set_property_string(h, "af", "") >= 0, "af cleared");
+        double d0 = mt_now(), took = -1;
+        while (mt_now() - d0 < 5.0) {
+            pb_pump(h, 50, &ev);
+            if (ev.end_files || (flag(h, "pause") == 1 &&
+                                 flag(h, "eof-reached") == 1)) {
+                took = mt_now() - d0;
+                break;
+            }
+        }
+        double pos = -1;
+        mt_double(h, "time-pos", &pos);
+        printf("     af cleared at %.3f s, end after %.2f s (time-pos %.3f, "
+               "end-file %d), Cannot seek %d\n", at, took, pos, ev.end_files,
+               ev.hits[0]);
+        mt_check(took >= 0, "the entry ended within 5 s of the change (%.2f s)",
+                 took);
+        mt_check(ev.hits[0] == 0, "no failed refresh seek (%d)", ev.hits[0]);
+        mak_pcm_release(id);
+        mpv_terminate_destroy(h);
+        return mt_result();
+    }
     // Settle, then measure two seconds.
     pb_pump(h, 1000, &ev);
     int before = ev.hits[0];
