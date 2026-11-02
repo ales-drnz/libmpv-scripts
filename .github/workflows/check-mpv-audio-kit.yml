@@ -47,8 +47,44 @@ env:
   CI: 'true'
 
 jobs:
+  # Reads the tags once, from the commit message and the tags input, and
+  # tells the other jobs whether they run.
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      tests: ${{ steps.tags.outputs.tests }}
+      apps: ${{ steps.tags.outputs.apps }}
+      ios: ${{ steps.tags.outputs.ios }}
+      underrun: ${{ steps.tags.outputs.underrun }}
+      cpu: ${{ steps.tags.outputs.cpu }}
+      android: ${{ steps.tags.outputs.android }}
+      native: ${{ steps.tags.outputs.native }}
+    steps:
+      - id: tags
+        env:
+          TEXT: ${{ format('{0} {1}', github.event.head_commit.message, inputs.tags) }}
+        run: |
+          has() { [[ "$TEXT" == *"[$1]"* ]] && echo true || echo false; }
+          ios_only=$(has 'ios only'); mac_only=$(has 'macos test only')
+          underrun=$(has 'underrun diag'); cpu=$(has 'cpu diag')
+          emu=$(has 'android emu'); native=$(has native); full=$(has 'full check')
+          # A tag that runs just its part leaves out the default jobs.
+          alone=false
+          for t in "$underrun" "$cpu" "$emu" "$native"; do [[ $t == true ]] && alone=true; done
+          tests=true; [[ $alone == true || $ios_only == true ]] && tests=false
+          apps=$tests; [[ $mac_only == true ]] && apps=false
+          ios=true; [[ $alone == true || $mac_only == true ]] && ios=false
+          android=false; [[ $emu == true || $full == true ]] && android=true
+          {
+            echo "tests=$tests"; echo "apps=$apps"; echo "ios=$ios"
+            echo "underrun=$underrun"; echo "cpu=$cpu"; echo "android=$android"
+            echo "native=$native"
+          } | tee -a "$GITHUB_OUTPUT"
+
   test:
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[ios only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.tests == 'true'
     name: Test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -113,7 +149,8 @@ jobs:
             failures-*.txt
 
   windows-per-file:
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[ios only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.apps == 'true'
     name: Windows per file
     runs-on: windows-latest
     defaults:
@@ -181,7 +218,8 @@ jobs:
             logs/
 
   build:
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[ios only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.apps == 'true'
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -267,7 +305,8 @@ jobs:
 
   ios-integration:
     name: iOS simulator integration tests
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.ios == 'true'
     runs-on: macos-latest
     timeout-minutes: 150
     steps:
@@ -392,7 +431,8 @@ jobs:
   # audio output on this host, with a plain file as the control, live PCM
   # prefilled, at real time and with jitter, and the Dart process stalls.
   underrun-diag:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') }}
+    needs: plan
+    if: needs.plan.outputs.underrun == 'true'
     name: Underrun diagnostic macOS
     runs-on: macos-latest
     defaults:
@@ -442,7 +482,8 @@ jobs:
   # Patches in .github/diag/cpu/*.patch are applied to the kit first, so the
   # same job measures a fix before it lands.
   cpu-diag:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') }}
+    needs: plan
+    if: needs.plan.outputs.cpu == 'true'
     name: CPU diagnostic Linux (profile)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -543,7 +584,8 @@ jobs:
   # warning and a line of the summary, and a release needs zero fail and
   # its infra files run again.
   android-emu:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') || contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[full check]') }}
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
     name: Android emulator API ${{ matrix.api }}
     runs-on: ubuntu-24.04
     # Six files of at most two 8 minute tries each, plus the boot: a job cut
@@ -618,7 +660,8 @@ jobs:
   # mpv patches with AddressSanitizer, as the Build workflow's native job
   # does, without building the release binaries again.
   native-check:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.native == 'true'
     name: Native tests (ASan)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
