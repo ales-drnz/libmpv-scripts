@@ -299,12 +299,78 @@ jobs:
             builds/web-checks/*.txt
             builds/logs/build_web-*.log
           if-no-files-found: ignore
+      # The spike of this build, for the Firefox checks.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-spike
+          path: |
+            builds/work/Web/Oz/spike/spike.mjs
+            builds/work/Web/Oz/spike/spike.wasm
+          if-no-files-found: error
+          retention-days: 3
       # A build stopped by an unpinned source leaves the hash to pin here.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: unpinned-sources-web
           path: builds/sources-*.txt
+          if-no-files-found: ignore
+
+  # The checks of the web module in a headless Firefox, on the zip and the
+  # spike the web job built: the browser checks of run_checks.sh, those in
+  # Node ran there. Firefox plays into a PulseAudio null sink that is not
+  # the default output (verify/web/firefox_sound.sh): its AudioContext runs
+  # on that sink's clock. Not a need of release, and its failure does not
+  # fail the run, until it has a record: locally the latency check of
+  # firefox-audio failed once where Chrome's passes.
+  web-firefox:
+    name: Web (Firefox)
+    needs: web
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web
+          path: builds/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-spike
+          path: builds/web-spike
+      - name: Install ffmpeg and PulseAudio
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg pulseaudio pulseaudio-utils
+      - name: Check out the fixtures of mpv_audio_kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ales-drnz/mpv_audio_kit
+          ref: 66d6d1da7b9a6d047f582e19b285c8cdb7f094ae
+          path: builds/kit
+          sparse-checkout: test/fixtures
+      # Two null sinks: the default output, and mak_tests for Firefox.
+      - name: Checks
+        run: |
+          pulseaudio -D --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=ci_default
+          pactl set-default-sink ci_default
+          pactl load-module module-null-sink sink_name=mak_tests
+          export PULSE_SINK=mak_tests
+          node --version
+          firefox --version
+          verify/web/make_net_fixtures.sh builds/kit builds/web-fixtures > /dev/null
+          mkdir -p builds/web-module
+          unzip -q builds/release/libmpv_web.zip -d builds/web-module
+          BROWSERS=firefox SKIP="webio-logic browser-group ring node-spike node-lib node-net" \
+            verify/web/run_checks.sh builds/web-module builds/web-spike builds/web-fixtures \
+            builds/web-checks
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-firefox-check-logs
+          path: builds/web-checks/*.txt
           if-no-files-found: ignore
 
   # The native tests and the checks of the web module are needs: no release
