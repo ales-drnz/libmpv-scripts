@@ -1,30 +1,28 @@
 ## [0.3.1] - 3-11-2026
 
-libmpv-r21.
+### All platforms
+**Breaking**
+- `mpv_event_end_file` ends with `mak_duration` and `mak_position`, the duration and position of the entry when it ended (-1 when unknown). `mak-end-file-fields` says how many `mak_` fields it carries.
 
-### Breaking
-- `mpv_event_end_file` ends with two more fields, `mak_duration` at 40 and `mak_position` at 48, the duration and position of the entry when it ended (-1 when mpv did not know them): the struct is 56 bytes. The int64 property `mak-end-file-fields` says how many `mak_` fields it carries, 4 here.
-- The web module has ABI 2: `mak_web_layout` has 28 entries. It takes a shared memory of the client, starts at 32 MB and grows up to 2 GB.
-
-### Fixed
-- A chunked body with `Accept-Ranges` whose resume is refused is a read error.
-- The web module reads a file as http.c does through short answers, outages, credentials and refused resumes.
-- A `makWebAudio.init` that fails leaves no context and no device.
-- The AAC priming of a fragmented MP4 is skipped again outside DASH.
-- Each stream of an `fd://` source reads at its own position.
+**Fixed**
+- A pull output (PipeWire, CoreAudio, AudioUnit, WASAPI, AAudio, SDL) plays to the end with keep-open, instead of parking up to 0.2 s early.
+- A chunked body whose resume is refused ends on a read error.
 - A seek after a read error tries the read again with mpv's Matroska demuxer.
 - `eof-cached` reads no for a cache range that ends on a read error.
-- A hinted stream cut by a read error is not ready and publishes no loudness.
-- The duration hint follows the stream's own seekability, yields to an exact duration of mpv and wins over one lavf estimated from the bitrate. A length past the longest axis is refused.
+- The duration hint wins over a duration estimated from the bitrate, and yields to an exact one.
+- A hinted stream cut by a read error publishes no loudness.
+- The AAC priming of a fragmented MP4 is skipped again outside DASH.
+- Each stream of an `fd://` source reads at its own position.
 - An `af` change that drops the held EOF ends a stream that cannot seek.
-- A pull output (PipeWire, CoreAudio, AudioUnit, WASAPI, AAudio, SDL) parks with keep-open once its device played the end, instead of up to 0.2 s early.
-- A build record with `read_error` from one stage only fails, and verify finds the http read errors patch in the native binaries.
-- The libraries say `mpv v0.41.0+r21`, and their manifest release r21.
+- The libraries say `mpv v0.41.0+r21`.
 
-### Build
-- The web toolchain, clang per host and the actions of the kit check are pinned.
-- The Build checks the web module in a headless Firefox, without failing the run yet.
-- The kit check runs the kit's suite once on Windows, checks its libraries against the manifest there, and reads its tags once and without case.
+### Web
+**Breaking**
+- The module has ABI 2, and takes a shared memory of the client.
+
+**Fixed**
+- The module reads files through short answers, outages, credentials and refused resumes.
+- A `makWebAudio.init` that fails leaves no context and no device.
 
 ## [0.3.0] - 2-11-2026
 
