@@ -170,6 +170,16 @@ jobs:
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
+          # The check of Test windows-latest, which this job replaced.
+          python - bin <<'EOF'
+          import hashlib, json, os, sys
+          d = sys.argv[1]
+          assets = json.load(open(os.path.join(d, 'manifest.json')))['assets']
+          for name, sha in sorted(assets.items()):
+              got = hashlib.sha256(open(os.path.join(d, name), 'rb').read()).hexdigest()
+              print(name, 'OK' if got == sha else 'MISMATCH')
+              assert got == sha, name
+          EOF
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../bin\n' >> kit/pubspec.yaml
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
