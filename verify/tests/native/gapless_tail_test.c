@@ -18,6 +18,14 @@
 //              ao_null drains whatever it still plays)
 //   nogapless  gapless-audio=no parks at 2 (control, green on r20)
 //   realtime   ao-null-speed=1 parks at 2 (control, green on r20)
+//   pull       a pull output (ao=sdl on SDL's dummy driver, which takes
+//              a buffer every period in real time) parks at 2. buffer.c
+//              stops a pull output once its callback read the last sample,
+//              while the device still holds about two periods: keep-open
+//              parked then, with time-pos 0.17 s short of the end, and the
+//              pause flushed that tail (red on r21)
+#include <stdlib.h>
+
 #include "playback_test.h"
 
 // Pumps until eof-reached and pause are both yes (the keep-open park) or
@@ -49,18 +57,23 @@ int main(int argc, char **argv)
     const char *mode = argv[1], *fx = argv[2];
     int m_park = !strcmp(mode, "park"), m_gyes = !strcmp(mode, "gyes"),
         m_last = !strcmp(mode, "last"), m_idle = !strcmp(mode, "idle"),
-        m_nogap = !strcmp(mode, "nogapless"), m_rt = !strcmp(mode, "realtime");
-    if (!(m_park || m_gyes || m_last || m_idle || m_nogap || m_rt)) {
+        m_nogap = !strcmp(mode, "nogapless"), m_rt = !strcmp(mode, "realtime"),
+        m_pull = !strcmp(mode, "pull");
+    if (!(m_park || m_gyes || m_last || m_idle || m_nogap || m_rt || m_pull)) {
         printf("unknown mode %s\n", mode);
         return 2;
     }
     char path[4096];
     snprintf(path, sizeof path, "%s/sine60.flac", fx);
 
+    if (m_pull)
+        setenv("SDL_AUDIODRIVER", "dummy", 1);
     mpv_handle *h = pb_create();
+    if (m_pull)
+        mpv_set_option_string(h, "ao", "sdl");
     mpv_set_option_string(h, "keep-open", m_idle ? "no" : "yes");
     mpv_set_option_string(h, "idle", "yes");
-    mpv_set_option_string(h, "ao-null-speed", m_rt ? "1" : "5");
+    mpv_set_option_string(h, "ao-null-speed", m_rt || m_pull ? "1" : "5");
     if (m_gyes)
         mpv_set_option_string(h, "gapless-audio", "yes");
     if (m_nogap)
@@ -84,6 +97,12 @@ int main(int argc, char **argv)
     }
 
     int got = wait_end(h, &ev);
+    if (m_pull) {
+        char *ao = mt_str(h, "current-ao");
+        mt_check(ao && !strcmp(ao, "sdl"), "the output is sdl (%s)",
+                 ao ? ao : "none");
+        mpv_free(ao);
+    }
     if (m_idle) {
         mt_check(got == 2, "the playlist ended in idle (%d)", got);
         mt_check(ev.hits[0] >= 1,

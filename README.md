@@ -209,8 +209,8 @@ A build stopped by an unpinned source uploads the line to add as an `unpinned-so
 `mpv_audio_kit` gets libmpv through a build hook (`hook/build.dart`). When an app builds, the hook downloads the library for the target from the package's `libmpv-rN` GitHub release and checks its SHA-256. To point the package at a release, run this in `mpv_audio_kit`:
 
 ```bash
-scripts/update_libmpv.sh r20                        # a published release
-scripts/update_libmpv.sh r20 path/to/manifest.json  # before publishing it
+scripts/update_libmpv.sh r21                        # a published release
+scripts/update_libmpv.sh r21 path/to/manifest.json  # before publishing it
 ```
 
 It writes the release into `lib/src/internals/libmpv_release.dart` and the hashes from `manifest.json` into the hook, installs the web module of `libmpv_web.zip` in `web/` once its hashes and ABI check, and copies the manifest to `tool/codegen`. Before publishing, `libmpv_web.zip` must sit beside `manifest.json`, as it does in the Build's `libmpv-release` artifact.

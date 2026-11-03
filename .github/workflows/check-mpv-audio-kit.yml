@@ -11,8 +11,9 @@ name: Check mpv_audio_kit
 #
 # Started by hand with the run, the kit's branch and the tags, or by a push
 # to a ci/ branch whose commit sets LIBS_RUN and KIT_REF below and names the
-# tags in its message. With no tag it runs the tests, the per file Windows
-# run, the app builds and the iOS simulator; '[full check]' adds the Android
+# tags in its message. With no tag it runs the tests on macOS, the Windows
+# run (each file on its own, then the whole suite), the app builds and the
+# iOS simulator; '[full check]' adds the Android
 # emulators, and '[android emu]', '[native]', '[cpu diag]', '[underrun diag]',
 # '[ios only]' and '[macos test only]' run just their part.
 #
@@ -46,15 +47,54 @@ env:
   CI: 'true'
 
 jobs:
+  # Reads the tags once, from the commit message and the tags input, and
+  # tells the other jobs whether they run.
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      tests: ${{ steps.tags.outputs.tests }}
+      apps: ${{ steps.tags.outputs.apps }}
+      ios: ${{ steps.tags.outputs.ios }}
+      underrun: ${{ steps.tags.outputs.underrun }}
+      cpu: ${{ steps.tags.outputs.cpu }}
+      android: ${{ steps.tags.outputs.android }}
+      native: ${{ steps.tags.outputs.native }}
+    steps:
+      - id: tags
+        env:
+          TEXT: ${{ format('{0} {1}', github.event.head_commit.message, inputs.tags) }}
+        run: |
+          # Without case, as contains() of the conditions it replaces.
+          shopt -s nocasematch
+          has() { [[ "$TEXT" == *"[$1]"* ]] && echo true || echo false; }
+          ios_only=$(has 'ios only'); mac_only=$(has 'macos test only')
+          underrun=$(has 'underrun diag'); cpu=$(has 'cpu diag')
+          emu=$(has 'android emu'); native=$(has native); full=$(has 'full check')
+          # A tag that runs just its part leaves out the default jobs.
+          alone=false
+          for t in "$underrun" "$cpu" "$emu" "$native"; do [[ $t == true ]] && alone=true; done
+          tests=true; [[ $alone == true || $ios_only == true ]] && tests=false
+          apps=$tests; [[ $mac_only == true ]] && apps=false
+          ios=true; [[ $alone == true || $mac_only == true ]] && ios=false
+          android=false; [[ $emu == true || $full == true ]] && android=true
+          {
+            echo "tests=$tests"; echo "apps=$apps"; echo "ios=$ios"
+            echo "underrun=$underrun"; echo "cpu=$cpu"; echo "android=$android"
+            echo "native=$native"
+          } | tee -a "$GITHUB_OUTPUT"
+
   test:
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[ios only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.tests == 'true'
     name: Test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        # '[macos test only]' in the commit message runs just this job on macOS.
-        os: ${{ fromJSON(contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && '["macos-latest"]' || '["windows-latest", "macos-latest"]') }}
+        # '[macos test only]' in the commit message runs just this job.
+        # Windows runs the whole suite in windows-per-file.
+        os: [macos-latest]
     defaults:
       run:
         shell: bash
@@ -111,7 +151,8 @@ jobs:
             failures-*.txt
 
   windows-per-file:
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[ios only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.apps == 'true'
     name: Windows per file
     runs-on: windows-latest
     defaults:
@@ -129,6 +170,16 @@ jobs:
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
+          # The check of Test windows-latest, which this job replaced.
+          python - bin <<'EOF'
+          import hashlib, json, os, sys
+          d = sys.argv[1]
+          assets = json.load(open(os.path.join(d, 'manifest.json')))['assets']
+          for name, sha in sorted(assets.items()):
+              got = hashlib.sha256(open(os.path.join(d, name), 'rb').read()).hexdigest()
+              print(name, 'OK' if got == sha else 'MISMATCH')
+              assert got == sha, name
+          EOF
           printf '\nhooks:\n  user_defines:\n    mpv_audio_kit:\n      libmpv: ../bin\n' >> kit/pubspec.yaml
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
@@ -149,20 +200,25 @@ jobs:
             echo "rc=$rc assert=$assert $f $last" | tee -a ../summary.txt
           done
           true
+      # The only whole run on Windows: it finds what one file leaves to
+      # the next. Its result counts in the summary.
       - name: The whole suite in one run
         working-directory: kit
         run: |
           set +e
           flutter test -j 1 -r expanded 2>&1 | tee ../whole.log | tail -3
+          echo "rc=${PIPESTATUS[0]}" > ../whole-rc.txt
           true
       - name: Summary
         if: always()
         run: |
           tail -1 whole.log
+          grep -E '\[E\]$' whole.log | sort -u > failures-whole.txt || true
+          echo "Failing tests of the whole run:"; cat failures-whole.txt
           echo "Files with an assertion:"; grep -v 'assert=0' summary.txt || true
           # 79 is "No tests ran": a file whose @TestOn excludes Windows.
           echo "Files that did not pass:"; grep -vE 'rc=(0|79) ' summary.txt || true
-          ! grep -qvE 'rc=(0|79) ' summary.txt
+          ! grep -qvE 'rc=(0|79) ' summary.txt && grep -qx 'rc=0' whole-rc.txt
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -170,10 +226,12 @@ jobs:
           path: |
             summary.txt
             whole.log
+            failures-whole.txt
             logs/
 
   build:
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[ios only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.apps == 'true'
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -259,7 +317,8 @@ jobs:
 
   ios-integration:
     name: iOS simulator integration tests
-    if: ${{ !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[macos test only]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') && !contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.ios == 'true'
     runs-on: macos-latest
     timeout-minutes: 150
     steps:
@@ -384,7 +443,8 @@ jobs:
   # audio output on this host, with a plain file as the control, live PCM
   # prefilled, at real time and with jitter, and the Dart process stalls.
   underrun-diag:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[underrun diag]') }}
+    needs: plan
+    if: needs.plan.outputs.underrun == 'true'
     name: Underrun diagnostic macOS
     runs-on: macos-latest
     defaults:
@@ -434,7 +494,8 @@ jobs:
   # Patches in .github/diag/cpu/*.patch are applied to the kit first, so the
   # same job measures a fix before it lands.
   cpu-diag:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[cpu diag]') }}
+    needs: plan
+    if: needs.plan.outputs.cpu == 'true'
     name: CPU diagnostic Linux (profile)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -535,7 +596,8 @@ jobs:
   # warning and a line of the summary, and a release needs zero fail and
   # its infra files run again.
   android-emu:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[android emu]') || contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[full check]') }}
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
     name: Android emulator API ${{ matrix.api }}
     runs-on: ubuntu-24.04
     # Six files of at most two 8 minute tries each, plus the boot: a job cut
@@ -610,7 +672,8 @@ jobs:
   # mpv patches with AddressSanitizer, as the Build workflow's native job
   # does, without building the release binaries again.
   native-check:
-    if: ${{ contains(format('{0} {1}', github.event.head_commit.message, inputs.tags), '[native]') }}
+    needs: plan
+    if: needs.plan.outputs.native == 'true'
     name: Native tests (ASan)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -623,7 +686,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
             libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev zlib1g-dev
+            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev
       - name: Fewer mmap random bits for ASan
         run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: mpv patches

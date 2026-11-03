@@ -21,7 +21,8 @@
 #
 # Needs gcc, meson, ninja, pkg-config, python3, curl, the ffmpeg command
 # with the libopus, libmp3lame and libvorbis encoders, and the FFmpeg
-# development files (mpv 0.41 wants libavcodec 60.31.102 or later).
+# development files (mpv 0.41 wants libavcodec 60.31.102 or later), and
+# SDL2's for ao=sdl, the pull output of gapless_tail_test (its dummy driver).
 # audiotrack_test needs jni.h from the NDK in ANDROID_NDK_HOME.
 #
 # The work dir is wiped first; --reuse keeps its downloads, build and
@@ -41,6 +42,8 @@ unset LD_PRELOAD
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
+# The leaks LeakSanitizer does not report (libraries the tests load).
+export LSAN_OPTIONS="suppressions=$HERE/lsan.supp${LSAN_OPTIONS:+:$LSAN_OPTIONS}"
 USAGE="usage: run.sh [--reuse] <work dir> [test[:mode,...] ...]"
 REUSE=0
 if [[ "${1:-}" == "--reuse" ]]; then REUSE=1; shift; fi
@@ -86,12 +89,12 @@ CASES=(
   "lib analysis_hint_test analysis 60000::chunked exact short long none full nocache forced forcednone huge"
   "lib analysis_hint_test analysis 60000:165000:chunked cut"
   "lib analysis_hint_test analysis 600000 range"
-  "lib analysis_hint_test analysis 600000::norange known"
+  "lib analysis_hint_test analysis 600000::norange known estimate"
   "unit loudness_lock_test - - run"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek"
   "lib pcm_tap_test playback - ch up rate idle"
-  "lib gapless_tail_test playback - park gyes last idle nogapless realtime"
+  "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "unit pcm_tap_idle_test - - idle slow pause quiet"
   "lib pcm_loop_test playback - file late ab next abnext off afdrop"
   "lib chapter_list_test playback - meta index observe kit same"
@@ -206,7 +209,7 @@ if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   (( $? == 0 )) || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
   ( cd "$SRC" && meson setup "$BLD" -Dbuildtype=debug -Doptimization=1 -Dauto_features=disabled \
       -Dgpl=false -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
-      -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Db_sanitize=address -Db_lundef=false
+      -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Dsdl2-audio=enabled -Db_sanitize=address -Db_lundef=false
   ) > "$WORK/logs/setup.log" 2>&1 || { tail -30 "$WORK/logs/setup.log"; die "meson setup failed"; }
   ninja -C "$BLD" -j"$JOBS" > "$WORK/logs/ninja.log" 2>&1 || {
     grep -B2 -A8 'error' "$WORK/logs/ninja.log" | head -60; die "the mpv build failed"; }

@@ -41,6 +41,10 @@
 //   known  b.flac without byte ranges, with Content-Length (cannot seek,
 //          mpv knows its 30 s), hint 10 s: mpv's duration wins, ready on
 //          30 s with the loudness of the whole file, one GET.
+//   estimate  est.mp3 (30 s) the same way, hint 30 s: lavf estimates its
+//          length from the bitrate (13 s), which is no length mpv knows.
+//          The hint wins: ready on 30 s, filled to its end, one GET
+//          (r21 took the 13 s and cut the waveform there).
 //
 // The FFmpeg of run.sh (the system one) decides the end of a chunked body
 // alone: FFmpeg 9 ends a whole one with an error and one cut inside a
@@ -96,16 +100,17 @@ int main(int argc, char **argv)
 {
     if (argc < 4) {
         fprintf(stderr, "usage: %s exact|short|long|none|full|nocache|cut|forced|forcednone"
-                "|huge|range|known <fixtures> <tmpdir>\n",
+                "|huge|range|known|estimate <fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
     const char *mode = argv[1];
     int range = !strcmp(mode, "range"), known = !strcmp(mode, "known");
+    int est = !strcmp(mode, "estimate");
     int cut = !strcmp(mode, "cut"), huge = !strcmp(mode, "huge");
     int forced = !strncmp(mode, "forced", 6);
     int grown = !strcmp(mode, "full") || !strcmp(mode, "nocache") || cut;
-    const char *hint = !strcmp(mode, "exact") || grown || !strcmp(mode, "forced") ? "30"
+    const char *hint = !strcmp(mode, "exact") || grown || !strcmp(mode, "forced") || est ? "30"
                      : !strcmp(mode, "short") ? "20" : !strcmp(mode, "long") ? "45"
                      : range || known ? "10" : huge ? "1e300" : NULL;
     // The modes that roll from playback: no hint, or one the option refuses.
@@ -113,11 +118,11 @@ int main(int argc, char **argv)
     char url[256], opt[64], path[1100];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/%s",
              getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0",
-             range || known ? "b.flac" : "hint.opus");
+             range || known ? "b.flac" : est ? "est.mp3" : "hint.opus");
     snprintf(opt, sizeof opt, "waveform-duration-hint=%s", hint ? hint : "");
     snprintf(path, sizeof path, "%s/hint.opus", argv[2]);
     struct stat st;
-    if (!range && !known && stat(path, &st) == 0)
+    if (!range && !known && !est && stat(path, &st) == 0)
         chunked_size = st.st_size;
     mpv_handle *h = an_create();
     if (!strcmp(mode, "full"))
@@ -216,10 +221,12 @@ int main(int argc, char **argv)
                  w.duration_us / 1e6);
         mt_check(w.bins > 0 && w.filled == w.bins, "no hole: %d of %d bins filled",
                  w.filled, w.bins);
-        mt_check(!strcmp(l.state, "ready") && l.integrated > -30 && l.integrated < -10,
+        // est.mp3: the gating keeps its loud noise only (about -3.4 LUFS).
+        mt_check(!strcmp(l.state, "ready") && l.integrated > (est ? -10 : -30) &&
+                 l.integrated < (est ? 0 : -10),
                  "the loudness is ready (%s, %.2f LUFS)", l.state, l.integrated);
         mt_check(gets == 1, "no second download (%d GETs from the start)", gets);
-        if (!strcmp(mode, "exact") || forced || range || known)
+        if (!strcmp(mode, "exact") || forced || range || known || est)
             mt_check(w.bins >= w.total_bins - 2, "the axis is filled to its end "
                      "(%d of %lld bins)", w.bins, (long long)w.total_bins);
         if (!strcmp(mode, "exact"))
