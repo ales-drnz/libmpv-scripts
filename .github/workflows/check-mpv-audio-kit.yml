@@ -65,6 +65,8 @@ jobs:
         env:
           TEXT: ${{ format('{0} {1}', github.event.head_commit.message, inputs.tags) }}
         run: |
+          # Without case, as contains() of the conditions it replaces.
+          shopt -s nocasematch
           has() { [[ "$TEXT" == *"[$1]"* ]] && echo true || echo false; }
           ios_only=$(has 'ios only'); mac_only=$(has 'macos test only')
           underrun=$(has 'underrun diag'); cpu=$(has 'cpu diag')
