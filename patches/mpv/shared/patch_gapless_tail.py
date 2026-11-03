@@ -64,7 +64,10 @@ Fix
     else would wake the core for.
   - player/audio.c uninit_audio_out(): an output that stopped with audio
     queued is started again before the drain, so the end of a playlist
-    without keep-open plays the tail too.
+    without keep-open plays the tail too. Of a push output only: the
+    drain of a pull output ends once its callback read the last sample,
+    and its device loses what it still held (keep-open, as the package
+    sets it, waits for it).
 
 No new state: one locked read of the queue per pass while the output
 stands still at the end of a file.
