@@ -98,14 +98,20 @@ TABLE_NEW = (
 
 
 def apply(p):
+    # A command.c without the seam is a tree extracted again, maybe over
+    # an old one (the Windows build's tar keeps the files mpv does not
+    # have): the files of the seam start again, so a patch left out this
+    # time leaves nothing in them. With the seam in command.c they are
+    # left as they are: the patches after this one may have filled them.
+    fresh = not p.marked(seam.COMMAND)
     for rel, content in FILES:
         if not p.exists(rel):
             p.new_file(rel, content)
         elif not p.marked(rel):
             p.fail(f'{rel}: refusing to overwrite a file this patch did not '
                    f'write')
-        # A file of the seam is left as it is: the patches after this one
-        # may have filled it.
+        elif fresh:
+            p.new_file(rel, content)
     p.edits(seam.COMMAND, [
         ('`#include "command.h"`', INCLUDE, INCLUDE_NEW),
         ('mp_properties_base[]', TABLE, TABLE_NEW),
