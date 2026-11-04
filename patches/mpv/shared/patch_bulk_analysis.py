@@ -169,7 +169,10 @@ Files patched
     audio/mak_waveform.h   NEW — waveform product API + scan-engine interface
     audio/mak_waveform.c   NEW — waveform state, reader, progressive/rolling
     audio/mak_scan.h       NEW — scan engine API
-    audio/mak_scan.c       NEW — coordinator + workers + decode + classify
+    audio/mak_scan.c       NEW — coordinator, lifetime, entry points
+    audio/mak_scan_worker.c  NEW — one worker's decode and binning
+    audio/mak_scan_source.c  NEW — opening a URL or a descriptor
+    audio/mak_scan_internal.h  NEW — what the three share
     audio/mak_feed.h/.c    NEW — cache-fed engine
     demux/mak_demux_feed.h/.c  NEW — packet feed queue
     demux/demux.c          feed field, push, end of file, release, attach,
@@ -196,8 +199,12 @@ The C sources are REAL files in `bulk_analysis/` next to this script:
     mak_waveform.c      waveform state, reader, progressive/rolling fold,
                         and the scan-engine interface (commit/publish/arm)
     mak_scan.h          scan engine API (mak_scan_start)
-    mak_scan.c          coordinator + workers + decode + source classify;
+    mak_scan.c          coordinator, source classify and entry points;
                         drives the waveform product, loudness rides woven
+    mak_scan_worker.c   one worker: decode of its region, binning into its
+                        slice, the loudness accumulator woven in
+    mak_scan_source.c   opening a URL or an fd://N duplicate (pread)
+    mak_scan_internal.h the worker's slice and the calls between the three
     mak_feed.h/.c       cache-fed engine for a seekable network file
     mak_demux_feed.h/.c packet feed queue between demuxer and engine
     demux_feed_insert.c mak_demux_feed_attach, appended to demux/demux.c
@@ -589,6 +596,8 @@ MESON_AFTER_PCM_TAP_PATCHED = (
     "    # " + MARKER + "\n"
     "    'audio/mak_waveform.c',\n"
     "    'audio/mak_scan.c',\n"
+    "    'audio/mak_scan_source.c',\n"
+    "    'audio/mak_scan_worker.c',\n"
     "    'audio/mak_feed.c',\n"
     "    'demux/mak_demux_feed.c',"
 )
@@ -600,6 +609,8 @@ MESON_PATCHED = (
     "    # " + MARKER + "\n"
     "    'audio/mak_waveform.c',\n"
     "    'audio/mak_scan.c',\n"
+    "    'audio/mak_scan_source.c',\n"
+    "    'audio/mak_scan_worker.c',\n"
     "    'audio/mak_feed.c',\n"
     "    'demux/mak_demux_feed.c',"
 )
@@ -612,7 +623,10 @@ NEW_FILES = [
     ('audio', 'mak_waveform.h'),
     ('audio', 'mak_waveform.c'),
     ('audio', 'mak_scan.h'),
+    ('audio', 'mak_scan_internal.h'),
     ('audio', 'mak_scan.c'),
+    ('audio', 'mak_scan_source.c'),
+    ('audio', 'mak_scan_worker.c'),
     ('audio', 'mak_feed.h'),
     ('audio', 'mak_feed.c'),
     ('demux', 'mak_demux_feed.h'),

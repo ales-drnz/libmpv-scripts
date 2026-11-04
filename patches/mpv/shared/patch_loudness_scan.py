@@ -13,7 +13,7 @@ What it adds
 ============
 
 The scan rides the bulk-analysis scan ENGINE's existing parallel
-decode pass: each bulk worker (in mak_scan.c) also K-weights the
+decode pass: each bulk worker (in mak_scan_worker.c) also K-weights the
 PER-CHANNEL signal (before the waveform's mono downmix) into 100 ms
 sub-block energies on a global grid, plus sample/true peak. After the
 worker join the coordinator merges the slices and applies the BS.1770
@@ -54,9 +54,11 @@ Files touched in the mpv tree
 
     audio/mak_loudness.h     NEW — copied from bulk_analysis/
     audio/mak_loudness.c     NEW — copied from bulk_analysis/
-    audio/mak_scan.c         worker feed/finish hooks, decode-end grid
-                             extension, coordinator merge + publish,
-                             either-flag start gate, start scanning/fail
+    audio/mak_scan_internal.h  the loudness include, the worker's fields
+    audio/mak_scan_worker.c  worker feed/finish hooks, decode-end grid
+                             extension
+    audio/mak_scan.c         coordinator merge + publish, either-flag start
+                             gate, start scanning/fail
     audio/mak_waveform.c     arm_progressive / arm_rolling mark unavailable
     player/command.c         property registration + getter/setter
     meson.build              new source file added to the build
@@ -83,7 +85,7 @@ MARKER = 'MAK_LOUDNESS_PATCH'
 # MARKER is left alone, so a second run changes nothing.
 
 
-# ─── audio/mak_scan.c (bulk-emitted engine) ──────────────────────────
+# ─── audio/mak_scan*.c (bulk-emitted engine) ─────────────────────────
 
 def patch_mak_scan_c(p):
     edits = [
@@ -251,7 +253,19 @@ def patch_mak_scan_c(p):
          '        /* ' + MARKER + ' */\n'
          '        mak_loudness_mark_failed(new_gen);'),
     ]
-    p.edits('audio/mak_scan.c', edits)
+    # The include and the worker's fields sit in the shared header, the
+    # worker's hooks in its own file, the rest in the coordinator.
+    by_file = {'audio/mak_scan_internal.h': [], 'audio/mak_scan_worker.c': [],
+               'audio/mak_scan.c': []}
+    for e in edits:
+        if e[0] in ('include', 'worker_chunk fields'):
+            by_file['audio/mak_scan_internal.h'].append(e)
+        elif e[0].startswith('worker '):
+            by_file['audio/mak_scan_worker.c'].append(e)
+        else:
+            by_file['audio/mak_scan.c'].append(e)
+    for path, file_edits in by_file.items():
+        p.edits(path, file_edits)
 
 
 # ─── audio/mak_waveform.c (bulk-emitted product) ─────────────────────
