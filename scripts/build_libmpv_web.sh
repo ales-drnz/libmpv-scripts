@@ -49,6 +49,10 @@
 #   WEB_OPT=-Oz             (optimization flag of every C and C++ unit)
 #   WEB_LTO=0|1             (LTO across FFmpeg, mpv and the deps; default 0)
 #   WEB_SIMD=0|1            (-msimd128; default 0)
+#   WEB_SANITIZE=address    (AddressSanitizer on every unit and link, for the
+#                           checks of verify/web/run_asan.sh; the module and
+#                           the package go under the build dir, never to
+#                           builds/release)
 #   WEB_POOL=16             (pthread workers made at start; 0 makes each on
 #                           demand, which counts the threads mpv needs)
 #   WEB_INITIAL_MEMORY=32MB (wasm memory at start; it grows up to 2GB, or
@@ -94,6 +98,9 @@ STAGE="${STAGE:-all}"
 WEB_OPT="${WEB_OPT:--Oz}"
 WEB_LTO="${WEB_LTO:-0}"
 WEB_SIMD="${WEB_SIMD:-0}"
+WEB_SANITIZE="${WEB_SANITIZE:-}"
+[[ -z "$WEB_SANITIZE" || "$WEB_SANITIZE" == address ]] || \
+  { echo "WEB_SANITIZE: only address is supported, not $WEB_SANITIZE" >&2; exit 1; }
 WEB_POOL="${WEB_POOL:-16}"
 WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-32MB}"
 
@@ -102,8 +109,15 @@ WEB_INITIAL_MEMORY="${WEB_INITIAL_MEMORY:-32MB}"
 WEB_VARIANT="${WEB_OPT#-}"
 [[ "$WEB_LTO" == "1" ]] && WEB_VARIANT+="-lto"
 [[ "$WEB_SIMD" == "1" ]] && WEB_VARIANT+="-simd"
+[[ -n "$WEB_SANITIZE" ]] && WEB_VARIANT+="-asan"
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Web/$WEB_VARIANT}"
 PREFIX="$BUILD_DIR/prefix"
+if [[ -n "$WEB_SANITIZE" ]]; then
+  # A sanitized module is for the checks only: it never lands where the
+  # release is collected.
+  RELEASE_DIR="${RELEASE_DIR:-$BUILD_DIR/release/libmpv_web}"
+  PACKAGE_DIR="${PACKAGE_DIR:-$BUILD_DIR/release}"
+fi
 RELEASE_DIR="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release/libmpv_web}"
 PACKAGE_DIR="${PACKAGE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
 
@@ -155,6 +169,10 @@ WEB_CFLAGS="-pthread $WEB_OPT"
 [[ "$WEB_SIMD" == "1" ]] && WEB_CFLAGS+=" -msimd128"
 WEB_LDFLAGS="-pthread"
 [[ "$WEB_LTO" == "1" ]] && WEB_LDFLAGS+=" -flto"
+if [[ -n "$WEB_SANITIZE" ]]; then
+  WEB_CFLAGS+=" -fsanitize=address"
+  WEB_LDFLAGS+=" -fsanitize=address"
+fi
 
 export CFLAGS="$WEB_CFLAGS -I$PREFIX/include"
 export CXXFLAGS="$WEB_CFLAGS -I$PREFIX/include"
@@ -435,6 +453,13 @@ link_web() {
     shim_defs+=(-DMAK_WEB_READ_ERROR=1)
   fi
   emcc $WEB_CFLAGS "${shim_defs[@]}" -I"$PREFIX/include" -c "$shim" -o "$obj"
+  # The defaults of a sanitized module (verify/web/asan_options.c).
+  local asan_obj=()
+  if [[ -n "$WEB_SANITIZE" ]]; then
+    emcc $WEB_CFLAGS -c "$LIBMPV_SCRIPTS_ROOT/verify/web/asan_options.c" \
+      -o "$BUILD_DIR/build/asan_options.o"
+    asan_obj=("$BUILD_DIR/build/asan_options.o")
+  fi
   write_web_exports
   # The JS side of the webio protocols, which libavformat calls.
   local webio_js="$LIBMPV_SCRIPTS_ROOT/scripts/web/mak_webio.js"
@@ -443,7 +468,7 @@ link_web() {
   # The page side of the webaudio output goes into the glue (post-js:
   # Module.makWebAudio); its AudioWorklet module is a file next to it.
   # shellcheck disable=SC2046
-  em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" -L"$PREFIX/lib" "${WEB_LIBS[@]}" \
+  em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" "${asan_obj[@]}" -L"$PREFIX/lib" "${WEB_LIBS[@]}" \
     $(web_link_common) \
     --no-entry --js-library "$webio_js" \
     -sEXPORT_NAME=createLibmpv \
@@ -461,7 +486,7 @@ link_web() {
   # shellcheck disable=SC2046
   emcc $WEB_CFLAGS -I"$PREFIX/include" -c "$LIBMPV_SCRIPTS_ROOT/verify/web/mak_spike.c" \
     -o "$BUILD_DIR/build/mak_spike.o"
-  em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" "$BUILD_DIR/build/mak_spike.o" \
+  em++ $WEB_CFLAGS $WEB_LDFLAGS "$obj" "${asan_obj[@]}" "$BUILD_DIR/build/mak_spike.o" \
     -L"$PREFIX/lib" "${WEB_LIBS[@]}" \
     $(web_link_common) --js-library "$webio_js" \
     -sEXPORT_NAME=createSpike \

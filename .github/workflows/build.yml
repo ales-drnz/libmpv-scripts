@@ -389,6 +389,61 @@ jobs:
           path: builds/web-checks/*.txt
           if-no-files-found: ignore
 
+  # The web build again with AddressSanitizer on every unit (WEB_SANITIZE),
+  # and its Node checks, which fail on any report (verify/web/run_asan.sh).
+  # Not in the needs of release, like tui: the release module is built
+  # without it, and a report shows beside the run.
+  web-asan:
+    name: Web with AddressSanitizer
+    needs: release-branch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: 6.0.12
+          emsdk-version: 35ff8a6d150541276abbc6bae512ca90bcfbe220
+          actions-cache-folder: builds/emsdk-cache
+      # The sanitized system libraries in a cache of their own.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: builds/em-cache
+          key: em-cache-asan-6.0.12-${{ hashFiles('scripts/build_libmpv_web.sh') }}
+          restore-keys: em-cache-asan-6.0.12-
+      - name: Install meson, ninja and ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          python3 -m venv builds/venv
+          builds/venv/bin/pip install --quiet meson==1.12.1 ninja==1.13.2
+          echo "$PWD/builds/venv/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: |
+          export EM_CACHE="$PWD/builds/em-cache"
+          WEB_SANITIZE=address BUILD_DIR="$PWD/builds/work/Web/asan" bash scripts/build_libmpv_web.sh
+      - name: Check out the fixtures of mpv_audio_kit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ales-drnz/mpv_audio_kit
+          ref: 66d6d1da7b9a6d047f582e19b285c8cdb7f094ae
+          path: builds/kit
+          sparse-checkout: test/fixtures
+      - name: Checks
+        run: |
+          if [[ -n "${EMSDK_NODE:-}" ]]; then export PATH="$(dirname "$EMSDK_NODE"):$PATH"; fi
+          verify/web/make_net_fixtures.sh builds/kit builds/web-fixtures > /dev/null
+          verify/web/run_asan.sh builds/work/Web/asan/release/libmpv_web \
+            builds/work/Web/asan/spike builds/web-fixtures builds/web-asan
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-asan-logs
+          path: |
+            builds/web-asan/*.txt
+            builds/logs/build_web-*.log
+          if-no-files-found: ignore
+
   # The native tests and the checks of the web module are needs: no release
   # artifact while a fix fails its test.
   release:
