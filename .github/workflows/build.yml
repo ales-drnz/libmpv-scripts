@@ -30,8 +30,20 @@ permissions:
   contents: read
 
 jobs:
+  # A release/rN branch builds rN: the binaries stamp LIBMPV_RELEASE in their
+  # version, so a branch and a stamp that disagree stop here, before the
+  # builds. Any other branch passes.
+  release-branch:
+    name: Release branch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: LIBMPV_RELEASE names the branch
+        run: bash verify/release_branch.sh "$GITHUB_REF_NAME"
+
   linux:
     name: Linux ${{ matrix.arch }}
+    needs: release-branch
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -79,6 +91,7 @@ jobs:
 
   android:
     name: Android
+    needs: release-branch
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,6 +132,7 @@ jobs:
 
   windows:
     name: Windows ${{ matrix.arch }}
+    needs: release-branch
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -165,6 +179,7 @@ jobs:
   # what each build used, and cannot fail the job.
   apple:
     name: ${{ matrix.name }}
+    needs: release-branch
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -225,6 +240,7 @@ jobs:
   # cached; the archives are built on every run, as on the other targets.
   web:
     name: Web
+    needs: release-branch
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -393,6 +409,7 @@ jobs:
           mkdir -p builds/release
           find artifacts -type f \( -name 'libmpv_*' -o -name 'build_*.json' \) -not -path '*/licenses_*/*' -exec cp {} builds/release/ \;
           find artifacts -type d -name 'licenses_*' -prune -exec cp -r {} builds/release/ \;
+          cp artifacts/struct-layout/struct_layout.json builds/release/
           scripts/write_manifest.sh
           ls -la builds/release
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -467,6 +484,22 @@ jobs:
             fi
             builds/audio_fallback_test builds/release/libmpv_linux-x86_64.so /tmp/tone.wav'
 
+  # ruff on the Python (ruff.toml) and shellcheck on the shell scripts, as
+  # warnings beside the run: neither fails it nor holds back the release.
+  lint:
+    name: Lint (warnings)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ruff
+        run: |
+          pipx run ruff==0.14.3 check --output-format concise . \
+            | sed -nE 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3,title=ruff::\4/p' || true
+      - name: shellcheck
+        run: |
+          git ls-files -z '*.sh' build | xargs -0 shellcheck -S warning -f gcc \
+            | sed -nE 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3,title=shellcheck::\4/p' || true
+
   # The TUI's go vet and go test, and the checks of the L13 exit code
   # classification, of the FFmpeg component markers, of the manifest written
   # from the build records and of the anchor engine of the patches. Not in
@@ -493,6 +526,10 @@ jobs:
         run: bash verify/tests/components_test.sh
       - name: Manifest and build records
         run: bash verify/tests/manifest_test.sh
+      - name: Release branch check
+        run: bash verify/tests/release_branch_test.sh
+      - name: Struct layout
+        run: bash verify/tests/struct_layout_test.sh
       - name: Anchor engine of the patches
         run: python3 -B verify/tests/patches/anchor_engine_test.py
 
@@ -506,6 +543,7 @@ jobs:
   # uploads the logs as native-test-logs.
   native:
     name: Native tests (ASan)
+    needs: release-branch
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -523,6 +561,16 @@ jobs:
         run: sudo sysctl -w vm.mmap_rnd_bits=28
       - name: mpv patches
         run: JOBS=4 bash verify/tests/native/run.sh builds/native-tests
+      # The layout of the client API structs a binding reads, from the
+      # patched client.h of that tree, per data model of the release: the
+      # release job puts it in manifest.json.
+      - name: Struct layout
+        run: python3 verify/struct_layout.py builds/native-tests/src/include builds/struct_layout.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: struct-layout
+          path: builds/struct_layout.json
+          if-no-files-found: error
       - name: FFmpeg filter bounds
         if: ${{ !cancelled() }}
         run: CC=gcc FFMPEG_TOOLCHAIN=gcc-asan JOBS=4 bash verify/tests/filter_bounds_test.sh builds/filter-bounds
