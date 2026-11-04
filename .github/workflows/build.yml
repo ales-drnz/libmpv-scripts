@@ -30,8 +30,20 @@ permissions:
   contents: read
 
 jobs:
+  # A release/rN branch builds rN: the binaries stamp LIBMPV_RELEASE in their
+  # version, so a branch and a stamp that disagree stop here, before the
+  # builds. Any other branch passes.
+  release-branch:
+    name: Release branch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: LIBMPV_RELEASE names the branch
+        run: bash verify/release_branch.sh "$GITHUB_REF_NAME"
+
   linux:
     name: Linux ${{ matrix.arch }}
+    needs: release-branch
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -79,6 +91,7 @@ jobs:
 
   android:
     name: Android
+    needs: release-branch
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,6 +132,7 @@ jobs:
 
   windows:
     name: Windows ${{ matrix.arch }}
+    needs: release-branch
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
@@ -165,6 +179,7 @@ jobs:
   # what each build used, and cannot fail the job.
   apple:
     name: ${{ matrix.name }}
+    needs: release-branch
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -225,6 +240,7 @@ jobs:
   # cached; the archives are built on every run, as on the other targets.
   web:
     name: Web
+    needs: release-branch
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -493,6 +509,8 @@ jobs:
         run: bash verify/tests/components_test.sh
       - name: Manifest and build records
         run: bash verify/tests/manifest_test.sh
+      - name: Release branch check
+        run: bash verify/tests/release_branch_test.sh
       - name: Anchor engine of the patches
         run: python3 -B verify/tests/patches/anchor_engine_test.py
 
@@ -506,6 +524,7 @@ jobs:
   # uploads the logs as native-test-logs.
   native:
     name: Native tests (ASan)
+    needs: release-branch
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
