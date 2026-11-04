@@ -170,9 +170,16 @@ if web:
 layout_path = release_dir / "struct_layout.json"
 if layout_path.is_file():
     layout = json.loads(layout_path.read_text())
-    if sorted(layout) != ["ilp32", "lp64"] or not all(
-            isinstance(s.get("size"), int) and isinstance(s.get("fields"), dict)
-            for m in layout.values() for s in m.values()):
+    def number(v):
+        return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+    def struct(s):
+        return (isinstance(s, dict) and number(s.get("size"))
+                and isinstance(s.get("fields"), dict) and s["fields"]
+                and all(number(v) for v in s["fields"].values()))
+    if not (isinstance(layout, dict) and sorted(layout) == ["ilp32", "lp64"]
+            and all(isinstance(m, dict) and m and all(map(struct, m.values()))
+                    and "mak_position" in m.get("mpv_event_end_file", {}).get("fields", {})
+                    for m in layout.values())):
         raise SystemExit(f"{layout_path.name} is not a layout of verify/struct_layout.py")
     manifest["structLayout"] = layout
 out = release_dir / "manifest.json"

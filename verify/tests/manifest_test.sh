@@ -184,6 +184,17 @@ record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap'
 printf '{"lp64": {"mpv_event": {"size": 24}}}\n' > "$d/struct_layout.json"
 refused badlayout 'struct_layout.json'
+for bad in '{"lp64": {}, "ilp32": {}}' \
+           '{"lp64": {"mpv_event_end_file": {"size": true, "fields": {"mak_position": "x"}}}, "ilp32": {}}' \
+           '{"lp64": {"mpv_event_end_file": []}, "ilp32": {"mpv_event_end_file": []}}' \
+           '{"lp64": {"mpv_event": {"size": 24, "fields": {"data": 16}}}, "ilp32": {"mpv_event": {"size": 24, "fields": {"data": 16}}}}'; do
+  d="$(release_dir badlayout2)"
+  record "$d" linux-x86_64 'volume' 'pcm_tap'
+  record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+  printf '%s\n' "$bad" > "$d/struct_layout.json"
+  refused badlayout2 'struct_layout.json'
+  rm -rf "$d" "$d.log"
+done
 
 d="$(release_dir license)"
 record "$d" linux-x86_64 'volume' 'pcm_tap'

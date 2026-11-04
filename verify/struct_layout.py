@@ -51,7 +51,8 @@ TARGETS = {
     "lp64": [
         "x86_64-linux-gnu", "aarch64-linux-gnu", "x86_64-linux-android",
         "aarch64-linux-android", "arm64-apple-macos", "x86_64-apple-macos",
-        "arm64-apple-ios", "x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc",
+        "arm64-apple-ios", "arm64-apple-ios-simulator", "x86_64-apple-ios-simulator",
+        "x86_64-w64-windows-gnu", "aarch64-w64-windows-gnu",
     ],
     "ilp32": ["armv7a-linux-androideabi", "wasm32-unknown-emscripten"],
 }
@@ -72,11 +73,14 @@ def _source():
 def _table(include, target, work):
     src = work / "layout.c"
     src.write_text(_source())
-    out = subprocess.run(
+    run = subprocess.run(
         ["clang", f"--target={target}", "-ffreestanding", "-nostdinc",
          "-isystem", _resource_include(), "-I", str(include),
          "-O0", "-S", "-o", "-", str(src)],
-        check=True, capture_output=True, text=True).stdout
+        capture_output=True, text=True)
+    if run.returncode != 0:
+        raise SystemExit(f"{target}: clang failed on the table:\n{run.stderr}")
+    out = run.stdout
     values = [int(m.group(1)) for m in map(_VALUE.match, out.splitlines()) if m]
     want = sum(1 + len(f) for f in STRUCTS.values())
     if len(values) != want:
