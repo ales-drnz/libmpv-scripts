@@ -180,7 +180,7 @@ Files patched
     demux/demux.h          the estimated duration flag of struct demuxer
     demux/demux_lavf.c     sets it when lavf took the duration from the
                            bitrate
-    player/loadfile.c      kicks `mak_scan_start` after FILE_LOADED, and
+    player/loadfile.c      kicks `mak_scan_start` before FILE_LOADED, and
                            `mak_scan_file_closed` when the file closes
     player/mak_property_headers.inc   the includes the getters need
     player/mak_property_getters.inc   the getter/setter
@@ -253,17 +253,17 @@ LOADFILE_INCLUDE_PATCHED = (
 )
 
 
-# Anchor: the FILE_LOADED notification line. We insert a start() call
-# right after it so the analyzer kicks the moment mpv tells the world
-# the file is loaded. start() self-gates on waveform-enabled, so this
-# unconditional call is a cheap no-op when the analyzer is disabled.
-# Pristine line lifted from mpv 0.41.0.
+# Anchor: the FILE_LOADED notification line. The start() call goes right
+# before it: the scan duplicates an fd://N source in start(), and a client
+# may reuse N as soon as it hears the event (dup2 in analysis_fd_test
+# reuse), so the duplicate must exist by then. start() self-gates on
+# waveform-enabled, so this unconditional call is a cheap no-op when the
+# analyzer is disabled. Pristine line lifted from mpv 0.41.0.
 LOADFILE_NOTIFY_PRISTINE = (
     '    mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);'
 )
 
 LOADFILE_NOTIFY_PATCHED = (
-    '    mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);\n'
     '    /* ' + MARKER + ' */\n'
     '    mak_scan_start(mpctx->stream_open_filename, '
     'get_time_length(mpctx),\n'
@@ -275,7 +275,8 @@ LOADFILE_NOTIFY_PATCHED = (
     '                   mpctx->global, mpctx->log, mpctx->demuxer,\n'
     '                   mpctx->current_track[0][STREAM_AUDIO]\n'
     '                       ? mpctx->current_track[0][STREAM_AUDIO]->stream\n'
-    '                       : NULL);'
+    '                       : NULL);\n'
+    '    mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);'
 )
 
 

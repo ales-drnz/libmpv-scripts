@@ -13,6 +13,7 @@
 - A hinted stream cut by a read error publishes no loudness.
 - The AAC priming of a fragmented MP4 is skipped again outside DASH.
 - Each stream of an `fd://` source reads at its own position.
+- The analysis of an `fd://` source reads that source even when the client reuses the descriptor as soon as the file is loaded.
 - An `af` change that drops the held EOF ends a stream that cannot seek.
 - The libraries say `mpv v0.41.0+r21`.
 
