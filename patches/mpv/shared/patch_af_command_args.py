@@ -66,9 +66,11 @@ Files patched
                               (af_command_args/output_chain_insert.c); the
                               "all" target saves nothing
     player/command.c          cmd_filter_command updates af or vf
-                              (af_command_args/command_insert.c), the
-                              af-command-saves-args property
+                              (af_command_args/command_insert.c)
+    player/mak_property_getters.inc  the af-command-saves-args property
                               (af_command_args/property_insert.c)
+    player/mak_property_table.inc    its entry (the seam of
+                              patch_property_seam.py, which runs first)
 
 Usage: patch_af_command_args.py <mpv source dir>
 """
@@ -80,6 +82,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 MARKER = 'MAK_AF_COMMAND_ARGS_PATCH_V1'
 
@@ -190,17 +193,9 @@ CHAIN_ONE_NEW = (
 
 # ─── command.c ─────────────────────────────────────────────────────────
 
-PROPERTY_AF = (
-    'static int mp_property_af(void *ctx, struct m_property *prop,\n'
-    '                          int action, void *arg)\n'
-    '{\n'
-    '    return property_filter(prop, action, arg, ctx, STREAM_AUDIO);\n'
-    '}\n'
-)
-
-TABLE_AF = '    {"af", mp_property_af},\n'
-
-TABLE_AF_NEW = TABLE_AF + (
+# The entry, in player/mak_property_table.inc; the getter,
+# af_command_args/property_insert.c, in player/mak_property_getters.inc.
+TABLE_ENTRY = (
     '    /* ' + MARKER + ' */\n'
     '    {"af-command-saves-args", mp_property_af_command_saves_args},\n'
 )
@@ -240,10 +235,9 @@ def apply(p):
         ('mp_output_chain_command all', CHAIN_ALL, CHAIN_ALL_NEW),
         ('mp_output_chain_command label', CHAIN_ONE, CHAIN_ONE_NEW),
     ])
+    seam.getters(p, p.asset('af_command_args/property_insert.c').rstrip('\n') + '\n\n')
+    seam.table(p, TABLE_ENTRY)
     p.edits(COMMAND, [
-        ('mp_property_af', PROPERTY_AF,
-         PROPERTY_AF + '\n' + p.asset('af_command_args/property_insert.c').rstrip('\n') + '\n'),
-        ('property table', TABLE_AF, TABLE_AF_NEW),
         ('cmd_filter_command', FILTER_COMMAND,
          p.asset('af_command_args/command_insert.c') + FILTER_COMMAND),
         ('cmd_filter_command run', FILTER_COMMAND_RUN, FILTER_COMMAND_RUN_NEW),
