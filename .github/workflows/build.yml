@@ -484,6 +484,22 @@ jobs:
             fi
             builds/audio_fallback_test builds/release/libmpv_linux-x86_64.so /tmp/tone.wav'
 
+  # ruff on the Python (ruff.toml) and shellcheck on the shell scripts, as
+  # warnings beside the run: neither fails it nor holds back the release.
+  lint:
+    name: Lint (warnings)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ruff
+        run: |
+          pipx run ruff==0.14.3 check --output-format concise . \
+            | sed -nE 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3,title=ruff::\4/p' || true
+      - name: shellcheck
+        run: |
+          git ls-files -z '*.sh' build | xargs -0 shellcheck -S warning -f gcc \
+            | sed -nE 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3,title=shellcheck::\4/p' || true
+
   # The TUI's go vet and go test, and the checks of the L13 exit code
   # classification, of the FFmpeg component markers, of the manifest written
   # from the build records and of the anchor engine of the patches. Not in
