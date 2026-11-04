@@ -93,7 +93,10 @@ Files patched
                                   arms the retry of the stream
     demux/demux_lavf.c            av_read_frame() errors, skipped_segments
     player/loadfile.c             the END_FILE fields
-    player/command.c              the three properties, the notification
+    player/command.c              the notification
+    player/mak_property_getters.inc  the getters of the three properties
+    player/mak_property_table.inc    their entries (the seam of
+                                  patch_property_seam.py, which runs first)
     player/client.c               the node form of END_FILE
     include/mpv/client.h          the END_FILE fields
 
@@ -107,6 +110,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 MARKER = 'MAK_READ_ERROR_PATCH_V1'
 
@@ -492,13 +496,9 @@ END_EVENT_INIT_NEW = (
     '    };\n'
 )
 
-COMMAND_GETTERS = (
-    'static int mp_property_demuxer_is_network(void *ctx, struct m_property *prop,\n'
-)
-
-COMMAND_TABLE = '    {"demuxer-via-network", mp_property_demuxer_is_network},\n'
-
-COMMAND_TABLE_NEW = COMMAND_TABLE + (
+# The entries, in player/mak_property_table.inc; the getters,
+# read_error/read_error_command_insert.c, in player/mak_property_getters.inc.
+COMMAND_TABLE = (
     '    /* ' + MARKER + ' */\n'
     '    {"demuxer-read-error", mp_property_demuxer_read_error},\n'
     '    {"demuxer-skipped-segments", mp_property_demuxer_skipped_segments},\n'
@@ -578,10 +578,9 @@ def apply(p):
         ('play_current_file end_event', END_EVENT_INIT, END_EVENT_INIT_NEW),
         ('play_current_file end', UNINIT_DEMUXER, UNINIT_DEMUXER_NEW),
     ])
+    seam.getters(p, p.asset('read_error/read_error_command_insert.c') + '\n')
+    seam.table(p, COMMAND_TABLE)
     p.edits(COMMAND, [
-        ('property getters', COMMAND_GETTERS,
-         p.asset('read_error/read_error_command_insert.c') + COMMAND_GETTERS),
-        ('property table', COMMAND_TABLE, COMMAND_TABLE_NEW),
         ('cache update notification', COMMAND_NOTIFY, COMMAND_NOTIFY_NEW),
     ])
     p.edits(CLIENT_C, [('END_FILE node', CLIENT_NODE, CLIENT_NODE_NEW)])

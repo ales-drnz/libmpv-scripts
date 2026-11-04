@@ -74,7 +74,10 @@ Files patched
     audio/mak_tap.h                NEW — public API
     audio/mak_tap.c                NEW — singleton ring buffers + reader
     filters/f_output_chain.c       hook inserted in `user_wrapper_process`
-    player/command.c               property registration + getters / setter
+    player/mak_property_headers.inc  the tap header
+    player/mak_property_getters.inc  the getters / setter
+    player/mak_property_table.inc    the property entries (the seam of
+                                     patch_property_seam.py)
     meson.build                    new source registered
 
 Composes with `patch_pcm_tap.py`, `patch_bulk_analysis.py`, and the
@@ -87,6 +90,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 # V4 keys the taps on chain labels (V3 keyed them on filter names). A tree
 # patched by an older version fails in check_stale_marker instead of being
@@ -182,29 +186,17 @@ USER_WRAPPER_POST_PATCHED = (
 )
 
 
-# ─── player/command.c ─────────────────────────────────────────────────
+# ─── the property seam of player/command.c ───────────────────────────
 
-# Anchor on the same `audio-bitrate` table entry the other shared
-# patches use. Append two new property entries — disjoint with both
-# patch_pcm_tap.py and patch_bulk_analysis.py.
-COMMAND_TABLE_PRISTINE = (
-    '    {"audio-bitrate", mp_property_packet_bitrate, '
-    '.priv = (void *)&(const int){STREAM_AUDIO}},'
-)
-
-COMMAND_TABLE_PATCHED = (
-    '    {"audio-bitrate", mp_property_packet_bitrate, '
-    '.priv = (void *)&(const int){STREAM_AUDIO}},\n'
+# The two property entries, in player/mak_property_table.inc.
+COMMAND_TABLE = (
     '    /* ' + MARKER + ' */\n'
     '    {"analyzer-taps", mp_property_analyzer_taps},\n'
-    '    {"audio-tap-frames", mp_property_audio_tap_frames},'
+    '    {"audio-tap-frames", mp_property_audio_tap_frames},\n'
 )
 
-COMMAND_GETTER_ANCHOR = (
-    'static int mp_property_audio_params(void *ctx, struct m_property *prop,'
-)
-
-COMMAND_GETTER_INSERT = (
+# The getters / setter, in player/mak_property_getters.inc.
+COMMAND_GETTER = (
     '/* ' + MARKER + ' ─── read-write property: comma-separated list\n'
     ' * of chain labels whose pre / post audio frames should be\n'
     ' * captured into the audio-tap-frames map (at most MAK_TAP_MAX,\n'
@@ -272,15 +264,12 @@ COMMAND_GETTER_INSERT = (
     '    return M_PROPERTY_NOT_IMPLEMENTED;\n'
     '}\n'
     '\n'
-    + COMMAND_GETTER_ANCHOR
 )
 
-COMMAND_INCLUDE_PRISTINE = '#include "command.h"'
-
-COMMAND_INCLUDE_PATCHED = (
-    '#include "command.h"\n'
+# The tap header, in player/mak_property_headers.inc.
+COMMAND_INCLUDE = (
     '/* ' + MARKER + ' */\n'
-    '#include "audio/mak_tap.h"'
+    '#include "audio/mak_tap.h"\n'
 )
 
 
@@ -361,7 +350,7 @@ def check_stale_marker(p, rels):
 def apply(p):
     check_stale_marker(p, ['audio/mak_tap.h', 'audio/mak_tap.c',
                            'filters/f_output_chain.c', 'player/command.c',
-                           'meson.build'])
+                           'meson.build', *seam.FILES])
     # The real C sources live in filter_label_tap/ next to this script —
     # edit them THERE; this patch only copies them into the tree.
     for name in ('mak_tap.h', 'mak_tap.c'):
@@ -374,13 +363,9 @@ def apply(p):
         ('user_wrapper_process POST block', USER_WRAPPER_POST_PRISTINE,
          USER_WRAPPER_POST_PATCHED),
     ])
-    p.edits('player/command.c', [
-        ('command.c includes', COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED),
-        ('audio-bitrate property entry', COMMAND_TABLE_PRISTINE,
-         COMMAND_TABLE_PATCHED),
-        ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
-         COMMAND_GETTER_INSERT),
-    ])
+    seam.headers(p, COMMAND_INCLUDE)
+    seam.table(p, COMMAND_TABLE)
+    seam.getters(p, COMMAND_GETTER)
     if p.marked('meson.build'):
         print('Already patched: meson.build')
     else:

@@ -81,9 +81,12 @@ Files patched
 =============
 
     player/core.h       MPContext fields, mak_prefetch_tick
-    player/command.c    prefetch-state, prefetch-cache-duration,
-                        prefetch-open-filename, prefetch-playlist-entry-id
+    player/mak_property_getters.inc   the getters of prefetch-state,
+                        prefetch-cache-duration, prefetch-open-filename,
+                        prefetch-playlist-entry-id
                         (prefetch/prefetch_command_insert.c)
+    player/mak_property_table.inc     their entries (the seam of
+                        patch_property_seam.py, which runs first)
     player/loadfile.c   prefetch_next and the hook
                         (prefetch/mak_prefetch_insert.c), the transitions
     player/playloop.c   mak_prefetch_tick at the top of handle_update_cache
@@ -98,6 +101,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 MARKER = 'MAK_PREFETCH_PATCH_V1'
 
@@ -147,23 +151,16 @@ CORE_DECL_NEW = CORE_DECL + (
 )
 
 
-# ─── command.c ─────────────────────────────────────────────────────────
+# ─── the property seam of player/command.c ────────────────────────────
 
+# The entries, in player/mak_property_table.inc; the getters,
+# prefetch/prefetch_command_insert.c, in player/mak_property_getters.inc.
 COMMAND_TABLE = (
-    '    {"demuxer-cache-state", mp_property_demuxer_cache_state},\n'
-    '    {"cache-buffering-state", mp_property_cache_buffering},\n'
-)
-
-COMMAND_TABLE_NEW = COMMAND_TABLE + (
     '    /* ' + MARKER + ' */\n'
     '    {"prefetch-state", mp_property_prefetch_state},\n'
     '    {"prefetch-cache-duration", mp_property_prefetch_cache_duration},\n'
     '    {"prefetch-open-filename", mp_property_prefetch_open_filename},\n'
     '    {"prefetch-playlist-entry-id", mp_property_prefetch_playlist_entry_id},\n'
-)
-
-COMMAND_GETTERS = (
-    'static int mp_property_cache_buffering(void *ctx, struct m_property *prop,'
 )
 
 
@@ -300,7 +297,9 @@ UPDATE_CACHE_NEW = UPDATE_CACHE + (
 
 
 def apply(p):
-    for rel in (CORE, COMMAND, LOADFILE, PLAYLOOP):
+    for rel in (CORE, COMMAND, LOADFILE, PLAYLOOP, *seam.FILES):
+        if not p.exists(rel):
+            continue
         if any(m in p.text(rel) for m in OLD_MARKERS):
             p.fail(f'{rel} carries the prefetch patches of an older release '
                    '(patch_prefetch_hook.py, patch_prefetch_state.py): '
@@ -309,11 +308,8 @@ def apply(p):
         ('MPContext end', CORE_FIELDS, CORE_FIELDS_NEW),
         ('prefetch_next declaration', CORE_DECL, CORE_DECL_NEW),
     ])
-    p.edits(COMMAND, [
-        ('property table', COMMAND_TABLE, COMMAND_TABLE_NEW),
-        ('property getters', COMMAND_GETTERS,
-         p.asset('prefetch/prefetch_command_insert.c') + COMMAND_GETTERS),
-    ])
+    seam.table(p, COMMAND_TABLE)
+    seam.getters(p, p.asset('prefetch/prefetch_command_insert.c'))
     p.edits(LOADFILE, [
         ('wakeup_demux', WAKEUP_DEMUX, WAKEUP_DEMUX_NEW),
         ('prefetch_next', PREFETCH_NEXT,

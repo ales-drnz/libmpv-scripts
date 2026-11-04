@@ -100,7 +100,10 @@ Files patched
     audio/out/mak_pcm_tap.c   NEW — ring buffer + property reader
     audio/out/ao.c            tap call inserted at end of
                               `ao_post_process_data()`
-    player/command.c          property registration + getter
+    player/mak_property_headers.inc  the tap header
+    player/mak_property_getters.inc  the getter
+    player/mak_property_table.inc    the property entry (the seam of
+                                     patch_property_seam.py)
     meson.build               new source file added to the build
 
 Usage
@@ -109,9 +112,8 @@ Usage
     python3 patch_pcm_tap.py <mpv_source_dir>
 
 Composes with `patch_audio_output_state.py` and
-`patch_embedded_cover_art.py` in any order: in player/command.c they
-share the `mp_property_audio_params` anchor (and, with the first, the
-`#include "command.h"` one), which each leaves in place.
+`patch_embedded_cover_art.py` in any order: each adds its own block to
+the files of the property seam.
 
 This tap feeds the spectrum / VU visualizer only. The progressive
 waveform does NOT use it: it folds PRE-DSP frames straight from the af
@@ -125,6 +127,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 # Idempotency marker — re-running the build pipeline against the same
 # extracted mpv tree is safe.
@@ -172,32 +175,16 @@ AO_INCLUDE_PATCHED = (
 )
 
 
-# ─── player/command.c ─────────────────────────────────────────────────
+# ─── the property seam of player/command.c ───────────────────────────
 
-# Property table. We anchor on `audio-bitrate` — far from the anchors
-# used by patch_audio_output_state.py (`audio-out-params`) and
-# patch_embedded_cover_art.py (`audio-device-list`), so all three
-# patches compose in any order.
-COMMAND_TABLE_PRISTINE = (
-    '    {"audio-bitrate", mp_property_packet_bitrate, '
-    '.priv = (void *)&(const int){STREAM_AUDIO}},'
-)
-
-COMMAND_TABLE_PATCHED = (
-    '    {"audio-bitrate", mp_property_packet_bitrate, '
-    '.priv = (void *)&(const int){STREAM_AUDIO}},\n'
+# The property entry, in player/mak_property_table.inc.
+COMMAND_TABLE = (
     '    /* ' + MARKER + ' */\n'
-    '    {"pcm-tap-frame", mp_property_pcm_tap_frame},'
+    '    {"pcm-tap-frame", mp_property_pcm_tap_frame},\n'
 )
 
-# Insert the getter just before mp_property_audio_params (same insertion
-# point as the audio-output-state and embedded-cover-art patches; all
-# three compose because each just prepends a fresh function definition).
-COMMAND_GETTER_ANCHOR = (
-    'static int mp_property_audio_params(void *ctx, struct m_property *prop,'
-)
-
-COMMAND_GETTER_INSERT = (
+# The getter, in player/mak_property_getters.inc.
+COMMAND_GETTER = (
     '/* ' + MARKER + ' ─── read-only property: snapshot of the most\n'
     ' * recent samples that flowed through the AO. Returns a\n'
     ' * MAP_NODE { sample_rate, channels, pts_ns, samples }, or\n'
@@ -230,17 +217,12 @@ COMMAND_GETTER_INSERT = (
     '    return M_PROPERTY_NOT_IMPLEMENTED;\n'
     '}\n'
     '\n'
-    + COMMAND_GETTER_ANCHOR
 )
 
-# Anchor on a stable include line in command.c. The file ends its
-# includes with "command.h" — append the tap header there.
-COMMAND_INCLUDE_PRISTINE = '#include "command.h"'
-
-COMMAND_INCLUDE_PATCHED = (
-    '#include "command.h"\n'
+# The tap header, in player/mak_property_headers.inc.
+COMMAND_INCLUDE = (
     '/* ' + MARKER + ' */\n'
-    '#include "audio/out/mak_pcm_tap.h"'
+    '#include "audio/out/mak_pcm_tap.h"\n'
 )
 
 
@@ -266,17 +248,11 @@ def apply(p):
         ('ao.c includes', AO_INCLUDE_PRISTINE, AO_INCLUDE_PATCHED),
         ('ao_post_process_data body', AO_PRISTINE, AO_PATCHED),
     ])
-    # The cover-art and audio-output-state patches use the same
-    # `#include "command.h"` line as one of their anchors, so other patches
-    # may have already inserted lines below it; the marker check of edits()
-    # keeps a second run from adding the include again.
-    p.edits('player/command.c', [
-        ('command.c includes', COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED),
-        ('audio-bitrate property entry', COMMAND_TABLE_PRISTINE,
-         COMMAND_TABLE_PATCHED),
-        ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
-         COMMAND_GETTER_INSERT),
-    ])
+    # The marker check of each seam call keeps a second run from adding
+    # the block again.
+    seam.headers(p, COMMAND_INCLUDE)
+    seam.table(p, COMMAND_TABLE)
+    seam.getters(p, COMMAND_GETTER)
     p.edits('meson.build', [('audio/out/ao.c entry', MESON_PRISTINE, MESON_PATCHED)])
 
 

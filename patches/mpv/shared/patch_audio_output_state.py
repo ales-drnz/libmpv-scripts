@@ -69,7 +69,9 @@ Files patched
 =============
 
     player/core.h       adds the MPContext field
-    player/command.c    registers `audio-output-state` in mp_properties_base
+    player/mak_property_getters.inc  the `audio-output-state` getter
+    player/mak_property_table.inc    its entry in mp_properties_base
+                                     (the seam of patch_property_seam.py)
     player/audio.c      helper + transition calls
 
 Usage
@@ -88,6 +90,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 # Shared marker that makes every sub-patch idempotent. If the marker is
 # present in the file, the file is already patched; safe to re-run the
@@ -120,30 +123,16 @@ CORE_PATCHED = (
 )
 
 
-# ─── command.c ─────────────────────────────────────────────────────────
+# ─── the property seam of player/command.c ────────────────────────────
 
-# Insert the property registration right after `audio-out-params`. Stable
-# anchor and groups our property with the other audio-output-related
-# entries for readability.
-COMMAND_PRISTINE = (
-    '    {"audio-params", mp_property_audio_params},\n'
-    '    {"audio-out-params", mp_property_audio_out_params},'
-)
-
-COMMAND_PATCHED = (
-    '    {"audio-params", mp_property_audio_params},\n'
-    '    {"audio-out-params", mp_property_audio_out_params},\n'
+# The property registration, in player/mak_property_table.inc.
+COMMAND_TABLE = (
     '    /* ' + MARKER + ' */\n'
-    '    {"audio-output-state", mp_property_audio_output_state},'
+    '    {"audio-output-state", mp_property_audio_output_state},\n'
 )
 
-# Insert the getter just before mp_property_audio_params — same
-# neighbourhood, stable, and unaffected by other patches in scripts/.
-COMMAND_GETTER_ANCHOR = (
-    'static int mp_property_audio_params(void *ctx, struct m_property *prop,'
-)
-
-COMMAND_GETTER_INSERT = (
+# The getter, in player/mak_property_getters.inc.
+COMMAND_GETTER = (
     '/* ' + MARKER + ' ─── read-only string property: closed | initializing |\n'
     ' * active | failed. Observe with mpv_observe_property to receive change\n'
     ' * events at every transition of the audio output lifecycle. */\n'
@@ -161,7 +150,6 @@ COMMAND_GETTER_INSERT = (
     '    return m_property_strdup_ro(action, arg, name);\n'
     '}\n'
     '\n'
-    + COMMAND_GETTER_ANCHOR
 )
 
 
@@ -258,10 +246,8 @@ AUDIO_CALL_SITES = [
 
 def apply(p):
     p.edits('player/core.h', [('audio_status field', CORE_PRISTINE, CORE_PATCHED)])
-    p.edits('player/command.c', [
-        ('property table', COMMAND_PRISTINE, COMMAND_PATCHED),
-        ('getter insertion point', COMMAND_GETTER_ANCHOR, COMMAND_GETTER_INSERT),
-    ])
+    seam.table(p, COMMAND_TABLE)
+    seam.getters(p, COMMAND_GETTER)
     p.edits('player/audio.c', [('audio.c includes', AUDIO_HELPER_ANCHOR,
                                 AUDIO_HELPER_INSERT)] + AUDIO_CALL_SITES)
 

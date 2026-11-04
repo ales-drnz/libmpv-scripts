@@ -26,6 +26,22 @@ which runs with `--headless=new`.
 The Build on GitHub runs it in its web job, on the zip and with the
 runner's Chrome, before the release takes the module.
 
+## With AddressSanitizer
+
+```
+WEB_SANITIZE=address BUILD_DIR=<dir> scripts/build_libmpv_web.sh
+verify/web/run_asan.sh <dir>/release/libmpv_web <dir>/spike <fixtures> <work dir>
+```
+
+The same build with `-fsanitize=address` on every unit and link, and
+`asan_options.c` (leaks off: the native suppressions have no web list yet).
+Its module and package stay under the build dir. `run_asan.sh` runs the C
+harness (3 cycles and the 60 s files) in Node, and fails on any
+AddressSanitizer report. The module's own Node check is left out: it checks
+the release module's memory, and sanitized it stalled. Node does not exit after
+a report in a worker, so each run is watched and stopped at the report. The
+Build runs it in its web-asan job, beside the release.
+
 ## The release asset
 
 `libmpv_web.zip` (`scripts/web/package_web.py`) holds `libmpv.mjs`,

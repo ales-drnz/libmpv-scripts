@@ -51,7 +51,9 @@ patches a disjoint slice of the source).
 Files patched
 =============
 
-    player/command.c    registers the two properties + adds the getters
+    player/mak_property_getters.inc  the getters
+    player/mak_property_table.inc    the two property entries (the seam
+                                     of patch_property_seam.py)
     player/loadfile.c   fires `mp_notify_property` for both properties
                         right after MPV_EVENT_FILE_LOADED, so observers
                         receive change events on every track transition
@@ -67,38 +69,24 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 # Idempotency marker — re-running the build pipeline against the same
 # extracted mpv tree is safe.
 MARKER = 'MAK_EMBEDDED_COVER_ART_PATCH_V1'
 
 
-# ─── command.c ─────────────────────────────────────────────────────────
+# ─── the property seam of player/command.c ────────────────────────────
 
-# Insert the property registrations right after `audio-device-list`. We
-# explicitly avoid the `audio-out-params → aid` boundary because
-# `patch_audio_output_state.py` inserts there too, and we want the two
-# patches to compose in either order. `audio-device-list → audio-display`
-# is a few lines further down, untouched by any other patch in this
-# repo's `patches/mpv/`, and stable across recent mpv releases.
-TABLE_PRISTINE = (
-    '    {"audio-device-list", mp_property_audio_devices},'
-)
-
-TABLE_PATCHED = (
-    '    {"audio-device-list", mp_property_audio_devices},\n'
+# The property registrations, in player/mak_property_table.inc.
+TABLE_ENTRIES = (
     '    /* ' + MARKER + ' */\n'
     '    {"embedded-cover-art-data", mp_property_embedded_cover_art_data},\n'
-    '    {"embedded-cover-art-mime", mp_property_embedded_cover_art_mime},'
+    '    {"embedded-cover-art-mime", mp_property_embedded_cover_art_mime},\n'
 )
 
-# Insert the two getters just before the audio-params getter — same
-# neighbourhood, stable, and disjoint from any other patch's anchor.
-GETTER_ANCHOR = (
-    'static int mp_property_audio_params(void *ctx, struct m_property *prop,'
-)
-
-GETTER_INSERT = (
+# The helpers and the two getters, in player/mak_property_getters.inc.
+GETTERS = (
     '/* ' + MARKER + ' ─── helper: walk the current track list and return the\n'
     ' * first track with an embedded `attached_picture` (album art). NULL if\n'
     ' * no embedded cover is currently loaded. */\n'
@@ -198,7 +186,6 @@ GETTER_INSERT = (
     '    return m_property_strdup_ro(action, arg, mime);\n'
     '}\n'
     '\n'
-    + GETTER_ANCHOR
 )
 
 
@@ -225,10 +212,8 @@ LOADFILE_PATCHED = (
 
 
 def apply(p):
-    p.edits('player/command.c', [
-        ('property table', TABLE_PRISTINE, TABLE_PATCHED),
-        ('getter insertion point', GETTER_ANCHOR, GETTER_INSERT),
-    ])
+    seam.table(p, TABLE_ENTRIES)
+    seam.getters(p, GETTERS)
     p.edits('player/loadfile.c', [
         ('MPV_EVENT_FILE_LOADED notify', LOADFILE_PRISTINE, LOADFILE_PATCHED),
     ])

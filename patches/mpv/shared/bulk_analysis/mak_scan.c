@@ -11,640 +11,7 @@
  * (optional — this file compiles and links standalone without it).
  *
  * See patch_bulk_analysis.py for benchmark numbers and the design rationale. */
-#include <errno.h>
-#include <limits.h>
-#include <math.h>
-#include <stdatomic.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#if !defined(_WIN32)
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#define MAK_SCAN_FD_IO 1
-#else
-#define MAK_SCAN_FD_IO 0
-#endif
-
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/dict.h>
-#include <libavutil/mathematics.h>
-#include <libavutil/mem.h>
-#include <libavutil/opt.h>
-#include <libavutil/samplefmt.h>
-#include <libswresample/swresample.h>
-
-#include "common/msg.h"
-#include "demux/demux.h"
-#include "demux/stheader.h"
-#include "osdep/threads.h"
-#include "osdep/timer.h"
-#include "stream/stream.h"
-
-#include "audio/mak_feed.h"
-#if __has_include("audio/mak_loudness.h")
-#include "audio/mak_loudness.h"
-#endif
-#include "audio/mak_scan.h"
-#include "audio/mak_wave_fold.h"
-#include "audio/mak_waveform.h"
-
-/* Sample budget per worker cancellation check. 4096 samples is
- * ~85 ms at 48 kHz — short enough that a stale worker exits within
- * ~85 ms of the new file landing. */
-#define MAK_WAVE_CANCEL_CHECK_INTERVAL 4096
-
-/* ─── live incremental publish ────────────────────────────────────────
- * Cadence of the coordinator's publish loop. 100 ms ≈ 10 Hz: comfortably
- * above the wrapper's poll cadence so every poll sees fresh coverage, far
- * below a spin so the g_wave_lock churn is negligible against a multi-second
- * decode. The loop also breaks as soon as every worker is done, so a short
- * track never waits a full interval. */
-#define MAK_WAVE_PUBLISH_INTERVAL_NS (100 * 1000 * 1000LL)
-
-/* One per-worker high-water, on its own cache line so a worker's hot-path
- * release store never false-shares with another worker's line.
- *   hw   = count of LOCAL bins the worker has SEALED (advanced strictly PAST,
- *          so they can no longer widen) — monotone, the bin currently being
- *          widened is never included.
- *   done = set once the worker has exited its decode (covers every exit path),
- *          the race-free liveness signal the coordinator polls instead of the
- *          plain `status` field.
- * The coordinator RELEASE-pairs: it ACQUIRE-loads hw/done, so the worker's
- * plain writes to bins [0, hw) are visible (happens-before) before the
- * coordinator copies that sealed prefix out. _Alignas(64) on the first member
- * forces 64-byte struct alignment AND a 64-byte stride; the static assert
- * makes the one-cache-line layout load-bearing. */
-struct mak_wave_hw {
-    _Alignas(64) _Atomic int hw;    /* sealed LOCAL bins, monotone        */
-    _Atomic int              done;  /* 1 once the worker exits its decode  */
-    char _pad[64 - 2 * sizeof(_Atomic int)];
-};
-_Static_assert(sizeof(struct mak_wave_hw) == 64,
-               "mak_wave_hw must occupy exactly one cache line");
-
-/* ─── per-worker slice ────────────────────────────────────────────── */
-
-struct worker_chunk {
-    int      my_gen;
-    /* The coordinator's fail flag: stops the worker like a new generation,
-     * without superseding the current one. Outlives the worker (joined). */
-    const atomic_bool *abort;
-    /* Points at the coordinator's per-worker high-water slot (NULL ⇒ the
-     * worker does not publish live, e.g. a future caller that omits it). */
-    struct mak_wave_hw *hwslot;
-    const char *url;             /* shared, owned by coordinator */
-    /* The coordinator's duplicate of an fd://N source, read with pread
-     * (see open_source), or -1 to open [url]. */
-    int      fd;
-    /* mpv's network options for the re-open (shared, read-only, owned by the
-     * coordinator; NULL for a local path). */
-    const AVDictionary *net_opts;
-    int      audio_idx;
-    enum AVCodecID codec_id;
-    AVCodecParameters *codecpar; /* shared, used to init each ctx */
-    int      sample_rate;
-    int64_t  total_samples;
-    int64_t  sample_start;       /* inclusive, in source sample-frame units */
-    int64_t  sample_end;         /* exclusive */
-    /* The first sample this worker must place, the earlier of its loudness
-     * slice and its first bin, and one past the last, the first sample of the
-     * next worker's first bin. A worker decodes [need_start, wave_end) at
-     * least; what it decodes around that is pre-roll. */
-    int64_t  need_start;
-    int64_t  wave_end;
-    int64_t  time_base_num;
-    int64_t  time_base_den;
-    /* The source's timestamp at playback time 0, in samples (see
-     * mak_scan_track.start_secs): positions are timestamps less this. */
-    int64_t  start_samples;
-    /* Output slice. total_bins is the global envelope size; the
-     * worker writes only [bin_start, bin_end) — disjoint by
-     * construction. out_min / out_max / out_sq / out_n point into the
-     * coordinator's global arrays (out_sq and out_n are each bin's sum of
-     * squares and sample count, for the RMS). bins_filled has length
-     * bin_end - bin_start. */
-    int      total_bins;
-    int      bin_start;          /* inclusive */
-    int      bin_end;            /* exclusive */
-    float   *out_min;
-    float   *out_max;
-    double  *out_sq;
-    uint32_t *out_n;
-    uint8_t *bins_filled;
-    int      status;             /* 0 = ok */
-};
-
-/* Bin a chunk of [count] mono Float32 samples into the worker's
- * slice of the envelope. Samples that fall outside [bin_start,
- * bin_end) are skipped. */
-static void process_samples(const float *samples, int count,
-                            int64_t *emitted, int64_t total_samples,
-                            struct worker_chunk *a)
-{
-    int64_t e = *emitted;
-    /* Our own published high-water (only this worker writes it): a relaxed
-     * self-read is enough — used solely to skip redundant release stores. */
-    int hwm = a->hwslot
-            ? atomic_load_explicit(&a->hwslot->hw, memory_order_relaxed) : 0;
-    for (int i = 0; i < count; i++) {
-        float s = samples[i];
-        if (a->total_bins > 0) {
-            int64_t bin_idx = e * a->total_bins / total_samples;
-            if (bin_idx >= a->bin_start && bin_idx < a->bin_end) {
-                int local = (int)(bin_idx - a->bin_start);
-                if (!a->bins_filled[local]) {
-                    a->out_min[local] = s;
-                    a->out_max[local] = s;
-                    a->bins_filled[local] = 1;
-                } else {
-                    if (s < a->out_min[local]) a->out_min[local] = s;
-                    if (s > a->out_max[local]) a->out_max[local] = s;
-                }
-                a->out_sq[local] += (double)s * s;
-                a->out_n[local]++;
-                /* SEAL: bin_idx is monotone in e, so every LOCAL bin strictly
-                 * below `local` can no longer widen — publish `local` (NEVER
-                 * local+1: the bin being widened must stay private). The
-                 * RELEASE carries the plain writes to bins [0, local) as
-                 * happens-before to the coordinator's ACQUIRE of this value. */
-                if (a->hwslot && local > hwm) {
-                    atomic_store_explicit(&a->hwslot->hw, local,
-                                          memory_order_release);
-                    hwm = local;
-                }
-            }
-        }
-        e++;
-    }
-    *emitted = e;
-}
-
-/* Forward decl: the per-worker probe reuses the coordinator's generation-abort
- * callback (defined below, just before coordinator_main). */
-static int coord_interrupt_cb(void *opaque);
-
-/* ─── descriptor sources ──────────────────────────────────────────────
- * An fd://N or fdclose://N URL (how an Android content:// URI reaches mpv)
- * names a descriptor mpv reads with its own stream layer; FFmpeg cannot
- * open it. mak_scan_start duplicates N on the core thread, and every
- * context here reads the duplicate through an AVIOContext of its own, with
- * pread at a private position: mpv reads N with read and lseek, and a
- * duplicate shares that offset, which a plain read here would move under
- * playback. */
-#define MAK_FD_IO_BUF 32768
-
-struct fd_io {
-    int     fd;
-    int64_t pos;
-};
-
-#if MAK_SCAN_FD_IO
-static int fd_io_read(void *opaque, uint8_t *buf, int len)
-{
-    struct fd_io *io = opaque;
-    ssize_t r;
-    do {
-        r = pread(io->fd, buf, len, io->pos);
-    } while (r < 0 && errno == EINTR);
-    if (r < 0)
-        return AVERROR(errno);
-    if (r == 0)
-        return AVERROR_EOF;
-    io->pos += r;
-    return (int)r;
-}
-
-static int64_t fd_io_seek(void *opaque, int64_t offset, int whence)
-{
-    struct fd_io *io = opaque;
-    struct stat st;
-    switch (whence & ~AVSEEK_FORCE) {
-    case AVSEEK_SIZE:
-        return fstat(io->fd, &st) < 0 ? AVERROR(errno) : st.st_size;
-    case SEEK_SET:
-        break;
-    case SEEK_CUR:
-        offset += io->pos;
-        break;
-    case SEEK_END:
-        if (fstat(io->fd, &st) < 0)
-            return AVERROR(errno);
-        offset += st.st_size;
-        break;
-    default:
-        return AVERROR(EINVAL);
-    }
-    if (offset < 0)
-        return AVERROR(EINVAL);
-    io->pos = offset;
-    return offset;
-}
-#endif
-
-/* Closes the duplicate mak_scan_start took of a descriptor source. */
-static void scan_close_fd(int fd)
-{
-#if MAK_SCAN_FD_IO
-    if (fd >= 0)
-        close(fd);
-#else
-    (void)fd;
-#endif
-}
-
-/* Frees an AVIOContext open_source made for a descriptor. */
-static void free_fd_io(AVIOContext *pb)
-{
-    if (!pb)
-        return;
-    av_freep(&pb->buffer);
-    av_freep(&pb->opaque);
-    avio_context_free(&pb);
-}
-
-/* Closes [*fmt], and the descriptor reader open_source gave it: with a
- * caller's AVIOContext, avformat_close_input leaves it open. */
-static void close_source(AVFormatContext **fmt)
-{
-    AVIOContext *pb = *fmt && ((*fmt)->flags & AVFMT_FLAG_CUSTOM_IO)
-                    ? (*fmt)->pb : NULL;
-    avformat_close_input(fmt);
-    free_fd_io(pb);
-}
-
-/* Open [url] into the pre-allocated [*fmt] with mpv's own network options
- * ([net_opts], NULL for a local path: tls-verify, CA file, headers, user
- * agent, cookies...) so the re-open verifies and authenticates exactly like
- * playback does. FFmpeg's own defaults would skip certificate verification
- * and drop the headers. The 5 s I/O timeout then overrides mpv's
- * network-timeout, bounding a stalled connection as before. With [fd] >= 0
- * the source is that descriptor, read with pread (see above), and [url]
- * only names it. Close with close_source. */
-static int open_source(AVFormatContext **fmt, const char *url, int fd,
-                       const AVDictionary *net_opts)
-{
-    AVIOContext *pb = NULL;
-#if MAK_SCAN_FD_IO
-    if (fd >= 0) {
-        struct fd_io *io = av_mallocz(sizeof(*io));
-        unsigned char *buf = av_malloc(MAK_FD_IO_BUF);
-        pb = io && buf ? avio_alloc_context(buf, MAK_FD_IO_BUF, 0, io,
-                                            fd_io_read, NULL, fd_io_seek)
-                       : NULL;
-        if (!pb) {
-            av_free(buf);
-            av_free(io);
-            avformat_free_context(*fmt);
-            *fmt = NULL;
-            return AVERROR(ENOMEM);
-        }
-        io->fd = fd;
-        pb->seekable = AVIO_SEEKABLE_NORMAL;
-        (*fmt)->pb = pb;
-        (*fmt)->flags |= AVFMT_FLAG_CUSTOM_IO;
-    }
-#endif
-    AVDictionary *opts = NULL;
-    if (net_opts && av_dict_copy(&opts, net_opts, 0) < 0) {
-        av_dict_free(&opts);
-        avformat_free_context(*fmt);
-        *fmt = NULL;
-        free_fd_io(pb);
-        return AVERROR(ENOMEM);
-    }
-    av_dict_set(&opts, "rw_timeout", "5000000", 0);  /* 5 s (microseconds) */
-    av_dict_set(&opts, "timeout",    "5000000", 0);  /* 5 s (HTTP/TCP) */
-    int ret = avformat_open_input(fmt, url, NULL, &opts);
-    av_dict_free(&opts);
-    /* A failed open frees the context but not a caller's AVIOContext. */
-    if (ret < 0)
-        free_fd_io(pb);
-    return ret;
-}
-
-/* The offset between a frame's timestamp and its place in a sequential
- * decode of the file, in samples. The two differ by what the decoder drops
- * at the start (an MP3's encoder delay, an AAC priming): worker 0 counts
- * samples from the first frame, so its positions trail the timestamps by
- * that much. Decodes the first frames of the freshly opened [fmt] the way
- * worker 0 places them and returns the offset once two frames agree. */
-static bool measure_pts_offset(AVFormatContext *fmt, AVCodecContext *dec,
-                               AVPacket *pkt, AVFrame *frame,
-                               const struct worker_chunk *a, int64_t *out)
-{
-    int64_t emitted = 0;
-    int64_t prev = 0;
-    int frames = 0;
-    /* Bounded by packets too: a decoder that never yields a frame, or a
-     * file whose other streams come first, must not be read whole here. */
-    for (int packets = 0, reads = 0;
-         frames < 16 && packets < 64 && reads < 1024; reads++) {
-        if (mak_waveform_current_gen() != a->my_gen)
-            return false;
-        int ret = av_read_frame(fmt, pkt);
-        if (ret < 0)
-            return false;
-        if (pkt->stream_index != a->audio_idx) {
-            av_packet_unref(pkt);
-            continue;
-        }
-        packets++;
-        ret = avcodec_send_packet(dec, pkt);
-        av_packet_unref(pkt);
-        if (ret < 0)
-            continue;
-        while (avcodec_receive_frame(dec, frame) >= 0) {
-            bool ok = frame->pts != AV_NOPTS_VALUE && frame->nb_samples > 0;
-            int64_t pos = ok ? av_rescale(frame->pts,
-                a->sample_rate * a->time_base_num, a->time_base_den) -
-                a->start_samples : 0;
-            int n = frame->nb_samples;
-            av_frame_unref(frame);
-            if (!ok)
-                return false;
-            int64_t seq = frames ? emitted : (pos > 0 ? pos : 0);
-            int64_t d = pos - seq;
-            emitted = seq + n;
-            if (++frames >= 3 && d == prev) {
-                *out = d;
-                return true;
-            }
-            prev = d;
-        }
-    }
-    return false;
-}
-
-/* Rebuilds [*swr] for [f] when the frame's sample format or channel layout
- * differs from the ones [*swr] converts from ([layout], [format]). A stream
- * can change its layout mid-file (two MP3s joined, stereo then mono), and
- * swresample reads every plane of the layout it was built for, past the end
- * of a frame with fewer. The rate stays the probe's: the axis counts
- * samples at that rate, and a frame at another one is converted as before,
- * without resampling. Returns false when the converter cannot be built. */
-static bool worker_swr_for(SwrContext **swr, AVChannelLayout *layout,
-                           int *format, const AVFrame *f, int rate)
-{
-    if (*swr && *format == f->format &&
-        !av_channel_layout_compare(layout, &f->ch_layout))
-        return true;
-    swr_free(swr);
-    av_channel_layout_uninit(layout);
-    if (swr_alloc_set_opts2(swr, &f->ch_layout, AV_SAMPLE_FMT_FLT, rate,
-                            &f->ch_layout, f->format, rate, 0, NULL) < 0 ||
-        !*swr || swr_init(*swr) < 0 ||
-        av_channel_layout_copy(layout, &f->ch_layout) < 0) {
-        swr_free(swr);
-        return false;
-    }
-    *format = f->format;
-    return true;
-}
-
-static MP_THREAD_VOID worker_chunk_thread(void *p)
-{
-    struct worker_chunk *a = p;
-    a->status = -1;
-
-    AVFormatContext *fmt = NULL;
-    AVCodecContext  *dec = NULL;
-    SwrContext      *swr = NULL;
-    AVChannelLayout  swr_layout = {0};   /* what [swr] converts from */
-    int              swr_format = -1;
-    AVFrame         *iframe = NULL;
-    AVPacket        *pkt = NULL;
-    float           *out_buf = NULL;     /* interleaved, all channels */
-    int              out_buf_capacity = 0;   /* in frames */
-    float           *mono_buf = NULL;    /* out_buf downmixed */
-    int              channels = 0;
-    int              buf_channels = 0;   /* channels out_buf was sized for */
-    int              ret = 0;
-    int              samples_since_check = 0;
-
-    /* Same generation-abort + I/O timeout as the coordinator probe, so a
-     * superseded or stalled worker drops its (possibly session-capped) network
-     * connection instead of blocking on it. &a->my_gen lives for the worker's
-     * whole lifetime (the chunk outlives the thread, joined in the coordinator). */
-    fmt = avformat_alloc_context();
-    if (!fmt) goto cleanup;
-    fmt->interrupt_callback.callback = coord_interrupt_cb;
-    fmt->interrupt_callback.opaque   = &a->my_gen;
-    if (open_source(&fmt, a->url, a->fd, a->net_opts) < 0) goto cleanup;
-    if (avformat_find_stream_info(fmt, NULL) < 0)          goto cleanup;
-
-    const AVCodec *codec = avcodec_find_decoder(a->codec_id);
-    if (!codec) goto cleanup;
-    dec = avcodec_alloc_context3(codec);
-    if (!dec) goto cleanup;
-    if (avcodec_parameters_to_context(dec, a->codecpar) < 0) goto cleanup;
-    if (avcodec_open2(dec, codec, NULL) < 0) goto cleanup;
-
-    /* Convert to interleaved float in the SOURCE layout, then fold to mono
-     * with mak_downmix_mono: the same average the progressive af-tap path
-     * uses, so both envelopes agree and a full-scale stereo track peaks at
-     * 1.0. (A MONO swr target would apply swresample's 1/sqrt(2) per channel
-     * matrix, which sums a correlated stereo pair to sqrt(2).) */
-    channels = dec->ch_layout.nb_channels;
-    if (channels <= 0) goto cleanup;
-    ret = swr_alloc_set_opts2(&swr,
-        &dec->ch_layout, AV_SAMPLE_FMT_FLT, a->sample_rate,
-        &dec->ch_layout, dec->sample_fmt, a->sample_rate,
-        0, NULL);
-    if (ret < 0 || !swr) goto cleanup;
-    if (swr_init(swr) < 0) goto cleanup;
-
-    iframe = av_frame_alloc();
-    pkt    = av_packet_alloc();
-    if (!iframe || !pkt) goto cleanup;
-    out_buf_capacity = 8192;
-    out_buf  = av_malloc((size_t)out_buf_capacity * channels * sizeof(float));
-    mono_buf = av_malloc((size_t)out_buf_capacity * sizeof(float));
-    if (!out_buf || !mono_buf) goto cleanup;
-    buf_channels = channels;
-    if (av_channel_layout_copy(&swr_layout, &dec->ch_layout) < 0) goto cleanup;
-    swr_format = dec->sample_fmt;
-
-    /* A later worker places each frame at its timestamp less the offset
-     * worker 0's sequential count trails the timestamps by, so every worker
-     * puts a sample where one decode of the whole file would. The
-     * coordinator only fans out a format whose timestamps after a seek are
-     * sample-exact. Without a measurable offset the worker falls back to
-     * counting from its first frame. */
-    bool    from_pts   = false;
-    int64_t pts_offset = 0;
-    if (a->sample_start > 0) {
-        from_pts = measure_pts_offset(fmt, dec, pkt, iframe, a, &pts_offset);
-        avcodec_flush_buffers(dec);
-    }
-
-    /* Pre-roll: a later worker starts decoding [back] samples before the
-     * first one it places, so the decoder (an MP3's bit reservoir, the
-     * overlap of AAC and Vorbis, Opus's 80 ms of state) and the loudness
-     * filters have settled when its region starts. The first frame after
-     * the seek must land at least [prime] samples before the region, or
-     * the seek goes [back] four times further back, down to the start. */
-    int64_t prime = a->sample_rate / 10;
-    if (a->codecpar->seek_preroll > prime)
-        prime = a->codecpar->seek_preroll;
-    int64_t back = a->sample_rate / 2;
-    if (2 * prime > back)
-        back = 2 * prime;
-    bool checking = false;
-reseek:
-    if (a->sample_start > 0) {
-        int64_t target = a->need_start - back + pts_offset;
-        /* The seek takes the source's own timestamps. */
-        int64_t from = (target > 0 ? target : 0) + a->start_samples;
-        int64_t seek_us = from > 0 ? from * 1000000 / a->sample_rate : 0;
-        if (av_seek_frame(fmt, -1, seek_us, AVSEEK_FLAG_BACKWARD) < 0)
-            goto cleanup;
-        avcodec_flush_buffers(dec);
-        checking = target > 0;
-    }
-
-    int64_t emitted_samples = 0;
-    int     stream_pos_initialized = 0;
-
-    /* Worker 0 places the first frame at its timestamp, every later one
-     * right after the samples before it. */
-    bool    anchored   = false;
-
-    while (1) {
-        if (mak_waveform_current_gen() != a->my_gen ||
-            atomic_load_explicit(a->abort, memory_order_relaxed))
-            goto cleanup;
-
-        ret = av_read_frame(fmt, pkt);
-        if (ret == AVERROR_EOF) break;
-        if (ret < 0) goto cleanup;
-        if (pkt->stream_index != a->audio_idx) {
-            av_packet_unref(pkt);
-            continue;
-        }
-        ret = avcodec_send_packet(dec, pkt);
-        av_packet_unref(pkt);
-        if (ret < 0) continue;
-
-        while (1) {
-            ret = avcodec_receive_frame(dec, iframe);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) break;
-            if (ret < 0) goto cleanup;
-
-            /* Compute the absolute source-sample position of this
-             * frame from its PTS, on the playback axis (less the start
-             * time). After a backward seek the decoder re-emits frames
-             * before sample_start; the bin filter inside process_samples
-             * drops them. */
-            int64_t frame_sample_pos;
-            if (iframe->pts != AV_NOPTS_VALUE) {
-                frame_sample_pos = av_rescale(iframe->pts,
-                    a->sample_rate * a->time_base_num, a->time_base_den) -
-                    a->start_samples;
-            } else if (!stream_pos_initialized) {
-                frame_sample_pos = a->sample_start;
-            } else {
-                frame_sample_pos = emitted_samples;
-            }
-            stream_pos_initialized = 1;
-
-            /* Where the frame lands in the envelope: the first one at its
-             * timestamp, every later one right after the samples before it
-             * (the timestamps can run ahead of the samples, by an MP3's
-             * encoder delay, or be rounded, to 1 ms in Matroska). */
-            int64_t frame_seq_pos = anchored ? emitted_samples
-                : (frame_sample_pos > 0 ? frame_sample_pos : 0);
-            if (from_pts && iframe->pts != AV_NOPTS_VALUE)
-                frame_seq_pos = frame_sample_pos - pts_offset;
-
-            /* The seek must have left room for the pre-roll. */
-            if (checking) {
-                checking = false;
-                if (frame_seq_pos > a->need_start - prime) {
-                    av_frame_unref(iframe);
-                    back *= 4;
-                    goto reseek;
-                }
-            }
-
-            /* Stop early once the frame starts past our region. */
-            if (frame_seq_pos >= a->wave_end) {
-                av_frame_unref(iframe);
-                goto done_decode;
-            }
-
-            /* Each frame is converted with a converter built for its own
-             * layout and format. */
-            if (!worker_swr_for(&swr, &swr_layout, &swr_format, iframe,
-                                a->sample_rate)) {
-                av_frame_unref(iframe);
-                goto cleanup;
-            }
-            channels = iframe->ch_layout.nb_channels;
-            int needed = swr_get_out_samples(swr, iframe->nb_samples);
-            if (needed > out_buf_capacity || channels > buf_channels) {
-                int new_cap = needed > out_buf_capacity
-                    ? needed + 1024 : out_buf_capacity;
-                float *grown = av_realloc(out_buf,
-                    (size_t)new_cap * channels * sizeof(float));
-                if (!grown) { av_frame_unref(iframe); goto cleanup; }
-                out_buf = grown;
-                grown = av_realloc(mono_buf, (size_t)new_cap * sizeof(float));
-                if (!grown) { av_frame_unref(iframe); goto cleanup; }
-                mono_buf = grown;
-                out_buf_capacity = new_cap;
-                buf_channels = channels;
-            }
-            /* extended_data: data[] holds the first 8 planes only, and a
-             * planar frame has one per channel (16 for a 16-channel Opus). */
-            uint8_t *out_data[1] = { (uint8_t *)out_buf };
-            int converted = swr_convert(swr, out_data, out_buf_capacity,
-                (const uint8_t **)iframe->extended_data, iframe->nb_samples);
-            av_frame_unref(iframe);
-            if (converted <= 0) continue;
-
-            /* Count on from where the frame was placed. */
-            emitted_samples = frame_seq_pos;
-            anchored = true;
-
-            mak_downmix_mono(out_buf, converted, channels, mono_buf);
-            process_samples(mono_buf, converted,
-                            &emitted_samples, a->total_samples, a);
-
-            samples_since_check += converted;
-            if (samples_since_check >= MAK_WAVE_CANCEL_CHECK_INTERVAL) {
-                samples_since_check = 0;
-                if (mak_waveform_current_gen() != a->my_gen ||
-                    atomic_load_explicit(a->abort, memory_order_relaxed))
-                    goto cleanup;
-            }
-            if (emitted_samples >= a->wave_end) goto done_decode;
-        }
-    }
-done_decode:
-
-    a->status = 0;
-
-cleanup:
-    if (out_buf)  av_free(out_buf);
-    if (mono_buf) av_free(mono_buf);
-    if (pkt)      av_packet_free(&pkt);
-    if (iframe)   av_frame_free(&iframe);
-    if (swr)      swr_free(&swr);
-    av_channel_layout_uninit(&swr_layout);
-    if (dec)      avcodec_free_context(&dec);
-    if (fmt)      close_source(&fmt);
-    /* Liveness for the coordinator's publish loop, on every exit path (normal,
-     * EOF, error, cancel). RELEASE so the coordinator's ACQUIRE of `done` also
-     * observes this worker's final hw store and all its bin writes. */
-    if (a->hwslot)
-        atomic_store_explicit(&a->hwslot->done, 1, memory_order_release);
-    MP_THREAD_RETURN();
-}
+#include "audio/mak_scan_internal.h"
 
 /* ─── coordinator ─────────────────────────────────────────────────── */
 
@@ -666,7 +33,7 @@ struct coord_args {
  * Jellyfin/Plex HLS transcode keyed by PlaySessionId) pile up blocked
  * probes that exhaust the server's connection budget, leaving every later
  * track stuck in DECODING with no envelope. Returns nonzero to abort. */
-static int coord_interrupt_cb(void *opaque)
+int mak_scan_interrupt_cb(void *opaque)
 {
     int my_gen = *(int *)opaque;
     return mak_waveform_current_gen() != my_gen;
@@ -862,9 +229,9 @@ static MP_THREAD_VOID coordinator_main(void *p)
      * of the "no waveform + no artwork until restart" stall). */
     probe_fmt = avformat_alloc_context();
     if (!probe_fmt) goto fail;
-    probe_fmt->interrupt_callback.callback = coord_interrupt_cb;
+    probe_fmt->interrupt_callback.callback = mak_scan_interrupt_cb;
     probe_fmt->interrupt_callback.opaque   = &my_gen;
-    int open_ret = open_source(&probe_fmt, url, fd, net_opts);
+    int open_ret = mak_scan_open_source(&probe_fmt, url, fd, net_opts);
     if (open_ret < 0) {
         /* Logged through FFmpeg's log, which mpv routes from any thread:
          * this detached thread may outlive the core and its log. Not for a
@@ -1039,7 +406,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
         if (!chunks[w].bins_filled) goto fail;
 
         if (mp_thread_create(&threads[w],
-                             worker_chunk_thread, &chunks[w]) != 0) goto fail;
+                             mak_scan_worker_thread, &chunks[w]) != 0) goto fail;
         spawned++;
     }
 
@@ -1048,7 +415,7 @@ static MP_THREAD_VOID coordinator_main(void *p)
      * whole decode, beside the player's and the worker's. st points into
      * it. */
     st = NULL;
-    close_source(&probe_fmt);
+    mak_scan_close_source(&probe_fmt);
 
     /* ── LIVE INCREMENTAL PUBLISH ──────────────────────────────────────────
      * Surface the envelope as the workers fill it, instead of one commit at
@@ -1180,8 +547,8 @@ cleanup:
     if (bins_sq) av_free(bins_sq);
     if (bins_n) av_free(bins_n);
     if (bins_filled) av_free(bins_filled);
-    if (probe_fmt) close_source(&probe_fmt);
-    scan_close_fd(fd);
+    if (probe_fmt) mak_scan_close_source(&probe_fmt);
+    mak_scan_close_fd(fd);
     av_dict_free(&net_opts);
     free(url);
     /* Last touch of shared state: a drain waiting on this count may let the
@@ -1361,7 +728,7 @@ void mak_scan_start(const char *url, double duration_secs,
 
     /* ── DESCRIPTOR (fd://N, fdclose://N: an Android content:// URI) ──────
      * FFmpeg cannot open these URLs. The coordinator and its workers read a
-     * duplicate of N, taken here, with pread (see open_source). A source
+     * duplicate of N, taken here, with pread (see mak_scan_open_source). A source
      * that cannot be read ahead of time (a pipe, or a platform without
      * pread) grows from playback, and the loudness scan reports
      * unavailable. */
@@ -1456,7 +823,7 @@ void mak_scan_start(const char *url, double duration_secs,
      * or static file has no transcode to kill. */
     struct coord_args *args = calloc(1, sizeof(*args));
     if (!args) {
-        scan_close_fd(fd);
+        mak_scan_close_fd(fd);
         scan_failed(new_gen);
         return;
     }
@@ -1466,7 +833,7 @@ void mak_scan_start(const char *url, double duration_secs,
     args->track         = track;
     args->fd            = fd;
     if (!args->url) {
-        scan_close_fd(fd);
+        mak_scan_close_fd(fd);
         free(args);
         scan_failed(new_gen);
         return;
@@ -1483,7 +850,7 @@ void mak_scan_start(const char *url, double duration_secs,
     atomic_fetch_add(&g_live_coordinators, 1);
     if (mp_thread_create(&t, coordinator_main, args) != 0) {
         atomic_fetch_sub(&g_live_coordinators, 1);
-        scan_close_fd(fd);
+        mak_scan_close_fd(fd);
         av_dict_free(&args->net_opts);
         free(args->url);
         free(args);

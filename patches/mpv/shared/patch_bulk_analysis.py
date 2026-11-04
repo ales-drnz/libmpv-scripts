@@ -169,7 +169,10 @@ Files patched
     audio/mak_waveform.h   NEW — waveform product API + scan-engine interface
     audio/mak_waveform.c   NEW — waveform state, reader, progressive/rolling
     audio/mak_scan.h       NEW — scan engine API
-    audio/mak_scan.c       NEW — coordinator + workers + decode + classify
+    audio/mak_scan.c       NEW — coordinator, lifetime, entry points
+    audio/mak_scan_worker.c  NEW — one worker's decode and binning
+    audio/mak_scan_source.c  NEW — opening a URL or a descriptor
+    audio/mak_scan_internal.h  NEW — what the three share
     audio/mak_feed.h/.c    NEW — cache-fed engine
     demux/mak_demux_feed.h/.c  NEW — packet feed queue
     demux/demux.c          feed field, push, end of file, release, attach,
@@ -177,9 +180,11 @@ Files patched
     demux/demux.h          the estimated duration flag of struct demuxer
     demux/demux_lavf.c     sets it when lavf took the duration from the
                            bitrate
-    player/loadfile.c      kicks `mak_scan_start` after FILE_LOADED, and
+    player/loadfile.c      kicks `mak_scan_start` before FILE_LOADED, and
                            `mak_scan_file_closed` when the file closes
-    player/command.c       property registration + getter/setter
+    player/mak_property_headers.inc   the includes the getters need
+    player/mak_property_getters.inc   the getter/setter
+    player/mak_property_table.inc     the property entries
     player/main.c          setup in mp_create, teardown in mp_destroy
     options/options.h/.c   the waveform-duration-hint option
     meson.build            new source files added to the build
@@ -196,14 +201,17 @@ The C sources are REAL files in `bulk_analysis/` next to this script:
     mak_waveform.c      waveform state, reader, progressive/rolling fold,
                         and the scan-engine interface (commit/publish/arm)
     mak_scan.h          scan engine API (mak_scan_start)
-    mak_scan.c          coordinator + workers + decode + source classify;
+    mak_scan.c          coordinator, source classify and entry points;
                         drives the waveform product, loudness rides woven
+    mak_scan_worker.c   one worker: decode of its region, binning into its
+                        slice, the loudness accumulator woven in
+    mak_scan_source.c   opening a URL or an fd://N duplicate (pread)
+    mak_scan_internal.h the worker's slice and the calls between the three
     mak_feed.h/.c       cache-fed engine for a seekable network file
     mak_demux_feed.h/.c packet feed queue between demuxer and engine
     demux_feed_insert.c mak_demux_feed_attach, appended to demux/demux.c
-    waveform_command_insert.c  property getter/setter block spliced into
-                        player/command.c (ends with the pristine
-                        anchor line it replaces)
+    waveform_command_insert.c  property getter/setter block added to
+                        player/mak_property_getters.inc
 
 This script is only the applier: it copies the sources into the tree
 and performs the anchored edits below. Tuning notes: BINS=2000 sizes
@@ -217,7 +225,8 @@ Usage
 
 Composes with `patch_pcm_tap.py`, `patch_audio_output_state.py`,
 `patch_embedded_cover_art.py`, `patch_prefetch.py`: disjoint
-anchors.
+anchors. The property edits go through the seam of player/command.c
+(patch_property_seam.py, which must run first).
 """
 import sys
 from pathlib import Path
@@ -225,6 +234,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 # Provenance tag stamped into every patched region and generated file so a
 # patched mpv tree is easy to grep. A file that already carries it is left
@@ -243,17 +253,17 @@ LOADFILE_INCLUDE_PATCHED = (
 )
 
 
-# Anchor: the FILE_LOADED notification line. We insert a start() call
-# right after it so the analyzer kicks the moment mpv tells the world
-# the file is loaded. start() self-gates on waveform-enabled, so this
-# unconditional call is a cheap no-op when the analyzer is disabled.
-# Pristine line lifted from mpv 0.41.0.
+# Anchor: the FILE_LOADED notification line. The start() call goes right
+# before it: the scan duplicates an fd://N source in start(), and a client
+# may reuse N as soon as it hears the event (dup2 in analysis_fd_test
+# reuse), so the duplicate must exist by then. start() self-gates on
+# waveform-enabled, so this unconditional call is a cheap no-op when the
+# analyzer is disabled. Pristine line lifted from mpv 0.41.0.
 LOADFILE_NOTIFY_PRISTINE = (
     '    mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);'
 )
 
 LOADFILE_NOTIFY_PATCHED = (
-    '    mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);\n'
     '    /* ' + MARKER + ' */\n'
     '    mak_scan_start(mpctx->stream_open_filename, '
     'get_time_length(mpctx),\n'
@@ -265,7 +275,8 @@ LOADFILE_NOTIFY_PATCHED = (
     '                   mpctx->global, mpctx->log, mpctx->demuxer,\n'
     '                   mpctx->current_track[0][STREAM_AUDIO]\n'
     '                       ? mpctx->current_track[0][STREAM_AUDIO]->stream\n'
-    '                       : NULL);'
+    '                       : NULL);\n'
+    '    mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);'
 )
 
 
@@ -319,39 +330,23 @@ OPTIONS_C_PATCHED = (
 )
 
 
-# ─── player/command.c ─────────────────────────────────────────────────
+# ─── the property seam of player/command.c ───────────────────────────
 
-# Anchor for the property table — same neighbour as patch_pcm_tap
-# (`audio-bitrate`). Append our two entries just after pcm_tap's.
-COMMAND_TABLE_PRISTINE = (
-    '    {"audio-bitrate", mp_property_packet_bitrate, '
-    '.priv = (void *)&(const int){STREAM_AUDIO}},'
-)
-
-COMMAND_TABLE_PATCHED = (
-    '    {"audio-bitrate", mp_property_packet_bitrate, '
-    '.priv = (void *)&(const int){STREAM_AUDIO}},\n'
+# The two entries, in player/mak_property_table.inc.
+COMMAND_TABLE = (
     '    /* ' + MARKER + ' */\n'
     '    {"waveform-data", mp_property_waveform_data},\n'
-    '    {"waveform-enabled", mp_property_waveform_enabled},'
+    '    {"waveform-enabled", mp_property_waveform_enabled},\n'
 )
 
-# Insert the getter/setter just before mp_property_audio_params (same
-# insertion point as patch_pcm_tap; we just prepend fresh functions).
-# The spliced block lives in bulk_analysis/waveform_command_insert.c and ENDS
-# with this anchor line, so the replace re-emits it.
-COMMAND_GETTER_ANCHOR = (
-    'static int mp_property_audio_params(void *ctx, struct m_property *prop,'
-)
-
-COMMAND_INCLUDE_PRISTINE = '#include "command.h"'
-
-COMMAND_INCLUDE_PATCHED = (
-    '#include "command.h"\n'
+# The getter/setter, bulk_analysis/waveform_command_insert.c, goes in
+# player/mak_property_getters.inc; its headers in
+# player/mak_property_headers.inc.
+COMMAND_INCLUDE = (
     '/* ' + MARKER + ' */\n'
     '#include "audio/mak_scan.h"\n'
     '#include "audio/mak_waveform.h"\n'
-    '#include "demux/demux.h"'
+    '#include "demux/demux.h"\n'
 )
 
 
@@ -589,6 +584,8 @@ MESON_AFTER_PCM_TAP_PATCHED = (
     "    # " + MARKER + "\n"
     "    'audio/mak_waveform.c',\n"
     "    'audio/mak_scan.c',\n"
+    "    'audio/mak_scan_source.c',\n"
+    "    'audio/mak_scan_worker.c',\n"
     "    'audio/mak_feed.c',\n"
     "    'demux/mak_demux_feed.c',"
 )
@@ -600,6 +597,8 @@ MESON_PATCHED = (
     "    # " + MARKER + "\n"
     "    'audio/mak_waveform.c',\n"
     "    'audio/mak_scan.c',\n"
+    "    'audio/mak_scan_source.c',\n"
+    "    'audio/mak_scan_worker.c',\n"
     "    'audio/mak_feed.c',\n"
     "    'demux/mak_demux_feed.c',"
 )
@@ -612,7 +611,10 @@ NEW_FILES = [
     ('audio', 'mak_waveform.h'),
     ('audio', 'mak_waveform.c'),
     ('audio', 'mak_scan.h'),
+    ('audio', 'mak_scan_internal.h'),
     ('audio', 'mak_scan.c'),
+    ('audio', 'mak_scan_source.c'),
+    ('audio', 'mak_scan_worker.c'),
     ('audio', 'mak_feed.h'),
     ('audio', 'mak_feed.c'),
     ('demux', 'mak_demux_feed.h'),
@@ -636,13 +638,9 @@ def apply(p):
         ('FILE_LOADED notify', LOADFILE_NOTIFY_PRISTINE, LOADFILE_NOTIFY_PATCHED),
         ('file close', LOADFILE_CLOSE_PRISTINE, LOADFILE_CLOSE_PATCHED),
     ])
-    p.edits('player/command.c', [
-        ('command.c includes', COMMAND_INCLUDE_PRISTINE, COMMAND_INCLUDE_PATCHED),
-        ('audio-bitrate property entry', COMMAND_TABLE_PRISTINE,
-         COMMAND_TABLE_PATCHED),
-        ('mp_property_audio_params getter', COMMAND_GETTER_ANCHOR,
-         p.asset('bulk_analysis/waveform_command_insert.c')),
-    ])
+    seam.headers(p, COMMAND_INCLUDE)
+    seam.table(p, COMMAND_TABLE)
+    seam.getters(p, p.asset('bulk_analysis/waveform_command_insert.c'))
     p.edits('options/options.h', [
         ('MPOpts field', OPTIONS_H_PRISTINE, OPTIONS_H_PATCHED),
     ])
