@@ -32,6 +32,9 @@
 #                  write_licenses of shared/_audio_only.sh leaves next to the
 #                  binary), with the source of the build in its README.txt
 #                  and all the texts in one file, THIRD_PARTY_LICENSES.txt
+#   structLayout   when struct_layout.json is there (verify/struct_layout.py,
+#                  on the patched client.h): sizeof and offsetof of the client
+#                  API structs a binding reads, per data model (lp64, ilp32)
 #
 # Filters and patches come from the record each build leaves next to its
 # binary, builds/release/build_<target>.json (write_build_record in
@@ -164,6 +167,14 @@ manifest = {
 }
 if web:
     manifest["web"] = web
+layout_path = release_dir / "struct_layout.json"
+if layout_path.is_file():
+    layout = json.loads(layout_path.read_text())
+    if sorted(layout) != ["ilp32", "lp64"] or not all(
+            isinstance(s.get("size"), int) and isinstance(s.get("fields"), dict)
+            for m in layout.values() for s in m.values()):
+        raise SystemExit(f"{layout_path.name} is not a layout of verify/struct_layout.py")
+    manifest["structLayout"] = layout
 out = release_dir / "manifest.json"
 out.write_text(json.dumps(manifest, indent=2) + "\n")
 print(f"Wrote {licenses_zip} ({len(texts)} files)")

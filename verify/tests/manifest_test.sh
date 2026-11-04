@@ -159,6 +159,32 @@ record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap' r1
 refused older 'r1'
 
+# ── The struct layout of verify/struct_layout.py goes in as it is ──────────
+d="$(release_dir layout)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+cat > "$d/struct_layout.json" <<'JSON'
+{"lp64": {"mpv_event_end_file": {"size": 56, "fields": {"reason": 0, "mak_position": 48}}},
+ "ilp32": {"mpv_event_end_file": {"size": 56, "fields": {"reason": 0, "mak_position": 48}}}}
+JSON
+manifest "$d"; check $? "layout: write_manifest.sh succeeds"
+python3 - "$d" <<'PY'
+import json, sys
+d = sys.argv[1]
+m = json.load(open(f"{d}/manifest.json"))
+assert m["structLayout"] == json.load(open(f"{d}/struct_layout.json")), m.get("structLayout")
+assert "struct_layout.json" not in m["assets"], m["assets"]
+PY
+check $? "layout: structLayout is struct_layout.json, and no asset"
+python3 -c 'import json,sys; assert "structLayout" not in json.load(open(sys.argv[1]))' "$TMP/local/manifest.json"
+check $? "layout: no structLayout without struct_layout.json"
+
+d="$(release_dir badlayout)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+printf '{"lp64": {"mpv_event": {"size": 24}}}\n' > "$d/struct_layout.json"
+refused badlayout 'struct_layout.json'
+
 d="$(release_dir license)"
 record "$d" linux-x86_64 'volume' 'pcm_tap'
 record "$d" android-arm64-v8a 'volume' 'pcm_tap' "$RELEASE" GPL-3.0-or-later
