@@ -88,7 +88,8 @@ for a in ('ssl', 'crypto', 'xml2', 'bz2', 'lzma'):
 # The shared mpv patches in the order of apply_mpv_patches_common, which
 # the test reads back from scripts/shared/_audio_only.sh.
 SHARED = [
-    'patch_optional_deps.py', 'patch_swscale_optional.py',
+    'patch_optional_deps.py', 'patch_property_seam.py',
+    'patch_swscale_optional.py',
     'patch_strip_libass.py', 'patch_strip_mpv_dead.py',
     'patch_strip_win_resources.py', 'patch_afmt_reset.py',
     'patch_prefetch.py', 'patch_audio_output_state.py',

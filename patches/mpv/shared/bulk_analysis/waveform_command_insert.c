@@ -103,4 +103,3 @@ static int mp_property_waveform_enabled(void *ctx, struct m_property *prop,
     return M_PROPERTY_NOT_IMPLEMENTED;
 }
 
-static int mp_property_audio_params(void *ctx, struct m_property *prop,

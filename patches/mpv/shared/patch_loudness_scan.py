@@ -46,8 +46,8 @@ The C sources are REAL files in `bulk_analysis/` next to this script:
     mak_loudness.c            K-filters, true-peak FIR, per-worker
                               accumulator, gated merge, property reader
     loudness_command_insert.c property getter/setter block spliced into
-                              player/command.c (ends with the bulk
-                              patch's getter-comment anchor line)
+                              player/mak_property_getters.inc (ends with
+                              the bulk patch's getter-comment anchor line)
 
 Files touched in the mpv tree
 =============================
@@ -60,7 +60,9 @@ Files touched in the mpv tree
     audio/mak_scan.c         coordinator merge + publish, either-flag start
                              gate, start scanning/fail
     audio/mak_waveform.c     arm_progressive / arm_rolling mark unavailable
-    player/command.c         property registration + getter/setter
+    player/mak_property_headers.inc  the loudness include
+    player/mak_property_getters.inc  the getter/setter
+    player/mak_property_table.inc    the property entries
     meson.build              new source file added to the build
 
 Usage
@@ -76,6 +78,7 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
+import property_seam as seam  # noqa: E402
 
 
 MARKER = 'MAK_LOUDNESS_PATCH'
@@ -296,7 +299,7 @@ def patch_mak_waveform_c(p):
     p.edits('audio/mak_waveform.c', edits)
 
 
-# ─── player/command.c (bulk-emitted anchors) ─────────────────────────
+# ─── the property seam of player/command.c (bulk-emitted anchors) ────
 
 def patch_command_c(p):
     getter_anchor = ('/* MAK_WAVEFORM_PATCH ─── read-only property: '
@@ -305,7 +308,7 @@ def patch_command_c(p):
     if not insert.endswith(getter_anchor):
         p.fail('loudness_command_insert.c must end with the bulk getter-'
                'comment anchor line (it is re-emitted by the splice).')
-    edits = [
+    p.edits(seam.HEADERS, [
         ('include',
          '#include "audio/mak_waveform.h"\n'
          '#include "demux/demux.h"',
@@ -313,7 +316,8 @@ def patch_command_c(p):
          '/* ' + MARKER + ' */\n'
          '#include "audio/mak_loudness.h"\n'
          '#include "demux/demux.h"'),
-
+    ])
+    p.edits(seam.TABLE, [
         ('property table',
          '    {"waveform-data", mp_property_waveform_data},\n'
          '    {"waveform-enabled", mp_property_waveform_enabled},',
@@ -322,10 +326,8 @@ def patch_command_c(p):
          '    /* ' + MARKER + ' */\n'
          '    {"loudness-scan-data", mp_property_loudness_scan_data},\n'
          '    {"loudness-scan-enabled", mp_property_loudness_scan_enabled},'),
-
-        ('getter/setter splice', getter_anchor, insert),
-    ]
-    p.edits('player/command.c', edits)
+    ])
+    p.edits(seam.GETTERS, [('getter/setter splice', getter_anchor, insert)])
 
 
 # ─── meson.build (bulk-emitted anchor) ───────────────────────────────

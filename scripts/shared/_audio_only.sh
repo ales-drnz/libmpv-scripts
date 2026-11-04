@@ -1139,6 +1139,10 @@ apply_mpv_patches_common() {
   # Build infrastructure (libplacebo + libass made required:false) — never gated.
   # MUST run before strip_libass/strip_mpv_dead, which both assume this form.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_optional_deps.py" "$mpv_dir/meson.build"
+  # The property seam of player/command.c, never gated either. Every patch
+  # below that adds a property writes its headers, getters and table entries
+  # to the three files it creates, not to command.c, so it MUST run first.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_property_seam.py" "$mpv_dir"
 
   # ── Size-reduction patches (toggleable from Settings ▸ Patches) ──────────────
   # Each strips a subsystem the audio-only consumer (vid=no, vo=null, sid=no,
