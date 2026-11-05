@@ -457,7 +457,7 @@ LAVF_READ_NEW = LAVF_READ + (
 
 # ─── player ────────────────────────────────────────────────────────────
 
-# bulk_analysis puts mak_scan_file_closed() before uninit_demuxer.
+# bulk_analysis puts mak_scan_file_closed(mpctx->demuxer) before uninit_demuxer.
 UNINIT_DEMUXER = (
     '    uninit_demuxer(mpctx);\n'
     '\n'
