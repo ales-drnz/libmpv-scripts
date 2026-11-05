@@ -9,7 +9,8 @@ Applies two changes:
 2. Points TOOLS/macos-sdk-version.py at the iOS SDK name instead of macosx
 
 Usage: python3 patch_ios_platform.py <mpv_source_dir> <sdk_name>
-  sdk_name is 'iphoneos' or 'iphonesimulator'
+  sdk_name is 'iphoneos', 'iphonesimulator', 'appletvos' or
+  'appletvsimulator' (build_libmpv_tvos.sh)
 """
 import re
 import sys

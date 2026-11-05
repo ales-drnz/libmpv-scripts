@@ -6,10 +6,12 @@
 # =============================================================================
 # build_libmpv_ios.sh
 #
-# Compiles mpv 0.41.0 as a DYNAMIC library for iOS.
+# Compiles mpv 0.41.0 as a DYNAMIC library for iOS, and for tvOS with
+# APPLE_OS=tvos (build_libmpv_tvos.sh).
 #
 # === OUTPUT FORMATS AND LOCATIONS ===
 # Final artifact: builds/release/libmpv_ios.xcframework.zip
+#                 (builds/release/libmpv_tvos.xcframework.zip on tvOS)
 # Output File: libmpv.xcframework wrapping a dynamic libmpv.framework per slice.
 #              Each slice contains:
 #                libmpv.framework/libmpv          (Mach-O dylib, install_name
@@ -20,8 +22,8 @@
 #                libmpv.framework/Modules/module.modulemap
 #
 # === SYSTEM & HARDWARE SPECS ===
-# Target OS:   iOS (Deployment target 15.0+)
-# Target Arch: arm64 (Physical Devices); arm64 + x86_64 (iOS Simulator)
+# Target OS:   iOS or tvOS (Deployment target 15.0+)
+# Target Arch: arm64 (Physical Devices); arm64 + x86_64 (Simulator)
 # Compiler:    Xcode Toolchain (Apple Clang)
 #
 # Usage (from project root):
@@ -29,6 +31,7 @@
 #   ./scripts/build_libmpv_ios.sh
 #
 # Options (environment variables):
+#   APPLE_OS=ios|tvos     (default: ios)
 #   MPV_VERSION=0.41.0    (default: 0.41.0)
 #   JOBS=N                (default: number of cores)
 #   FORCE_DOWNLOAD=1      (redownload sources even if cached)
@@ -60,6 +63,23 @@ source "$SCRIPT_DIR/build_openssl.sh"
 
 JOBS="${JOBS:-$(sysctl -n hw.logicalcpu)}"
 
+# tvOS has the audio stack of iOS (AudioUnit, AVFoundation, AVAudioSession),
+# so the same build makes it: only the SDKs, the version flags and the
+# names change. The libraries keep meson's 'ios' system, which mpv's
+# patches already read as Darwin.
+APPLE_OS="${APPLE_OS:-ios}"
+case "$APPLE_OS" in
+  ios)
+    DEVICE_SDK="iphoneos";  SIM_SDK="iphonesimulator"
+    DEVICE_MIN_FLAG="-miphoneos-version-min"; SIM_MIN_FLAG="-mios-simulator-version-min"
+    CMAKE_SYSTEM="iOS";     OS_LABEL="iOS" ;;
+  tvos)
+    DEVICE_SDK="appletvos"; SIM_SDK="appletvsimulator"
+    DEVICE_MIN_FLAG="-mtvos-version-min";     SIM_MIN_FLAG="-mtvos-simulator-version-min"
+    CMAKE_SYSTEM="tvOS";    OS_LABEL="tvOS" ;;
+  *) die "APPLE_OS is ios or tvos, not $APPLE_OS" ;;
+esac
+
 # iOS-only dependency versions (centralised ones live in _versions.sh)
 LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
@@ -75,7 +95,7 @@ CXX_BIN="${CC_PREFIX:+${CC_PREFIX} }clang++"
 # applies: we now ship a real Mach-O dylib per slice, ThinLTO output is
 # linked into a complete dylib before xcframework assembly.
 
-BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/iOS}"
+BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/$OS_LABEL}"
 PREFIX_BASE="$BUILD_DIR/prefix"
 
 # Staging dir for the assembled xcframework — in the build tree, never in the
@@ -91,8 +111,8 @@ OUTPUT_DIR="$BUILD_DIR/xcframework-stage"
 # timestamps live only in the file). Old logs (>20) are pruned automatically.
 LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_ios_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_ios_$(date +%Y%m%d_%H%M%S).log"
+ls -t "$LOG_DIR"/build_${APPLE_OS}_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
+LOG_FILE="$LOG_DIR/build_${APPLE_OS}_$(date +%Y%m%d_%H%M%S).log"
 exec > >(tee >(while IFS= read -r line; do
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
 done >> "$LOG_FILE")) 2>&1
@@ -102,7 +122,7 @@ echo "Log file:      $LOG_FILE"
 echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
 echo "════════════════════════════════════════════════════════════"
 
-# Slices to build:
+# Slices to build (appletvos and appletvsimulator on tvOS):
 #   device:    iphoneos arm64
 #   simulator: iphonesimulator arm64 (Apple Silicon Macs) + x86_64 (Intel Macs).
 # Simulator arm64 + x86_64 are lipo'd into a single fat slice inside the
@@ -112,11 +132,11 @@ SIM_ARCHS="${SIM_ARCHS:-arm64 x86_64}"
 
 SLICES=()
 if [[ "${ONLY_SIMULATOR:-0}" != "1" ]]; then
-  SLICES+=("iphoneos:arm64")
+  SLICES+=("$DEVICE_SDK:arm64")
 fi
 if [[ "${SKIP_SIMULATOR:-0}" != "1" ]]; then
   for sim_arch in $SIM_ARCHS; do
-    SLICES+=("iphonesimulator:${sim_arch}")
+    SLICES+=("$SIM_SDK:${sim_arch}")
   done
 fi
 
@@ -148,10 +168,10 @@ cflags_for() {
   local sysroot; sysroot="$(sdk_path "$sdk")"
   local extra
   extra="$(lto_deps_cflags) $(vis_deps_cflags)"
-  if [[ "$sdk" == "iphoneos" ]]; then
-    echo "-arch $arch -miphoneos-version-min=$IOS_MIN -isysroot $sysroot $extra"
+  if [[ "$sdk" == "$DEVICE_SDK" ]]; then
+    echo "-arch $arch $DEVICE_MIN_FLAG=$IOS_MIN -isysroot $sysroot $extra"
   else
-    echo "-arch $arch -mios-simulator-version-min=$IOS_MIN -isysroot $sysroot $extra"
+    echo "-arch $arch $SIM_MIN_FLAG=$IOS_MIN -isysroot $sysroot $extra"
   fi
 }
 
@@ -161,10 +181,10 @@ write_ios_cross() {
   local sysroot; sysroot="$(sdk_path "$sdk")"
   local file="$BUILD_DIR/meson_cross_${sdk}_${arch}.ini"
   local min_flag
-  if [[ "$sdk" == "iphoneos" ]]; then
-    min_flag="-miphoneos-version-min=$IOS_MIN"
+  if [[ "$sdk" == "$DEVICE_SDK" ]]; then
+    min_flag="$DEVICE_MIN_FLAG=$IOS_MIN"
   else
-    min_flag="-mios-simulator-version-min=$IOS_MIN"
+    min_flag="$SIM_MIN_FLAG=$IOS_MIN"
   fi
   local cpu_family="aarch64"
   [[ "$arch" == "x86_64" ]] && cpu_family="x86_64"
@@ -326,7 +346,7 @@ cmake_static() {
     -DCMAKE_OSX_ARCHITECTURES="$arch" \
     -DCMAKE_OSX_SYSROOT="$(sdk_path "$sdk")" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN" \
-    -DCMAKE_SYSTEM_NAME="iOS" \
+    -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
@@ -549,7 +569,7 @@ EOF
     -DCMAKE_OSX_ARCHITECTURES="$arch" \
     -DCMAKE_OSX_SYSROOT="$(sdk_path "$sdk")" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN" \
-    -DCMAKE_SYSTEM_NAME="iOS" \
+    -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
@@ -656,12 +676,14 @@ slice_openssl() {
   # OpenSSL Configure honours the exported CC/CFLAGS/LDFLAGS set in
   # build_slice (cf carries -arch + -isysroot). The Configure target
   # depends on the SDK, not the arch — the simulator target is xcrun-
-  # driven and covers both arm64 and x86_64.
+  # driven and covers both arm64 and x86_64. OpenSSL has no tvOS target:
+  # the iOS ones add only -arch, -isysroot and CC, which the exported flags
+  # replace with the tvOS SDK and version.
   local openssl_target
   case "$sdk" in
-    iphoneos)         openssl_target="ios64-cross"        ;;
-    iphonesimulator)  openssl_target="iossimulator-xcrun" ;;
-    *) die "no OpenSSL target mapping for iOS sdk: $sdk" ;;
+    iphoneos|appletvos)               openssl_target="ios64-cross"        ;;
+    iphonesimulator|appletvsimulator) openssl_target="iossimulator-xcrun" ;;
+    *) die "no OpenSSL target mapping for sdk: $sdk" ;;
   esac
   build_openssl "$prefix" "$BUILD_DIR" "$openssl_target"
 }
@@ -685,12 +707,12 @@ slice_libsmb2() {
     -DCMAKE_OSX_ARCHITECTURES="$arch" \
     -DCMAKE_OSX_SYSROOT="$sysroot" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN" \
-    -DCMAKE_SYSTEM_NAME="iOS" \
+    -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM" \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_INSTALL_LIBDIR=lib
   make -j"$JOBS"
   make install
-  apply_libsmb2_post_install_fixes "$prefix" "ios"
+  apply_libsmb2_post_install_fixes "$prefix" "$APPLE_OS"
   popd >/dev/null
   ok "libsmb2 ($sdk/$arch) ✓"
 }
@@ -735,13 +757,11 @@ slice_ffmpeg() {
   local bdir="$BUILD_DIR/build/ffmpeg-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
 
-  local min_flag target_os
-  if [[ "$sdk" == "iphoneos" ]]; then
-    min_flag="-miphoneos-version-min=$IOS_MIN"
-    target_os="ios"
+  local min_flag
+  if [[ "$sdk" == "$DEVICE_SDK" ]]; then
+    min_flag="$DEVICE_MIN_FLAG=$IOS_MIN"
   else
-    min_flag="-mios-simulator-version-min=$IOS_MIN"
-    target_os="ios_simulator"
+    min_flag="$SIM_MIN_FLAG=$IOS_MIN"
   fi
 
   # ── ffmpeg: smart audio-only build (see scripts/shared/_audio_only.sh) ─────────────
@@ -757,7 +777,7 @@ slice_ffmpeg() {
     --extra-ldflags="-arch $arch $min_flag -isysroot $sysroot -L$prefix/lib" \
     --disable-videotoolbox \
     --enable-audiotoolbox
-  verify_ffmpeg_config "$bdir" "ios"
+  verify_ffmpeg_config "$bdir" "$APPLE_OS"
   make -j"$JOBS"; make install
   popd >/dev/null
   ok "ffmpeg ($sdk/$arch) ✓"
@@ -814,7 +834,7 @@ slice_mpv() {
     -Dswift-build=disabled \
     -Davfoundation=enabled \
     -Daudiounit=enabled
-  verify_mpv_config "$bdir" "ios"
+  verify_mpv_config "$bdir" "$APPLE_OS"
   ninja -j"$JOBS"; ninja install
   popd >/dev/null
   ok "mpv shared ($sdk/$arch) ✓"
@@ -877,10 +897,10 @@ assemble_xcframework() {
     if [[ "${VIS_HIDDEN:-1}" != "0" ]]; then
       local _total_syms
       _total_syms="$(nm -gU "$fw/libmpv" 2>/dev/null | grep -c ' T ' || echo 0)"
-      ok "iOS slice symbols: $_total_syms total ($(basename "$fw"))"
+      ok "$OS_LABEL slice symbols: $_total_syms total ($(basename "$fw"))"
       if [[ "$_total_syms" -gt 200 ]]; then
         die "Export-filter regression: expected ~60 exported symbols but" \
-            "got $_total_syms in this iOS slice — verify patch_export_filter.py" \
+            "got $_total_syms in this $OS_LABEL slice — verify patch_export_filter.py" \
             "bound the exported-symbols list into the final link."
       fi
     fi
@@ -946,28 +966,28 @@ EOF
 
   local xcodebuild_args=("-create-xcframework")
 
-  # Device slice (iphoneos arm64).
+  # Device slice (iphoneos or appletvos arm64).
   if [[ "${ONLY_SIMULATOR:-0}" != "1" ]]; then
     local device_fw="$BUILD_DIR/libmpv.framework_device/libmpv.framework"
     # `cp -L` follows the libmpv.dylib -> libmpv.<soversion>.dylib symlink
     # produced by meson, giving us a real file we can rename to plain
     # `libmpv` inside the framework.
     local device_dylib="$BUILD_DIR/libmpv_device.dylib"
-    cp -L "$PREFIX_BASE/iphoneos_arm64/lib/libmpv.dylib" "$device_dylib"
+    cp -L "$PREFIX_BASE/${DEVICE_SDK}_arm64/lib/libmpv.dylib" "$device_dylib"
     build_dynamic_framework \
       "$device_dylib" \
-      "$PREFIX_BASE/iphoneos_arm64/include/mpv" \
+      "$PREFIX_BASE/${DEVICE_SDK}_arm64/include/mpv" \
       "$device_fw"
     xcodebuild_args+=("-framework" "$device_fw")
   fi
 
-  # Simulator slice (iphonesimulator arm64 + x86_64 lipo'd into a fat dylib).
+  # Simulator slice (arm64 + x86_64 lipo'd into a fat dylib).
   if [[ "${SKIP_SIMULATOR:-0}" != "1" ]]; then
     local sim_fw="$BUILD_DIR/libmpv.framework_sim/libmpv.framework"
     local sim_dylib="$BUILD_DIR/libmpv_sim.dylib"
     local lipo_args=()
     for sim_arch in $SIM_ARCHS; do
-      lipo_args+=("$PREFIX_BASE/iphonesimulator_${sim_arch}/lib/libmpv.dylib")
+      lipo_args+=("$PREFIX_BASE/${SIM_SDK}_${sim_arch}/lib/libmpv.dylib")
     done
     if [[ ${#lipo_args[@]} -eq 1 ]]; then
       cp -L "${lipo_args[0]}" "$sim_dylib"
@@ -978,7 +998,7 @@ EOF
     local first_sim_arch="${SIM_ARCHS%% *}"
     build_dynamic_framework \
       "$sim_dylib" \
-      "$PREFIX_BASE/iphonesimulator_${first_sim_arch}/include/mpv" \
+      "$PREFIX_BASE/${SIM_SDK}_${first_sim_arch}/include/mpv" \
       "$sim_fw"
     xcodebuild_args+=("-framework" "$sim_fw")
   fi
@@ -992,7 +1012,7 @@ EOF
   log "Zipping xcframework..."
   # Remove the previous archive first — `zip -r` UPDATES (appends) the
   # archive if it exists, leaving stale slices from earlier runs around.
-  local out_zip="$release_dir/libmpv_ios.xcframework.zip"
+  local out_zip="$release_dir/libmpv_${APPLE_OS}.xcframework.zip"
   rm -f "$out_zip"
   pushd "$OUTPUT_DIR" >/dev/null
   zip -r "$out_zip" "libmpv.xcframework" >/dev/null
@@ -1002,14 +1022,14 @@ EOF
   for slice in "${SLICES[@]}"; do
     prefixes+=("$PREFIX_BASE/${slice%%:*}_${slice##*:}")
   done
-  write_build_record ios "${prefixes[@]}"
+  write_build_record "$APPLE_OS" "${prefixes[@]}"
   # The mpv tree of a slice is mpv-<sdk>_<arch> (slice_mpv): the first one.
   local first="${SLICES[0]}"
   local licenses=("mpv=mpv-${first%%:*}_${first##*:}" ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp)
   patch_on libsmb2 && licenses+=(libsmb2)
   gpl_build && licenses+=(rubberband)
   libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
-  write_licenses ios "$BUILD_DIR/src" "${licenses[@]}"
+  write_licenses "$APPLE_OS" "$BUILD_DIR/src" "${licenses[@]}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1033,8 +1053,8 @@ main() {
 
   echo ""
   echo "╔══════════════════════════════════════════════════════════════╗"
-  echo "║  iOS build complete!                                         ║"
-  echo "║  Output: builds/release/libmpv_ios.xcframework.zip           ║"
+  printf '║  %-60s║\n' "$OS_LABEL build complete!"
+  printf '║  %-60s║\n' "Output: builds/release/libmpv_${APPLE_OS}.xcframework.zip"
   echo "╚══════════════════════════════════════════════════════════════╝"
 }
 

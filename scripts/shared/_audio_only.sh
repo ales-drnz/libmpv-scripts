@@ -863,7 +863,7 @@ verify_ffmpeg_config() {
     # future regression that would silently re-enable both backends.
     assert_define "$cfg" "CONFIG_OPENSSL"         "1"
     case "$platform" in
-      macos|ios) assert_define "$cfg" "CONFIG_SECURETRANSPORT" "0" ;;
+      macos|ios|tvos) assert_define "$cfg" "CONFIG_SECURETRANSPORT" "0" ;;
     esac
     # An https source opens https over tls, and through http-proxy (or the
     # http_proxy variable) tls opens an httpproxy:// URL: without httpproxy
@@ -915,7 +915,7 @@ verify_ffmpeg_config() {
   # AudioToolbox.framework is absent from the cross sysroot. Assert
   # both branches to catch a future toolchain regression.
   case "$platform" in
-    macos|ios)
+    macos|ios|tvos)
       # Adaptive: assert each AudioToolbox decoder present only when selected,
       # and AudioToolbox itself enabled when any of them is.
       for _d in "aac_at:AAC_AT" "alac_at:ALAC_AT" "mp3_at:MP3_AT"; do
@@ -951,7 +951,7 @@ verify_ffmpeg_config() {
       assert_define "$cfg" "CONFIG_D3D11VA" "0"
       assert_define "$cfg" "CONFIG_DXVA2"   "0"
       ;;
-    macos|ios)
+    macos|ios|tvos)
       # No HW video acceleration in audio-only build.
       assert_define "$cfg" "CONFIG_VIDEOTOOLBOX" "0"
       ;;
@@ -1010,7 +1010,7 @@ verify_mpv_config() {
       assert_define "$cfg" "HAVE_COREAUDIO"    "1"
       assert_define "$cfg" "HAVE_AVFOUNDATION" "1"
       ;;
-    ios)
+    ios|tvos)
       assert_define "$cfg" "HAVE_AUDIOUNIT"    "1"
       assert_define "$cfg" "HAVE_AVFOUNDATION" "1"
       ;;
@@ -1264,7 +1264,7 @@ apply_libsmb2_apple_patch() {
 #         also append the framework set GSS+CoreFoundation+resolv (+ krb5 on
 #         macOS only) needed by Kerberos symbols.
 # Usage: apply_libsmb2_post_install_fixes <prefix> <platform>
-#        platform: macos | ios | linux
+#        platform: macos | ios | tvos | linux
 apply_libsmb2_post_install_fixes() {
   local prefix="$1" platform="$2"
   local hdr="$prefix/include/smb2/libsmb2.h"
@@ -1303,6 +1303,10 @@ apply_libsmb2_post_install_fixes() {
         ;;
       ios)
         sed "${sed_inplace[@]}" 's|Libs: -L${libdir} -lsmb2|Libs: -L${libdir} -lsmb2 -framework GSS -framework CoreFoundation -lresolv|' "$pc"
+        ;;
+      tvos)
+        # tvOS has no GSS framework, so libsmb2 builds without Kerberos.
+        sed "${sed_inplace[@]}" 's|Libs: -L${libdir} -lsmb2|Libs: -L${libdir} -lsmb2 -framework CoreFoundation -lresolv|' "$pc"
         ;;
     esac
   fi

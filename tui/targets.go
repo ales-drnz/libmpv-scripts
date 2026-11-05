@@ -78,7 +78,7 @@ func linuxHostMembers() []string {
 
 // Available reports whether this target can run on the current host:
 //
-//   - Apple targets (macOS / iOS) need macOS + Xcode — there is no legal,
+//   - Apple targets (macOS / iOS / tvOS) need macOS + Xcode — there is no legal,
 //     supported way to build them off a Mac, so they're disabled elsewhere.
 //   - The other NATIVE build scripts (Android, manifest, version bump) are
 //     bash + Unix tools run on the host, so they don't work on native Windows
@@ -134,6 +134,7 @@ func allTargets() []Target {
 	const (
 		sMac     = "scripts/build_libmpv_macos.sh"
 		sIOS     = "scripts/build_libmpv_ios.sh"
+		sTVOS    = "scripts/build_libmpv_tvos.sh"
 		sAndroid = "scripts/build_libmpv_android.sh"
 		sLinux   = "scripts/build_libmpv_linux.sh"
 		sWin     = "scripts/build_libmpv_windows.sh"
@@ -152,6 +153,11 @@ func allTargets() []Target {
 		{Key: "ios-x86_64", Label: "x86_64", Group: "iOS", AppleOnly: true, InMenu: true, Note: apple, kind: kNative, script: sIOS, env: []string{"ONLY_SIMULATOR=1", "SIM_ARCHS=x86_64"}},
 		{Key: "ios", Label: "all (universal)", Group: "iOS", AppleOnly: true, InMenu: true, Note: apple, kind: kNative, script: sIOS},
 
+		// ── tvOS (by arch, like iOS): the iOS build with the tvOS SDKs. ──
+		{Key: "tvos-arm64", Label: "arm64", Group: "tvOS", AppleOnly: true, InMenu: true, Note: apple, kind: kNative, script: sTVOS, env: []string{"SIM_ARCHS=arm64"}},
+		{Key: "tvos-x86_64", Label: "x86_64", Group: "tvOS", AppleOnly: true, InMenu: true, Note: apple, kind: kNative, script: sTVOS, env: []string{"ONLY_SIMULATOR=1", "SIM_ARCHS=x86_64"}},
+		{Key: "tvos", Label: "all (universal)", Group: "tvOS", AppleOnly: true, InMenu: true, Note: apple, kind: kNative, script: sTVOS},
+
 		// ── Windows (Docker — any host) ──
 		{Key: "windows-x86_64", Label: "x86_64", Group: "Windows", InMenu: true, kind: kDocker, script: sWin, image: "windows", args: []string{"--arch=x86_64"}},
 		{Key: "windows-arm64", Label: "arm64", Group: "Windows", InMenu: true, kind: kDocker, script: sWin, image: "windows", args: []string{"--arch=aarch64"}},
@@ -169,7 +175,7 @@ func allTargets() []Target {
 		{Key: "android-x86_64", Label: "x86_64", Group: "Android", InMenu: true, kind: kDocker, script: sAndroid, image: "android", dockerPlatform: "linux/amd64", nativeOnDarwin: true, env: []string{"ABIS=x86_64"}},
 		// "all" is an AGGREGATE of the per-ABI targets (like Linux/Windows), so
 		// each ABI builds as its own dashboard row with its own log + green tick
-		// as it finishes — not one combined run. (macOS/iOS "all" stay single
+		// as it finishes — not one combined run. (macOS/iOS/tvOS "all" stay single
 		// because they lipo into one universal xcframework.)
 		{Key: "android", Label: "all", Group: "Android", InMenu: true, kind: kAggregate, members: []string{"android-arm64-v8a", "android-armeabi-v7a", "android-x86_64"}},
 
@@ -196,7 +202,7 @@ func allTargets() []Target {
 
 		// ── Aggregates (CLI convenience) ──
 		{Key: "desktop-all", Label: "All desktop targets", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"linux", "windows"}},
-		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "android", "desktop-all", "manifest"}},
+		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "tvos", "android", "desktop-all", "manifest"}},
 	}
 }
 

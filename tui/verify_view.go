@@ -81,7 +81,7 @@ func statusFromStr(s string) phaseStatus {
 // verifyPhaseOrder is every verification phase in the order the verifier runs
 // them, with a readable label. The focused-binary detail groups its checks under
 // these phases so the report reads as sections, not a flat dump. slices runs
-// only on a universal Mach-O. TestVerifyPhaseOrderMatchesScript keeps the list
+// on an xcframework and on a universal Mach-O. TestVerifyPhaseOrderMatchesScript keeps the list
 // equal to the phases verify_binaries.sh enters.
 var verifyPhaseOrder = []struct{ id, label string }{
 	{"fmt", "Format / arch"},
