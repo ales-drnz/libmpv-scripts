@@ -105,6 +105,10 @@ int main(int argc, char **argv)
     }
     if (m_idle) {
         mt_check(got == 2, "the playlist ended in idle (%d)", got);
+        // idle-active was read with a get, the log messages come as events:
+        // those of the drain, sent before mpv went idle, may still wait in
+        // the queue.
+        pb_pump(h, 300, &ev);
         mt_check(ev.hits[0] >= 1,
                  "the tail was drained before the output closed (%d)",
                  ev.hits[0]);

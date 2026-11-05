@@ -18,6 +18,10 @@
 //   lateoff  the same with both analyses off at the load, then both on.
 //   two      two players of one process, each on an fd://N of its own file:
 //            the analysis of the second one reads its own (a.flac).
+//   nine     nine players, each on an fd://N of b.flac with the analyses
+//            off; N of the ninth is made to name a.flac, then its analyses
+//            go on: they read b.flac (r22 before: a table of eight had no
+//            room for the ninth, which read N again).
 //   pipe     fd://N on a pipe the test writes b.flac into: not a regular
 //            file, so the waveform grows from playback (progressive) and
 //            the loudness scan reports unavailable (r17: both failed).
@@ -53,7 +57,7 @@ static void load(mpv_handle *h, const char *url)
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s fd|fdclose|reuse|late|lateoff|two|pipe <fixtures> <tmpdir>\n", argv[0]);
+        fprintf(stderr, "usage: %s fd|fdclose|reuse|late|lateoff|two|nine|pipe <fixtures> <tmpdir>\n", argv[0]);
         return 2;
     }
     signal(SIGPIPE, SIG_IGN);
@@ -88,6 +92,51 @@ int main(int argc, char **argv)
         an_pump(h, 0.3, MPV_EVENT_NONE);
         close(p[0]);
         pthread_join(t, NULL);
+        mpv_terminate_destroy(h);
+        return mt_result();
+    }
+
+    if (!strcmp(mode, "nine")) {
+        load(h, b);
+        an_wait_final(h, 1, 1, 30, &ref, &lref);
+        mt_cmd(h, "stop", NULL, NULL, NULL);
+        an_flag(h, "waveform-enabled", 0);
+        an_flag(h, "loudness-scan-enabled", 0);
+        enum { PLAYERS = 9 };
+        mpv_handle *ps[PLAYERS];
+        int fds[PLAYERS];
+        for (int i = 0; i < PLAYERS; i++) {
+            ps[i] = an_create();
+            mpv_initialize(ps[i]);
+            mpv_set_property_string(ps[i], "pause", "yes");
+            fds[i] = open(b, O_RDONLY);
+            snprintf(url, sizeof url, "fd://%d", fds[i]);
+            load(ps[i], url);
+        }
+        mpv_handle *last = ps[PLAYERS - 1];
+        int other = open(a, O_RDONLY);
+        mt_check(dup2(other, fds[PLAYERS - 1]) == fds[PLAYERS - 1],
+                 "descriptor %d now reads a.flac", fds[PLAYERS - 1]);
+        close(other);
+        an_flag(last, "waveform-enabled", 1);
+        an_flag(last, "loudness-scan-enabled", 1);
+        an_wait_final(last, 1, 1, 30, &w, &l);
+        mt_check(!strcmp(w.state, "ready"), "the ninth player's waveform ready (%s)", w.state);
+        int same = w.bins == ref.bins && w.bins > 0 && w.min && ref.min;
+        for (int i = 0; same && i < w.bins; i++)
+            same = fabsf(w.min[i] - ref.min[i]) <= 1e-6f &&
+                   fabsf(w.max[i] - ref.max[i]) <= 1e-6f;
+        mt_check(same, "the ninth player's bins are its own file's (%d and %d bins)",
+                 w.bins, ref.bins);
+        mt_check(fabs(l.integrated - lref.integrated) < 0.01,
+                 "the ninth player's loudness is its own file's (%.3f and %.3f)",
+                 l.integrated, lref.integrated);
+        an_wave_free(&w);
+        an_wave_free(&ref);
+        for (int i = 0; i < PLAYERS; i++) {
+            mpv_terminate_destroy(ps[i]);
+            close(fds[i]);
+        }
         mpv_terminate_destroy(h);
         return mt_result();
     }

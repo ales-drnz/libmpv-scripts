@@ -576,23 +576,26 @@ static void scan_failed(int gen)
  * whatever the flags) and closed with the file. A later start, when the
  * waveform or the loudness is turned on, duplicates this one and not N:
  * the app may have closed N and reused the number by then. [why] says why
- * there is none. One per player of the process, under g_held_lock, as
- * each player has a core thread of its own. */
-#define MAK_SCAN_HELD 8
-static struct scan_held {
+ * there is none. One entry per loaded file of every player of the process,
+ * in a list under g_held_lock, as each player has a core thread of its
+ * own. */
+struct scan_held {
+    struct scan_held *next;
     struct demuxer *demuxer;
     int fd;
     const char *why;
-} g_held[MAK_SCAN_HELD];
+};
+static struct scan_held *g_held;
 static mp_mutex g_held_lock = MP_STATIC_MUTEX_INITIALIZER;
 
-/* The entry of [demuxer], or NULL. Under g_held_lock. */
-static struct scan_held *scan_held_of(struct demuxer *demuxer)
+/* The link to the entry of [demuxer], or to the end of the list. Under
+ * g_held_lock. */
+static struct scan_held **scan_held_of(struct demuxer *demuxer)
 {
-    for (int i = 0; demuxer && i < MAK_SCAN_HELD; i++)
-        if (g_held[i].demuxer == demuxer)
-            return &g_held[i];
-    return NULL;
+    struct scan_held **e = &g_held;
+    while (*e && (*e)->demuxer != demuxer)
+        e = &(*e)->next;
+    return e;
 }
 #endif
 
@@ -600,11 +603,12 @@ void mak_scan_file_closed(struct demuxer *demuxer)
 {
 #if MAK_SCAN_FD_IO
     mp_mutex_lock(&g_held_lock);
-    struct scan_held *e = scan_held_of(demuxer);
-    if (e) {
+    struct scan_held **link = scan_held_of(demuxer), *e = *link;
+    if (demuxer && e) {
+        *link = e->next;
         if (e->fd >= 0)
             mak_scan_close_fd(e->fd);
-        *e = (struct scan_held){.fd = -1};
+        free(e);
     }
     mp_mutex_unlock(&g_held_lock);
 #else
@@ -726,22 +730,21 @@ static int scan_dup_fd(const char *num, const char **why_out)
     return fd;
 }
 
-/* Takes the duplicate the file of [demuxer] keeps, once per file. With
- * every entry taken, nothing is held, and a pass duplicates N itself. */
+/* Takes the duplicate the file of [demuxer] keeps, once per file. Out of
+ * memory nothing is held, and a pass duplicates N itself. */
 static void scan_hold_fd(const char *url, struct demuxer *demuxer)
 {
     const char *num = scan_fd_num(url);
     if (!num || !demuxer)
         return;
     mp_mutex_lock(&g_held_lock);
-    if (!scan_held_of(demuxer)) {
-        struct scan_held *e = NULL;
-        for (int i = 0; !e && i < MAK_SCAN_HELD; i++)
-            if (!g_held[i].demuxer)
-                e = &g_held[i];
+    struct scan_held **link = scan_held_of(demuxer);
+    if (!*link) {
+        struct scan_held *e = calloc(1, sizeof(*e));
         if (e) {
             e->demuxer = demuxer;
             e->fd = scan_dup_fd(num, &e->why);
+            *link = e;
         }
     }
     mp_mutex_unlock(&g_held_lock);
@@ -755,7 +758,7 @@ static int scan_file_fd(const char *url, struct demuxer *demuxer,
     const char *why = NULL;
     int fd = -1;
     mp_mutex_lock(&g_held_lock);
-    struct scan_held *e = scan_held_of(demuxer);
+    struct scan_held *e = demuxer ? *scan_held_of(demuxer) : NULL;
     if (e) {
         why = e->why;
         if (e->fd >= 0) {

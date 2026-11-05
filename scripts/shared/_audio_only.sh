@@ -1223,6 +1223,10 @@ apply_mpv_patches_common() {
   # gapless_tail: an output underrun in the tail of a gapless end no
   # longer leaves that tail unplayed (keep-open parked with it queued).
   _mpv_patch gapless_tail       patch_gapless_tail.py       "$mpv_dir"
+  # keep_open_park: keep-open-parked tells the park of keep-open from a
+  # pause of the client in the tail, which pauses at once instead of
+  # draining the output first.
+  _mpv_patch keep_open_park     patch_keep_open_park.py     "$mpv_dir"
   _mpv_patch lavfi_eof_passthrough patch_lavfi_eof_passthrough.py "$mpv_dir"
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"

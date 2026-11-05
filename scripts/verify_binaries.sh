@@ -190,6 +190,7 @@ EXPECTED_FORMATS=(
 #   loudness_scan     : loudness-scan-data, loudness-scan-enabled
 #   af_command_args   : af-command-saves-args
 #   read_error        : demuxer-read-error, demuxer-skipped-segments, mak-end-file-fields
+#   keep_open_park    : keep-open-parked
 MPV_PATCHED_PROPS=(
   prefetch-state prefetch-cache-duration
   prefetch-open-filename prefetch-playlist-entry-id
@@ -201,6 +202,7 @@ MPV_PATCHED_PROPS=(
   loudness-scan-data loudness-scan-enabled
   af-command-saves-args
   demuxer-read-error demuxer-skipped-segments mak-end-file-fields
+  keep-open-parked
 )
 
 # mak_frag_editlist is the option patch_ffmpeg_advanced_editlist.py adds to
