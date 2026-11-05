@@ -12,6 +12,9 @@
 //   fdclose  the same with fdclose://N.
 //   reuse    fd://N, and right after the load the test makes N name a.flac
 //            (dup2): the analysis still describes b.flac.
+//   late     fd://N loaded with the loudness off, N made to name a.flac once
+//            the waveform is ready, then the loudness on: its pass still
+//            reads b.flac (r21: it read a.flac and replaced the waveform).
 //   pipe     fd://N on a pipe the test writes b.flac into: not a regular
 //            file, so the waveform grows from playback (progressive) and
 //            the loudness scan reports unavailable (r17: both failed).
@@ -47,7 +50,7 @@ static void load(mpv_handle *h, const char *url)
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s fd|fdclose|reuse|pipe <fixtures> <tmpdir>\n", argv[0]);
+        fprintf(stderr, "usage: %s fd|fdclose|reuse|late|pipe <fixtures> <tmpdir>\n", argv[0]);
         return 2;
     }
     signal(SIGPIPE, SIG_IGN);
@@ -96,7 +99,20 @@ int main(int argc, char **argv)
     snprintf(url, sizeof url, "%s://%d", strcmp(mode, "fdclose") ? "fd" : "fdclose", fd);
     if (!strcmp(mode, "fd"))
         mpv_set_property_string(h, "pause", "no");
+    if (!strcmp(mode, "late"))
+        an_flag(h, "loudness-scan-enabled", 0);
     load(h, url);
+    if (!strcmp(mode, "late")) {
+        an_wait_final(h, 1, 0, 30, &w, &l);
+        mt_check(!strcmp(w.state, "ready"), "fd waveform ready before the loudness (%s)", w.state);
+        an_wave_free(&w);
+        // N is reused once the file is loaded, then the loudness goes on
+        // and its pass decodes the file again.
+        int other = open(a, O_RDONLY);
+        mt_check(dup2(other, fd) == fd, "descriptor %d now reads a.flac", fd);
+        close(other);
+        an_flag(h, "loudness-scan-enabled", 1);
+    }
     if (!strcmp(mode, "reuse")) {
         // N now names a.flac, as when the app closes N and the number is
         // reused by its next open.

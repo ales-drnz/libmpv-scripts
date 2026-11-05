@@ -570,8 +570,27 @@ static void scan_failed(int gen)
 #endif
 }
 
+#if MAK_SCAN_FD_IO
+/* The duplicate of N that the loaded fd://N or fdclose://N file keeps,
+ * taken by its first start (the FILE_LOADED kick, whatever the flags) and
+ * closed with the file. A later start, when the waveform or the loudness
+ * is turned on, duplicates this one and not N: the app may have closed N
+ * and reused the number by then. [g_file_fd_why] says why there is none.
+ * Core thread only. */
+static int g_file_fd = -1;
+static bool g_file_fd_taken;
+static const char *g_file_fd_why;
+#endif
+
 void mak_scan_file_closed(void)
 {
+#if MAK_SCAN_FD_IO
+    if (g_file_fd >= 0)
+        mak_scan_close_fd(g_file_fd);
+    g_file_fd = -1;
+    g_file_fd_taken = false;
+    g_file_fd_why = NULL;
+#endif
     int gen = mak_waveform_cancel_running();
 #if __has_include("audio/mak_loudness.h")
     /* Under the new generation, as the core marks a new file's scan. */
@@ -652,14 +671,23 @@ static bool scan_track_of(struct demuxer *demuxer, struct sh_stream *audio,
     return false;
 }
 
+/* The text after "://" of an fd://N or fdclose://N URL, NULL for others. */
+static const char *scan_fd_num(const char *url)
+{
+    const char *sep = strstr(url, "://");
+    if (sep && (mak_url_scheme_is(url, sep, "fd") ||
+                mak_url_scheme_is(url, sep, "fdclose")))
+        return sep + 3;
+    return NULL;
+}
+
 #if MAK_SCAN_FD_IO
-/* A duplicate of the descriptor an fd://N or fdclose://N URL names ([num]
- * is the text after "://"), taken on the core thread while N is the
- * player's file: the app may close N while the analysis runs, and the
- * number be reused by another open. -1, with a warning, when the source
- * cannot be read ahead of time: N is not an open descriptor, or not a
- * regular file (a pipe from a cloud provider). */
-static int scan_dup_fd(const char *num, struct mp_log *log)
+/* A duplicate of the descriptor N names ([num] is the text after "://"),
+ * taken on the core thread while N is the player's file. -1, with the
+ * reason in [why], when the source cannot be read ahead of time: N is not
+ * an open descriptor, or not a regular file (a pipe from a cloud
+ * provider). */
+static int scan_dup_fd(const char *num, const char **why_out)
 {
     char *end = NULL;
     errno = 0;
@@ -675,10 +703,35 @@ static int scan_dup_fd(const char *num, struct mp_log *log)
     int fd = why ? -1 : fcntl((int)n, F_DUPFD_CLOEXEC, 0);
     if (!why && fd < 0)
         why = "cannot be duplicated";
-    if (why && log)
+    *why_out = why;
+    return fd;
+}
+
+/* Takes the duplicate the loaded file keeps (g_file_fd), once per file. */
+static void scan_hold_fd(const char *url)
+{
+    const char *num = scan_fd_num(url);
+    if (!num || g_file_fd_taken)
+        return;
+    g_file_fd_taken = true;
+    g_file_fd = scan_dup_fd(num, &g_file_fd_why);
+}
+
+/* A duplicate of the file's own for one pass. -1, with a warning, when
+ * the source cannot be read ahead of time. */
+static int scan_file_fd(struct mp_log *log)
+{
+    const char *why = g_file_fd_why;
+    int fd = -1;
+    if (g_file_fd >= 0) {
+        fd = fcntl(g_file_fd, F_DUPFD_CLOEXEC, 0);
+        if (fd < 0)
+            why = "cannot be duplicated";
+    }
+    if (fd < 0 && log)
         mp_warn(log, "analysis: the descriptor source is %s, the waveform "
                 "grows from playback and the loudness scan is unavailable\n",
-                why);
+                why ? why : "not open");
     return fd;
 }
 #endif
@@ -690,8 +743,12 @@ void mak_scan_start(const char *url, double duration_secs,
                     struct mp_log *log, struct demuxer *demuxer,
                     struct sh_stream *audio)
 {
-    if (!mak_waveform_is_enabled()) return;
     if (!url || !*url) return;
+#if MAK_SCAN_FD_IO
+    /* Before the gate: the file keeps its descriptor for a later start. */
+    scan_hold_fd(url);
+#endif
+    if (!mak_waveform_is_enabled()) return;
 
     /* Bump the generation up front so any in-flight coordinator/workers and
      * af-tap folds from the previous track self-cancel, and reset the visible
@@ -728,16 +785,14 @@ void mak_scan_start(const char *url, double duration_secs,
 
     /* ── DESCRIPTOR (fd://N, fdclose://N: an Android content:// URI) ──────
      * FFmpeg cannot open these URLs. The coordinator and its workers read a
-     * duplicate of N, taken here, with pread (see mak_scan_open_source). A source
-     * that cannot be read ahead of time (a pipe, or a platform without
-     * pread) grows from playback, and the loudness scan reports
-     * unavailable. */
+     * duplicate of the one the file keeps (g_file_fd), with pread (see
+     * mak_scan_open_source). A source that cannot be read ahead of time (a
+     * pipe, or a platform without pread) grows from playback, and the
+     * loudness scan reports unavailable. */
     int fd = -1;
-    const char *fd_sep = strstr(url, "://");
-    if (fd_sep && (mak_url_scheme_is(url, fd_sep, "fd") ||
-                   mak_url_scheme_is(url, fd_sep, "fdclose"))) {
+    if (scan_fd_num(url)) {
 #if MAK_SCAN_FD_IO
-        fd = scan_dup_fd(fd_sep + 3, log);
+        fd = scan_file_fd(log);
 #else
         if (log)
             mp_warn(log, "analysis: a descriptor source is not decoded ahead "

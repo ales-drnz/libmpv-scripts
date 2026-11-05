@@ -77,7 +77,7 @@ CASES=(
   "lib analysis_channels_test analysis 4000000 opus16http opus16httpwave"
   "lib analysis_track_test analysis - mka1 mka2 m4a2 ext"
   "lib analysis_track_test analysis 1000000 http2 httpseek"
-  "lib analysis_fd_test analysis - fd fdclose reuse pipe"
+  "lib analysis_fd_test analysis - fd fdclose reuse late pipe"
   "lib fd_offset_test playback - two"
   "lib analysis_close_test analysis 600000 stop feedstop readystop loudoff loudkeep probe"
   "lib analysis_worker_test analysis - fail"
