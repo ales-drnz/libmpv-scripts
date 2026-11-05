@@ -30,9 +30,9 @@ permissions:
   contents: read
 
 jobs:
-  # A release/rN branch builds rN: the binaries stamp LIBMPV_RELEASE in their
-  # version, so a branch and a stamp that disagree stop here, before the
-  # builds. Any other branch passes.
+  # The binaries stamp LIBMPV_RELEASE in their version: it must be of the
+  # form rN on any branch, and a release/rN branch builds rN, so a branch
+  # and a stamp that disagree stop here, before the builds.
   release-branch:
     name: Release branch
     runs-on: ubuntu-24.04

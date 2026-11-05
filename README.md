@@ -196,7 +196,7 @@ To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` an
 
 Every push to a `release/` branch runs `.github/workflows/build.yml` with `STRICT_SOURCES=1`:
 
-- its first job, `release-branch`, stops the run when `LIBMPV_RELEASE` is not the `rN` of a `release/rN` branch;
+- its first job, `release-branch`, stops the run when `LIBMPV_RELEASE` is not of the form `rN`, or not the `rN` of a `release/rN` branch;
 - it builds all ten libraries and the web module, Apple included;
 - it uploads them as the `libmpv-release` artifact, with the records, `licenses.zip` and `manifest.json`;
 - it runs `./build verify`, the patch tests, a tone with the Linux library in a bare Debian 11, and the web checks in Node and Chrome;

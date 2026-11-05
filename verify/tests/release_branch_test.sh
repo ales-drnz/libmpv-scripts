@@ -36,5 +36,12 @@ expect pass wip/r22-anything
 # A LIBMPV_RELEASE from outside does not hide the one the scripts carry.
 expect fail release/r22 LIBMPV_RELEASE=r22
 
+# Any branch builds a stamp of the form rN, which the kit reads back.
+for bad in '' r22x 22 'r 22'; do
+  printf 'export LIBMPV_RELEASE="${LIBMPV_RELEASE:-%s}"\n' "$bad" > "$TMP/scripts/shared/_versions.sh"
+  expect fail main
+  expect fail wip/r22-anything
+done
+
 [[ $failures -eq 0 ]] && echo "release_branch_test: ok"
 exit $(( failures > 0 ))
