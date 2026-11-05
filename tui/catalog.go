@@ -19,7 +19,7 @@ type FFItem struct {
 	Desc      string // one-line description (<= ~70 chars), factual
 	Category  string // grouping label within its Kind (see below)
 	Kind      FFKind
-	AppleOnly bool // only compiles on macOS/iOS (the *_at decoders)
+	AppleOnly bool // only compiles on macOS/iOS/tvOS (the *_at decoders)
 	Required  bool // cannot be disabled (the config audit asserts it)
 	DefaultOn bool // part of the curated default whitelist (built today)
 }
@@ -131,7 +131,7 @@ func ffmpegCatalog() []FFItem {
 		{Name: "pcm_u32le", Title: "PCM U32LE", Desc: "32-bit unsigned PCM, little-endian", Category: "PCM", Kind: ffDecoder, DefaultOn: true},
 
 		// ---------------------------------------------------------------
-		// DECODERS — Apple HW (AudioToolbox, macOS/iOS only)
+		// DECODERS — Apple HW (AudioToolbox, macOS/iOS/tvOS only)
 		// ---------------------------------------------------------------
 		{Name: "aac_at", Title: "AAC (AudioToolbox)", Desc: "AAC via Apple AudioToolbox hardware/system decoder", Category: "Apple HW", Kind: ffDecoder, AppleOnly: true, DefaultOn: true},
 		{Name: "alac_at", Title: "ALAC (AudioToolbox)", Desc: "Apple Lossless via Apple AudioToolbox decoder", Category: "Apple HW", Kind: ffDecoder, AppleOnly: true, DefaultOn: true},
