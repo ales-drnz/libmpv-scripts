@@ -4,8 +4,13 @@
 - [@erikjara](https://github.com/erikjara): added the tvOS build ([#3](https://github.com/ales-drnz/libmpv-scripts/pull/3)).
 
 ### All platforms
+**Added**
+- `keep-open-parked` (patch `keep_open_park`): keep-open parked the file at its end, with the output played out. A pause of the client before that is no park.
+
 **Fixed**
-- An analysis turned on once an `fd://` source has loaded reads that source, even when the client has reused the descriptor, and each player of the process keeps its own (not on Windows).
+- A pause in the gapless tail pauses at once, instead of draining the output first, and the tail plays on the resume.
+- An analysis turned on once an `fd://` source has loaded reads that source, even when the client has reused the descriptor, and each player of the process keeps its own, with no limit (not on Windows).
+- `verify/struct_layout.py` works with clang 23, and the Build checks the form of `LIBMPV_RELEASE` on every branch.
 - The libraries say `mpv v0.41.0+r22`.
 
 ### tvOS
