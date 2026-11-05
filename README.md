@@ -11,7 +11,7 @@
 [![](https://img.shields.io/badge/Patreon-F96854?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/cw/ales_drnz)
 [![](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/ales.drnz)
 
-The build scripts for the libmpv inside [`mpv_audio_kit`](https://pub.dev/packages/mpv_audio_kit). They compile [mpv](https://mpv.io) and FFmpeg without video, with a set of patches the package relies on (waveform, loudness scan, audio taps and more), for macOS, iOS, Android, Windows, Linux and the browser.
+The build scripts for the libmpv inside [`mpv_audio_kit`](https://pub.dev/packages/mpv_audio_kit). They compile [mpv](https://mpv.io) and FFmpeg without video, with a set of patches the package relies on (waveform, loudness scan, audio taps and more), for macOS, iOS, tvOS, Android, Windows, Linux and the browser.
 
 Everything runs from `./build`, a terminal menu where you pick the targets and follow the builds.
 
@@ -35,6 +35,7 @@ On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Andr
 | :--- | :--- | :--- |
 | macOS | arm64 and x86_64 (universal) | `libmpv_macos.xcframework.zip` |
 | iOS | arm64 device, arm64 and x86_64 simulator | `libmpv_ios.xcframework.zip` |
+| tvOS | arm64 device, arm64 and x86_64 simulator | `libmpv_tvos.xcframework.zip` |
 | Android | arm64-v8a, armeabi-v7a, x86_64 | `libmpv_android-<abi>.so` |
 | Linux | x86_64, aarch64 | `libmpv_linux-<arch>.so` |
 | Windows | x86_64, arm64 | `libmpv_windows-<arch>.dll` |
@@ -82,7 +83,7 @@ Rubber Band is left out. `LIBMPV_GPL=1` builds it in, and the library becomes GP
 | :--- | :--- |
 | [Go](https://go.dev/dl/) | always, it runs `./build` |
 | [Docker](https://docs.docker.com/get-docker/) | Linux, Windows and Android (Android on macOS builds without it) |
-| Xcode | macOS and iOS |
+| Xcode | macOS, iOS and tvOS |
 | [emsdk](https://emscripten.org/docs/getting_started/downloads.html) 6.0.12, meson and ninja | the web |
 
 The Android NDK is downloaded by the build, you don't need to install it.
@@ -92,8 +93,8 @@ The Android NDK is downloaded by the build, you don't need to install it.
 | Host | Targets |
 | :--- | :--- |
 | macOS | all of them |
-| Linux | all except macOS and iOS |
-| Windows | all except macOS, iOS and the web |
+| Linux | all except macOS, iOS and tvOS |
+| Windows | all except macOS, iOS, tvOS and the web |
 
 Apple targets need a Mac, Linux builds only for the host's own architecture, and the web builds on the host with the emsdk. [GitHub Actions](#36-on-github-actions) builds everything, whatever you have.
 
@@ -127,13 +128,14 @@ The main libraries of the build, with their version and license; the complete li
 
 ### 3. Building
 
-#### 3.1 macOS and iOS
+#### 3.1 macOS, iOS and tvOS
 
 On a Mac with Xcode:
 
 ```bash
 ./build macos          # universal xcframework
 ./build ios            # device and simulator xcframework
+./build tvos           # the same for tvOS
 ./build macos-arm64    # one architecture
 ```
 
@@ -194,7 +196,7 @@ To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` an
 
 Every push to a `release/` branch runs `.github/workflows/build.yml` with `STRICT_SOURCES=1`:
 
-- it builds all nine libraries and the web module, Apple included;
+- it builds all ten libraries and the web module, Apple included;
 - it uploads them as the `libmpv-release` artifact, with the records, `licenses.zip` and `manifest.json`;
 - it runs `./build verify`, the patch tests, a tone with the Linux library in a bare Debian 11, and the web checks in Node and Chrome.
 
@@ -236,7 +238,7 @@ The patches, the network protocols and the web module have tests of their own. T
 
 #### 4.4 Publishing a release
 
-1. Build all nine libraries and the web module, usually by pushing a `release/` branch (see [3.6](#36-on-github-actions)).
+1. Build all ten libraries and the web module, usually by pushing a `release/` branch (see [3.6](#36-on-github-actions)).
 2. Create the `libmpv-rN` release on `mpv_audio_kit` and upload the libraries, `libmpv_web.zip`, `licenses.zip` and `manifest.json`.
 3. In `mpv_audio_kit`, run `scripts/update_libmpv.sh rN`.
 
@@ -254,7 +256,7 @@ Each build downloads the pinned sources, applies the patches in `patches/` to mp
 
 - **"Go not found"**: install Go and run again.
 - **A Linux, Windows or Android build fails right away**: Docker isn't running.
-- **macOS and iOS are greyed out**: they need a Mac with Xcode. GitHub Actions can build them instead.
+- **macOS, iOS and tvOS are greyed out**: they need a Mac with Xcode. GitHub Actions can build them instead.
 - **The first Docker build is slow**: it is building the image, later builds reuse it.
 - **"Unpinned source"**: a download is not in `scripts/shared/_sources.sha256`. Add the line the error prints, or build without `STRICT_SOURCES=1` and collect the lines with `RECORD_SOURCES`.
 - **"the Linux build is native-only"**: Linux builds only for the host's architecture. Use a host of the other architecture, or GitHub Actions.
