@@ -702,8 +702,11 @@ layer13_load_test() {
       # Linux loader.
       _l13_macos_dlopen "$inspect"
       ;;
-    ios|tvos)
+    ios)
       na "$platform device slice targets arm64-$platform; no host loader (the simulator slice needs the Simulator runtime, not plain dyld). Static layers (1-11) + the consumer link-time check cover it."
+      ;;
+    tvos)
+      na "$platform device slice targets arm64-$platform; no host loader (the simulator slice needs the Simulator runtime, not plain dyld). Static layers (1-11) cover it: no consumer build of tvOS runs in CI."
       ;;
     *)
       warn "L13: no load test for platform=$platform"
@@ -1346,6 +1349,30 @@ arch_from_artifact() {
   esac
 }
 
+# The slices of an unzipped libmpv.xcframework under [dir]: each one of
+# [platform] (macos-, ios- or tvos-), and on iOS and tvOS a device slice.
+# The iOS and tvOS zips come from one script, so a wrong SDK or version
+# flag would give a tvOS zip of iOS slices that every other layer passes.
+_xcf_slices_check() {
+  local platform="$1" dir="$2" s name names=() other=() device=0
+  for s in "$dir"/libmpv.xcframework/*/; do
+    [[ -d "$s" ]] || continue
+    name="$(basename "$s")"
+    names+=("$name")
+    [[ "$name" == "$platform-"* ]] || other+=("$name")
+    [[ "$name" != *-simulator ]] && device=1
+  done
+  if (( ${#names[@]} == 0 )); then
+    fail "xcframework slices: none found"
+  elif (( ${#other[@]} )); then
+    fail "xcframework slices: ${other[*]} not of $platform"
+  elif [[ "$platform" != macos ]] && (( ! device )); then
+    fail "xcframework slices: no $platform device slice (${names[*]})"
+  else
+    pass "xcframework slices: ${names[*]}"
+  fi
+}
+
 # Layer 15: Apple code-signing identity. For every slice in a libmpv.xcframework
 # the embedded code-signing identifier (parsed from the Mach-O CodeDirectory)
 # must equal that framework's CFBundleIdentifier. iOS `installd` rejects a
@@ -1517,6 +1544,8 @@ check_binary() {
       fi
       local _slice="${inspect#*libmpv.xcframework/}"; _slice="${_slice%%/*}"
       info "(xcframework — inspecting inner $_slice slice)"
+      phase slices
+      _xcf_slices_check "$platform" "${inspect%%/libmpv.xcframework/*}"
       ;;
   esac
 

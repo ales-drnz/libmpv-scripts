@@ -583,6 +583,8 @@ jobs:
         run: go test ./...
       - name: L13 exit code classification
         run: bash verify/tests/l13_windows_test.sh
+      - name: xcframework slices
+        run: bash verify/tests/xcf_slices_test.sh
       - name: FFmpeg muxer and protocol markers
         run: bash verify/tests/components_test.sh
       - name: Manifest and build records
