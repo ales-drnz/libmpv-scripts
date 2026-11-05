@@ -52,13 +52,32 @@ TARGETS = {
         "x86_64-linux-gnu", "aarch64-linux-gnu", "x86_64-linux-android",
         "aarch64-linux-android", "arm64-apple-macos", "x86_64-apple-macos",
         "arm64-apple-ios", "arm64-apple-ios-simulator", "x86_64-apple-ios-simulator",
+        "arm64-apple-tvos", "arm64-apple-tvos-simulator", "x86_64-apple-tvos-simulator",
         "x86_64-w64-windows-gnu", "aarch64-w64-windows-gnu",
     ],
     "ilp32": ["armv7a-linux-androideabi", "wasm32-unknown-emscripten"],
 }
 
-# The integers of the table in the assembly of each target.
+# The integers of the table in the assembly of each target, the lines
+# right after its label (mak_layout:, _mak_layout: on Apple). Other
+# sections hold integers too: the CodeView .debug$S that clang 23 writes
+# for windows-gnu starts with .long 4.
+_LABEL = re.compile(r"^_?mak_layout:\s*(?:[#@/;].*)?$")
 _VALUE = re.compile(r"^\s*\.(?:long|word|int32|4byte)\s+(-?\d+)\s*(?:[#@/;].*)?$")
+
+
+def _values(asm):
+    lines = asm.splitlines()
+    start = next((i for i, l in enumerate(lines) if _LABEL.match(l)), None)
+    if start is None:
+        return []
+    values = []
+    for line in lines[start + 1:]:
+        m = _VALUE.match(line)
+        if not m:
+            break
+        values.append(int(m.group(1)))
+    return values
 
 
 def _source():
@@ -81,7 +100,7 @@ def _table(include, target, work):
     if run.returncode != 0:
         raise SystemExit(f"{target}: clang failed on the table:\n{run.stderr}")
     out = run.stdout
-    values = [int(m.group(1)) for m in map(_VALUE.match, out.splitlines()) if m]
+    values = _values(out)
     want = sum(1 + len(f) for f in STRUCTS.values())
     if len(values) != want:
         raise SystemExit(f"{target}: read {len(values)} numbers from the assembly, not {want}")

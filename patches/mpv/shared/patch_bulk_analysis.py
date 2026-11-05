@@ -296,7 +296,7 @@ LOADFILE_CLOSE_PATCHED = (
     '    mpctx->playback_initialized = false;\n'
     '\n'
     '    /* ' + MARKER + ' */\n'
-    '    mak_scan_file_closed();\n'
+    '    mak_scan_file_closed(mpctx->demuxer);\n'
     '    uninit_demuxer(mpctx);\n'
 )
 

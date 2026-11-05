@@ -863,7 +863,7 @@ verify_ffmpeg_config() {
     # future regression that would silently re-enable both backends.
     assert_define "$cfg" "CONFIG_OPENSSL"         "1"
     case "$platform" in
-      macos|ios) assert_define "$cfg" "CONFIG_SECURETRANSPORT" "0" ;;
+      macos|ios|tvos) assert_define "$cfg" "CONFIG_SECURETRANSPORT" "0" ;;
     esac
     # An https source opens https over tls, and through http-proxy (or the
     # http_proxy variable) tls opens an httpproxy:// URL: without httpproxy
@@ -915,7 +915,7 @@ verify_ffmpeg_config() {
   # AudioToolbox.framework is absent from the cross sysroot. Assert
   # both branches to catch a future toolchain regression.
   case "$platform" in
-    macos|ios)
+    macos|ios|tvos)
       # Adaptive: assert each AudioToolbox decoder present only when selected,
       # and AudioToolbox itself enabled when any of them is.
       for _d in "aac_at:AAC_AT" "alac_at:ALAC_AT" "mp3_at:MP3_AT"; do
@@ -951,7 +951,7 @@ verify_ffmpeg_config() {
       assert_define "$cfg" "CONFIG_D3D11VA" "0"
       assert_define "$cfg" "CONFIG_DXVA2"   "0"
       ;;
-    macos|ios)
+    macos|ios|tvos)
       # No HW video acceleration in audio-only build.
       assert_define "$cfg" "CONFIG_VIDEOTOOLBOX" "0"
       ;;
@@ -1010,7 +1010,7 @@ verify_mpv_config() {
       assert_define "$cfg" "HAVE_COREAUDIO"    "1"
       assert_define "$cfg" "HAVE_AVFOUNDATION" "1"
       ;;
-    ios)
+    ios|tvos)
       assert_define "$cfg" "HAVE_AUDIOUNIT"    "1"
       assert_define "$cfg" "HAVE_AVFOUNDATION" "1"
       ;;
@@ -1134,7 +1134,7 @@ _mpv_patch() {
 apply_mpv_patches_common() {
   local mpv_dir="$1"
   # Stamp the release into mpv's version (see LIBMPV_RELEASE). A tarball has no
-  # git history, so mpv's version.h falls back to this file: "v0.41.0+r21".
+  # git history, so mpv's version.h falls back to this file: "v0.41.0+r22".
   printf '%s+%s\n' "$MPV_VERSION" "$LIBMPV_RELEASE" > "$mpv_dir/MPV_VERSION"
   # Build infrastructure (libplacebo + libass made required:false) — never gated.
   # MUST run before strip_libass/strip_mpv_dead, which both assume this form.
@@ -1223,6 +1223,10 @@ apply_mpv_patches_common() {
   # gapless_tail: an output underrun in the tail of a gapless end no
   # longer leaves that tail unplayed (keep-open parked with it queued).
   _mpv_patch gapless_tail       patch_gapless_tail.py       "$mpv_dir"
+  # keep_open_park: keep-open-parked tells the park of keep-open from a
+  # pause of the client in the tail, which pauses at once instead of
+  # draining the output first.
+  _mpv_patch keep_open_park     patch_keep_open_park.py     "$mpv_dir"
   _mpv_patch lavfi_eof_passthrough patch_lavfi_eof_passthrough.py "$mpv_dir"
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"
@@ -1264,7 +1268,7 @@ apply_libsmb2_apple_patch() {
 #         also append the framework set GSS+CoreFoundation+resolv (+ krb5 on
 #         macOS only) needed by Kerberos symbols.
 # Usage: apply_libsmb2_post_install_fixes <prefix> <platform>
-#        platform: macos | ios | linux
+#        platform: macos | ios | tvos | linux
 apply_libsmb2_post_install_fixes() {
   local prefix="$1" platform="$2"
   local hdr="$prefix/include/smb2/libsmb2.h"
@@ -1303,6 +1307,10 @@ apply_libsmb2_post_install_fixes() {
         ;;
       ios)
         sed "${sed_inplace[@]}" 's|Libs: -L${libdir} -lsmb2|Libs: -L${libdir} -lsmb2 -framework GSS -framework CoreFoundation -lresolv|' "$pc"
+        ;;
+      tvos)
+        # tvOS has no GSS framework, so libsmb2 builds without Kerberos.
+        sed "${sed_inplace[@]}" 's|Libs: -L${libdir} -lsmb2|Libs: -L${libdir} -lsmb2 -framework CoreFoundation -lresolv|' "$pc"
         ;;
     esac
   fi

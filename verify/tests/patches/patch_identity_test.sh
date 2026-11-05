@@ -11,7 +11,7 @@
 # must succeed or fail together, and diff -r must find the trees equal after
 # each run. Equal source trees build equal binaries, so a refactor of the
 # patch scripts proven here needs no rebuild. The cases: every platform with
-# everything on (iOS for both SDKs, the Apple export filter with a fake
+# everything on (iOS and tvOS for both SDKs, the Apple export filter with a fake
 # prefix), each toggle off alone where it acts, the coupled strips, FFmpeg
 # with each of its toggles off, and the two rubberband patches (librubberband
 # is only in the GPL build, LIBMPV_GPL=1).
@@ -90,6 +90,8 @@ CASE_LIST=(
   "android android"
   "ios-iphoneos ios-iphoneos"
   "ios-iphonesimulator ios-iphonesimulator"
+  "ios-appletvos ios-appletvos"
+  "ios-appletvsimulator ios-appletvsimulator"
   "macos macos"
   "windows windows"
   "ffmpeg ffmpeg"
@@ -103,7 +105,7 @@ CASE_LIST=(
 )
 for t in strip_swscale strip_libass afmt_reset prefetch \
          audio_output_state embedded_cover_art pcm_tap bulk_analysis loudness_scan \
-         filter_label_tap chain_eof gapless_tail lavfi_eof_passthrough hotplug_core_thread \
+         filter_label_tap chain_eof gapless_tail keep_open_park lavfi_eof_passthrough hotplug_core_thread \
          playlist_prev_dos_path chapter_list_reset fd_pread af_command_args read_error; do
   CASE_LIST+=("no-$t linux $t")
 done

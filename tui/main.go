@@ -409,11 +409,13 @@ type selColumn struct {
 	items []int
 }
 
-// selBands lays the OS sections out as bands of side-by-side columns:
+// selBands lays the OS sections out as bands of side-by-side columns, at
+// most three to a band so the grids fit an 80-column terminal:
 //
-//	band 0: macOS · iOS · Web
+//	band 0: macOS · iOS · tvOS
 //	band 1: Windows · Linux · Android
-//	band 2: Publish
+//	band 2: Web
+//	band 3: Tools
 func (m model) selBands() [][]selColumn {
 	col := func(g string) selColumn {
 		var idx []int
@@ -425,11 +427,16 @@ func (m model) selBands() [][]selColumn {
 		return selColumn{g, idx}
 	}
 	return [][]selColumn{
-		{col("macOS"), col("iOS"), col("Web")},
+		{col("macOS"), col("iOS"), col("tvOS")},
 		{col("Windows"), col("Linux"), col("Android")},
+		{col("Web")},
 		{col("Tools")},
 	}
 }
+
+// compileBands is the number of OS bands of selBands; the Tools band
+// follows them.
+const compileBands = 3
 
 func clampInt(v, lo, hi int) int {
 	if v < lo {
@@ -550,9 +557,9 @@ var buildTabLabels = []string{"Compile", "Tools", "Docker"}
 // Compile = the OS bands; Tools = the actions band.
 func (m model) tabBandRange() (int, int) {
 	if m.buildTab == 1 {
-		return 2, 3 // Tools
+		return compileBands, compileBands + 1 // Tools
 	}
-	return 0, 2 // Compile
+	return 0, compileBands // Compile
 }
 
 func (m *model) firstGridCell() {
@@ -1355,7 +1362,7 @@ func preview(which string) {
 		fmt.Println(m.viewSelect())
 	case "select-tools":
 		m.buildTab = 1
-		m.selBand, m.selCol, m.selRow = 2, 0, 2 // focus Verify
+		m.selBand, m.selCol, m.selRow = compileBands, 0, 2 // focus Verify
 		fmt.Println(m.viewSelect())
 	case "select-build":
 		m.onBuild = true // cursor on the Build button
@@ -1525,7 +1532,7 @@ func (m model) viewSelect() string {
 			writeLine(&b, "  ", abCheck, " All binaries", dimStyle.Render("  — every available target"))
 			b.WriteByte('\n')
 		}
-		b.WriteString(m.renderBandRange(row, cursorInGrid, 0, 2, true))
+		b.WriteString(m.renderBandRange(row, cursorInGrid, 0, compileBands, true))
 
 		label := fmt.Sprintf("Build (%d selected)", sel)
 		switch {
@@ -1556,7 +1563,7 @@ func (m model) viewSelect() string {
 		b.WriteString(optRow(m.onSkip, m.settings.SkipOnFailure, "Skip remaining builds on failure"))
 		b.WriteString(optRow(m.onCleanWork, m.settings.CleanWorkAfterBuild, "Clean each OS's work folder after it builds"))
 		b.WriteString("\n")
-		b.WriteString(m.renderBandRange(row, cursorInGrid, 2, 3, false))
+		b.WriteString(m.renderBandRange(row, cursorInGrid, compileBands, compileBands+1, false))
 	} else {
 		// ── Docker: multi-stage build-image management ──
 		b.WriteString(m.renderDockerTab())
@@ -1634,7 +1641,7 @@ func (m model) viewSelect() string {
 // are never part of a compile run, so they aren't shown here.
 func (m model) dashBands() [][]selColumn {
 	b := m.selBands()
-	hi := 2 // band 2 is Tools — excluded from the dashboard
+	hi := compileBands // the Tools band after them is excluded from the dashboard
 	if hi > len(b) {
 		hi = len(b)
 	}
@@ -1817,7 +1824,7 @@ func (m model) dashGroupStatus(c selColumn) (status, bool) {
 func (m model) renderDashBoxes(cell func(idx int, focused bool) string) string {
 	bands := m.selBands()
 	var b strings.Builder
-	for bi := 0; bi < 2 && bi < len(bands); bi++ {
+	for bi := 0; bi < compileBands && bi < len(bands); bi++ {
 		band := bands[bi]
 		blocks := make([]string, 0, len(band))
 		for ci, c := range band {

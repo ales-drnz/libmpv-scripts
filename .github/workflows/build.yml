@@ -30,9 +30,9 @@ permissions:
   contents: read
 
 jobs:
-  # A release/rN branch builds rN: the binaries stamp LIBMPV_RELEASE in their
-  # version, so a branch and a stamp that disagree stop here, before the
-  # builds. Any other branch passes.
+  # The binaries stamp LIBMPV_RELEASE in their version: it must be of the
+  # form rN on any branch, and a release/rN branch builds rN, so a branch
+  # and a stamp that disagree stop here, before the builds.
   release-branch:
     name: Release branch
     runs-on: ubuntu-24.04
@@ -195,6 +195,11 @@ jobs:
             output: builds/release/libmpv_ios.xcframework.zip
             record: builds/release/build_ios.json
             licenses: builds/release/licenses_ios/
+          - name: tvOS
+            script: scripts/build_libmpv_tvos.sh
+            output: builds/release/libmpv_tvos.xcframework.zip
+            record: builds/release/build_tvos.json
+            licenses: builds/release/licenses_tvos/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: brew install meson ninja nasm cmake pkg-config autoconf automake libtool
@@ -204,7 +209,7 @@ jobs:
           sw_vers
           xcodebuild -version
           xcode-select -p
-          for sdk in macosx iphoneos iphonesimulator; do
+          for sdk in macosx iphoneos iphonesimulator appletvos appletvsimulator; do
             echo "$sdk SDK $(xcrun --sdk "$sdk" --show-sdk-version)"
           done
           clang --version | head -1
@@ -578,6 +583,8 @@ jobs:
         run: go test ./...
       - name: L13 exit code classification
         run: bash verify/tests/l13_windows_test.sh
+      - name: xcframework slices
+        run: bash verify/tests/xcf_slices_test.sh
       - name: FFmpeg muxer and protocol markers
         run: bash verify/tests/components_test.sh
       - name: Manifest and build records

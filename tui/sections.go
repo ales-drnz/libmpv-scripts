@@ -27,7 +27,7 @@ type toggle struct {
 	Title     string // short human label
 	Desc      string // one-line description
 	Category  string // grouping within the section
-	AppleOnly bool   // only compiles on macOS/iOS
+	AppleOnly bool   // only compiles on macOS/iOS/tvOS
 	Required  bool   // locked on — the build/config audit depends on it
 	DefaultOn bool   // part of the curated default set
 }

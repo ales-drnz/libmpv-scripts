@@ -10,7 +10,7 @@
 # the libmpv-<release> GitHub release. It states what the release contains,
 # so consumers never re-derive it from this repo's scripts:
 #
-#   release        the release tag suffix (LIBMPV_RELEASE, e.g. "r21")
+#   release        the release tag suffix (LIBMPV_RELEASE, e.g. "r22")
 #   mpv, ffmpeg    the pinned upstream versions
 #   license        the license of the binaries, from the build records:
 #                  "LGPL-3.0-or-later", or "GPL-3.0-or-later" for a build
