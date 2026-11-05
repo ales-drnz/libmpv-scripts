@@ -118,7 +118,9 @@ int main(int argc, char **argv)
                  "playing to the end parks");
         mt_cmd(h, "stop", NULL, NULL, NULL);
         mt_check(wait_str(h, "idle-active", "yes", 5, &ev), "idle after stop");
-        mt_check(mt_str_is(h, "keep-open-parked", "no"),
+        // idle-active turns yes with the stop request, before the core has
+        // closed the file: the flag goes with the close.
+        mt_check(wait_str(h, "keep-open-parked", "no", 2, &ev),
                  "a stop at the park leaves it");
     } else if (m_park) {
         mt_check(wait_str(h, "keep-open-parked", "yes", 10, &ev),
