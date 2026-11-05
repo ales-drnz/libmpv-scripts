@@ -195,6 +195,11 @@ jobs:
             output: builds/release/libmpv_ios.xcframework.zip
             record: builds/release/build_ios.json
             licenses: builds/release/licenses_ios/
+          - name: tvOS
+            script: scripts/build_libmpv_tvos.sh
+            output: builds/release/libmpv_tvos.xcframework.zip
+            record: builds/release/build_tvos.json
+            licenses: builds/release/licenses_tvos/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: brew install meson ninja nasm cmake pkg-config autoconf automake libtool
@@ -204,7 +209,7 @@ jobs:
           sw_vers
           xcodebuild -version
           xcode-select -p
-          for sdk in macosx iphoneos iphonesimulator; do
+          for sdk in macosx iphoneos iphonesimulator appletvos appletvsimulator; do
             echo "$sdk SDK $(xcrun --sdk "$sdk" --show-sdk-version)"
           done
           clang --version | head -1
