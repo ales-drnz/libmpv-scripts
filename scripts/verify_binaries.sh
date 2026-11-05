@@ -1351,6 +1351,7 @@ arch_from_artifact() {
 
 # The slices of an unzipped libmpv.xcframework under [dir]: each one of
 # [platform] (macos-, ios- or tvos-), and on iOS and tvOS a device slice.
+# The _CodeSignature/ of codesign --deep, beside them, is no slice.
 # The iOS and tvOS zips come from one script, so a wrong SDK or version
 # flag would give a tvOS zip of iOS slices that every other layer passes.
 _xcf_slices_check() {
@@ -1358,6 +1359,7 @@ _xcf_slices_check() {
   for s in "$dir"/libmpv.xcframework/*/; do
     [[ -d "$s" ]] || continue
     name="$(basename "$s")"
+    [[ "$name" == _* ]] && continue
     names+=("$name")
     [[ "$name" == "$platform-"* ]] || other+=("$name")
     [[ "$name" != *-simulator ]] && device=1

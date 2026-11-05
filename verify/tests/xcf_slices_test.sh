@@ -39,6 +39,9 @@ check() {
 
 check pass "tvOS with its device and simulator slices" tvos \
   "$(xcf tv tvos-arm64 tvos-arm64_x86_64-simulator)"
+# codesign --deep writes _CodeSignature/ next to the slices.
+check pass "tvOS signed, with _CodeSignature beside the slices" tvos \
+  "$(xcf tvsigned tvos-arm64 tvos-arm64_x86_64-simulator _CodeSignature)"
 check fail "a tvOS zip with iOS slices refused" tvos \
   "$(xcf tvios ios-arm64 ios-arm64_x86_64-simulator)"
 check fail "tvOS with only a simulator slice refused" tvos \
@@ -46,6 +49,7 @@ check fail "tvOS with only a simulator slice refused" tvos \
 check pass "iOS with its device and simulator slices" ios \
   "$(xcf ios ios-arm64 ios-arm64_x86_64-simulator)"
 check pass "macOS with its universal slice" macos "$(xcf mac macos-arm64_x86_64)"
+check pass "macOS arm64 only, signed" macos "$(xcf macarm macos-arm64 _CodeSignature)"
 check fail "a macOS zip with an iOS slice refused" macos "$(xcf macios ios-arm64)"
 
 echo "xcf_slices_test: $fails failure(s)"

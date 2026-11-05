@@ -1362,7 +1362,7 @@ func preview(which string) {
 		fmt.Println(m.viewSelect())
 	case "select-tools":
 		m.buildTab = 1
-		m.selBand, m.selCol, m.selRow = 2, 0, 2 // focus Verify
+		m.selBand, m.selCol, m.selRow = compileBands, 0, 2 // focus Verify
 		fmt.Println(m.viewSelect())
 	case "select-build":
 		m.onBuild = true // cursor on the Build button
