@@ -14,6 +14,7 @@
 //   park     playing to the end parks with keep-open-parked yes, and a
 //            seek back leaves it no
 //   nopause  keep-open-pause=no: no park, keep-open-parked stays no
+//   stop     a stop at the park leaves it: idle, keep-open-parked is no
 #include "playback_test.h"
 
 // Pumps until [name] reads [want], for up to [secs]. Returns whether it did.
@@ -35,8 +36,8 @@ int main(int argc, char **argv)
         return 2;
     const char *mode = argv[1], *fx = argv[2];
     int m_pause = !strcmp(mode, "pause"), m_park = !strcmp(mode, "park"),
-        m_nopause = !strcmp(mode, "nopause");
-    if (!(m_pause || m_park || m_nopause)) {
+        m_nopause = !strcmp(mode, "nopause"), m_stop = !strcmp(mode, "stop");
+    if (!(m_pause || m_park || m_nopause || m_stop)) {
         printf("unknown mode %s\n", mode);
         return 2;
     }
@@ -86,6 +87,13 @@ int main(int argc, char **argv)
         mt_check(mt_str_is(h, "pause", "yes"), "paused by the park");
         mt_double(h, "time-pos", &pos);
         mt_check(pos > end - 0.005, "parked at the end (%.6f)", pos);
+    } else if (m_stop) {
+        mt_check(wait_str(h, "keep-open-parked", "yes", 10, &ev),
+                 "playing to the end parks");
+        mt_cmd(h, "stop", NULL, NULL, NULL);
+        mt_check(wait_str(h, "idle-active", "yes", 5, &ev), "idle after stop");
+        mt_check(mt_str_is(h, "keep-open-parked", "no"),
+                 "a stop at the park leaves it");
     } else if (m_park) {
         mt_check(wait_str(h, "keep-open-parked", "yes", 10, &ev),
                  "playing to the end parks");

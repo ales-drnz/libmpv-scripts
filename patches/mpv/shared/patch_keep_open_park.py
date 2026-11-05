@@ -34,7 +34,9 @@ Fix
     the pause of the park drains the output at EOF; any other pause at
     EOF pauses at once, the tail kept for the resume.
   - player/playloop.c reset_playback_state(): a seek and a new file
-    clear it.
+    clear it; player/loadfile.c terminate_playback, the end of every file
+    (stop, the next file, an error), too, so the idle core after a stop
+    at the park reads no park.
   - the read-only flag property keep-open-parked, notified at each change.
 
 Without keep-open-pause no park comes and the flag stays no.
@@ -115,6 +117,24 @@ PLAYLOOP_C = [
      'static void handle_chapter_change'),
 ]
 
+LOADFILE_C = [(
+    'terminate_playback',
+    '    if (mpctx->stop_play != AT_END_OF_FILE)\n'
+    '        clear_audio_output_buffers(mpctx);\n'
+    '\n'
+    '    update_core_idle_state(mpctx);\n',
+    '    if (mpctx->stop_play != AT_END_OF_FILE)\n'
+    '        clear_audio_output_buffers(mpctx);\n'
+    '\n'
+    f'    // {MARKER}: the end of the file leaves the park.\n'
+    '    if (mpctx->mak_keep_open_parked) {\n'
+    '        mpctx->mak_keep_open_parked = false;\n'
+    '        mp_notify_property(mpctx, "keep-open-parked");\n'
+    '    }\n'
+    '\n'
+    '    update_core_idle_state(mpctx);\n',
+)]
+
 # The property registration, in player/mak_property_table.inc.
 COMMAND_TABLE = (
     f'    /* {MARKER} */\n'
@@ -139,6 +159,7 @@ COMMAND_GETTER = (
 def apply(p):
     p.edits('player/core.h', [('playback_initialized field',) + CORE_H[0]])
     p.edits('player/playloop.c', PLAYLOOP_C)
+    p.edits('player/loadfile.c', LOADFILE_C)
     seam.table(p, COMMAND_TABLE)
     seam.getters(p, COMMAND_GETTER)
 
