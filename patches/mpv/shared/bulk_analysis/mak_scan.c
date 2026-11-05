@@ -571,25 +571,44 @@ static void scan_failed(int gen)
 }
 
 #if MAK_SCAN_FD_IO
-/* The duplicate of N that the loaded fd://N or fdclose://N file keeps,
- * taken by its first start (the FILE_LOADED kick, whatever the flags) and
- * closed with the file. A later start, when the waveform or the loudness
- * is turned on, duplicates this one and not N: the app may have closed N
- * and reused the number by then. [g_file_fd_why] says why there is none.
- * Core thread only. */
-static int g_file_fd = -1;
-static bool g_file_fd_taken;
-static const char *g_file_fd_why;
+/* The duplicate of N that a loaded fd://N or fdclose://N file keeps, by
+ * its demuxer: taken by the first start of the file (the FILE_LOADED kick,
+ * whatever the flags) and closed with the file. A later start, when the
+ * waveform or the loudness is turned on, duplicates this one and not N:
+ * the app may have closed N and reused the number by then. [why] says why
+ * there is none. One per player of the process, under g_held_lock, as
+ * each player has a core thread of its own. */
+#define MAK_SCAN_HELD 8
+static struct scan_held {
+    struct demuxer *demuxer;
+    int fd;
+    const char *why;
+} g_held[MAK_SCAN_HELD];
+static mp_mutex g_held_lock = MP_STATIC_MUTEX_INITIALIZER;
+
+/* The entry of [demuxer], or NULL. Under g_held_lock. */
+static struct scan_held *scan_held_of(struct demuxer *demuxer)
+{
+    for (int i = 0; demuxer && i < MAK_SCAN_HELD; i++)
+        if (g_held[i].demuxer == demuxer)
+            return &g_held[i];
+    return NULL;
+}
 #endif
 
-void mak_scan_file_closed(void)
+void mak_scan_file_closed(struct demuxer *demuxer)
 {
 #if MAK_SCAN_FD_IO
-    if (g_file_fd >= 0)
-        mak_scan_close_fd(g_file_fd);
-    g_file_fd = -1;
-    g_file_fd_taken = false;
-    g_file_fd_why = NULL;
+    mp_mutex_lock(&g_held_lock);
+    struct scan_held *e = scan_held_of(demuxer);
+    if (e) {
+        if (e->fd >= 0)
+            mak_scan_close_fd(e->fd);
+        *e = (struct scan_held){.fd = -1};
+    }
+    mp_mutex_unlock(&g_held_lock);
+#else
+    (void)demuxer;
 #endif
     int gen = mak_waveform_cancel_running();
 #if __has_include("audio/mak_loudness.h")
@@ -707,27 +726,47 @@ static int scan_dup_fd(const char *num, const char **why_out)
     return fd;
 }
 
-/* Takes the duplicate the loaded file keeps (g_file_fd), once per file. */
-static void scan_hold_fd(const char *url)
+/* Takes the duplicate the file of [demuxer] keeps, once per file. With
+ * every entry taken, nothing is held, and a pass duplicates N itself. */
+static void scan_hold_fd(const char *url, struct demuxer *demuxer)
 {
     const char *num = scan_fd_num(url);
-    if (!num || g_file_fd_taken)
+    if (!num || !demuxer)
         return;
-    g_file_fd_taken = true;
-    g_file_fd = scan_dup_fd(num, &g_file_fd_why);
+    mp_mutex_lock(&g_held_lock);
+    if (!scan_held_of(demuxer)) {
+        struct scan_held *e = NULL;
+        for (int i = 0; !e && i < MAK_SCAN_HELD; i++)
+            if (!g_held[i].demuxer)
+                e = &g_held[i];
+        if (e) {
+            e->demuxer = demuxer;
+            e->fd = scan_dup_fd(num, &e->why);
+        }
+    }
+    mp_mutex_unlock(&g_held_lock);
 }
 
-/* A duplicate of the file's own for one pass. -1, with a warning, when
- * the source cannot be read ahead of time. */
-static int scan_file_fd(struct mp_log *log)
+/* A duplicate of the file's own for one pass, of N when the file holds
+ * none. -1, with a warning, when the source cannot be read ahead of time. */
+static int scan_file_fd(const char *url, struct demuxer *demuxer,
+                        struct mp_log *log)
 {
-    const char *why = g_file_fd_why;
+    const char *why = NULL;
     int fd = -1;
-    if (g_file_fd >= 0) {
-        fd = fcntl(g_file_fd, F_DUPFD_CLOEXEC, 0);
-        if (fd < 0)
-            why = "cannot be duplicated";
+    mp_mutex_lock(&g_held_lock);
+    struct scan_held *e = scan_held_of(demuxer);
+    if (e) {
+        why = e->why;
+        if (e->fd >= 0) {
+            fd = fcntl(e->fd, F_DUPFD_CLOEXEC, 0);
+            if (fd < 0)
+                why = "cannot be duplicated";
+        }
     }
+    mp_mutex_unlock(&g_held_lock);
+    if (!e)
+        fd = scan_dup_fd(scan_fd_num(url), &why);
     if (fd < 0 && log)
         mp_warn(log, "analysis: the descriptor source is %s, the waveform "
                 "grows from playback and the loudness scan is unavailable\n",
@@ -746,7 +785,7 @@ void mak_scan_start(const char *url, double duration_secs,
     if (!url || !*url) return;
 #if MAK_SCAN_FD_IO
     /* Before the gate: the file keeps its descriptor for a later start. */
-    scan_hold_fd(url);
+    scan_hold_fd(url, demuxer);
 #endif
     if (!mak_waveform_is_enabled()) return;
 
@@ -785,14 +824,14 @@ void mak_scan_start(const char *url, double duration_secs,
 
     /* ── DESCRIPTOR (fd://N, fdclose://N: an Android content:// URI) ──────
      * FFmpeg cannot open these URLs. The coordinator and its workers read a
-     * duplicate of the one the file keeps (g_file_fd), with pread (see
+     * duplicate of the one the file keeps (g_held), with pread (see
      * mak_scan_open_source). A source that cannot be read ahead of time (a
      * pipe, or a platform without pread) grows from playback, and the
      * loudness scan reports unavailable. */
     int fd = -1;
     if (scan_fd_num(url)) {
 #if MAK_SCAN_FD_IO
-        fd = scan_file_fd(log);
+        fd = scan_file_fd(url, demuxer, log);
 #else
         if (log)
             mp_warn(log, "analysis: a descriptor source is not decoded ahead "

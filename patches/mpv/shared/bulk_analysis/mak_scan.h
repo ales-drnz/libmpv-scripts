@@ -107,8 +107,9 @@ void mak_scan_start(const char *url, double duration_secs,
  * running for it stops: its threads exit at their next generation check (a
  * 4096-sample budget, or the interrupt callback of a blocked read), and the
  * waveform and the loudness scan turn failed, as when a cache-fed pass loses
- * its demuxer. A finished result stays. Core thread. */
-void mak_scan_file_closed(void);
+ * its demuxer. A finished result stays. The descriptor an fd://N file of
+ * [demuxer] keeps is closed. Core thread. */
+void mak_scan_file_closed(struct demuxer *demuxer);
 
 /* Core lifetime bracket, called from mp_create / mp_destroy. When the last
  * core goes away, the in-flight analysis is cancelled and its detached
