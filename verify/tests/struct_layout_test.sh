@@ -69,5 +69,26 @@ r=$?
 [[ $r != 0 ]] && grep -q "unlike" "$TMP/long.log"
 check $? "a long in a struct: the targets of lp64 disagree, refused"
 
+# Every Apple xcframework of the Build has its device and simulator triples
+# in TARGETS, macOS its two architectures. Needs no clang.
+python3 -B - "$ROOT" <<'PY'
+import re, sys
+root = sys.argv[1]
+sys.path.insert(0, root + "/verify")
+import struct_layout
+triples = sum(struct_layout.TARGETS.values(), [])
+build = open(root + "/.github/workflows/build.yml").read()
+oses = sorted(set(re.findall(r"libmpv_(\w+)\.xcframework\.zip", build)))
+assert oses, "no xcframework in build.yml"
+missing = []
+for os_ in oses:
+    want = ([f"{a}-apple-macos" for a in ("arm64", "x86_64")] if os_ == "macos" else
+            [f"arm64-apple-{os_}", f"arm64-apple-{os_}-simulator",
+             f"x86_64-apple-{os_}-simulator"])
+    missing += [t for t in want if t not in triples]
+assert not missing, "not in TARGETS: " + ", ".join(missing)
+PY
+check $? "every Apple xcframework of the Build has its triples in TARGETS"
+
 echo "struct_layout_test: $fails failure(s)"
 (( fails == 0 ))

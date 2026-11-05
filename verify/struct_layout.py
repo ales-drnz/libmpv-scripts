@@ -52,6 +52,7 @@ TARGETS = {
         "x86_64-linux-gnu", "aarch64-linux-gnu", "x86_64-linux-android",
         "aarch64-linux-android", "arm64-apple-macos", "x86_64-apple-macos",
         "arm64-apple-ios", "arm64-apple-ios-simulator", "x86_64-apple-ios-simulator",
+        "arm64-apple-tvos", "arm64-apple-tvos-simulator", "x86_64-apple-tvos-simulator",
         "x86_64-w64-windows-gnu", "aarch64-w64-windows-gnu",
     ],
     "ilp32": ["armv7a-linux-androideabi", "wasm32-unknown-emscripten"],
