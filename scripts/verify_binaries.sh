@@ -40,7 +40,7 @@
 #       classic "I bumped harfbuzz in _versions.sh but the build cache held
 #       the old binary" drift
 #  10.  Mpv API surface hash (sorted mpv_* names → SHA-256/12) — must be
-#       IDENTICAL across all 9 binaries (otherwise the API surface drifted
+#       IDENTICAL across all 10 binaries (otherwise the API surface drifted
 #       between platforms)
 #  11.  NEEDED allowlist per platform (catches forbidden runtime
 #       dependencies — e.g. `libstdc++.so` on Android, removed in API 37)
@@ -123,6 +123,8 @@
 # 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A   Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
 # 16  ELF invariants             N/A  N/A    ✓    N/A    ✓    SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns
 #
+#  tvOS gets the iOS column: the same build with the tvOS SDKs.
+#
 #  † macOS L13 runs the REAL dyld dlopen(RTLD_NOW) when verify is invoked
 #    natively on a macOS host (./scripts/verify_binaries.sh macos) — clang
 #    compiles the dlopen_test helper and loads the universal dylib's host-arch
@@ -170,6 +172,7 @@ EXPECTED_FORMATS=(
   "libmpv_android-armeabi-v7a.so|ELF 32-bit LSB shared object, ARM"
   "libmpv_android-x86_64.so|ELF 64-bit LSB shared object, x86-64"
   "libmpv_ios.xcframework.zip|Zip archive data"
+  "libmpv_tvos.xcframework.zip|Zip archive data"
 )
 
 # Every observable property our mpv patch set registers. Validated by
@@ -335,6 +338,7 @@ detect_version_in_binary() {
 platform_from_artifact() {
   case "$1" in
     *macos*)   echo "macos" ;;
+    *tvos*)    echo "tvos" ;;
     *ios*)     echo "ios" ;;
     *linux*)   echo "linux" ;;
     *windows*) echo "windows" ;;
@@ -435,7 +439,7 @@ layer11_needed_allowlist() {
       # reports its own install_name `@rpath/libmpv.framework/libmpv`.
       allowed_re='^(/usr/lib/(libSystem|libc\+\+|libobjc|libiconv|libz|libcompression|libbz2|libxml2|libsqlite3|libnetwork|libresolv|libCoreEntitlements|libFosl)|/System/Library/(Frameworks|PrivateFrameworks)/|@rpath/libmpv\.framework/libmpv)'
       ;;
-    ios)
+    ios|tvos)
       # The iOS dylib (extracted from the xcframework's device slice) links Apple
       # system frameworks: audio (AVFoundation, AVFAudio, AudioToolbox, CoreAudio,
       # CoreMedia), text shaping (CoreText, via libass), plus Foundation /
@@ -513,7 +517,7 @@ layer12_und_resolvable() {
       na "UND resolvability is nm/ELF-based; a PE's imports are bound by the Windows loader at runtime — covered by the L13 LoadLibrary load test instead."
       return 0
       ;;
-    macos/*|ios/*)
+    macos/*|ios/*|tvos/*)
       na "UND resolvability is nm/ELF-based; a Mach-O dylib's binds are resolved by Apple's dyld (validated at consumer link/load), not introspectable with nm here."
       return 0
       ;;
@@ -692,8 +696,8 @@ layer13_load_test() {
       # Linux loader.
       _l13_macos_dlopen "$inspect"
       ;;
-    ios)
-      na "iOS device slice targets arm64-ios; no host loader (the simulator slice needs the iOS Simulator runtime, not plain dyld). Static layers (1-11) + the consumer link-time check cover it."
+    ios|tvos)
+      na "$platform device slice targets arm64-$platform; no host loader (the simulator slice needs the Simulator runtime, not plain dyld). Static layers (1-11) + the consumer link-time check cover it."
       ;;
     *)
       warn "L13: no load test for platform=$platform"
@@ -1350,7 +1354,7 @@ layer15_codesign_identity() {
   local platform="$1" xcf_dir="$2"
   phase l15
   case "$platform" in
-    macos|ios) ;;
+    macos|ios|tvos) ;;
     *) na "Apple code-signing only; $platform binaries are not embedded-signed .framework bundles (the identifier==bundle-id rule is an Apple loader concern)."; return 0 ;;
   esac
   if [[ -z "$xcf_dir" || ! -d "$xcf_dir" ]]; then
@@ -1593,7 +1597,7 @@ check_binary() {
     else
       pass "no symbol leaks (0 non-mpv exports)"
     fi
-  elif [[ "$platform" == "macos" || "$platform" == "ios" ]]; then
+  elif [[ "$platform" == "macos" || "$platform" == "ios" || "$platform" == "tvos" ]]; then
     # Apple dynamic libraries legitimately export a few CoreFoundation/runtime
     # interop globals alongside mpv_* (the build's own dynsym-hygiene budget is
     # ~60 symbols). Surface them, but don't fail the audio-only invariant on it.
