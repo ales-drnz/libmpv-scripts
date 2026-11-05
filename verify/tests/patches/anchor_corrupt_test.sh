@@ -96,7 +96,7 @@ SHARED = [
     'patch_embedded_cover_art.py', 'patch_pcm_tap.py',
     'patch_pcm_stream.py', 'patch_bulk_analysis.py',
     'patch_loudness_scan.py', 'patch_filter_label_tap.py',
-    'patch_chain_eof.py', 'patch_gapless_tail.py',
+    'patch_chain_eof.py', 'patch_gapless_tail.py', 'patch_keep_open_park.py',
     'patch_lavfi_eof_passthrough.py',
     'patch_hotplug_core_thread.py', 'patch_playlist_prev_dos_path.py',
     'patch_chapter_list_reset.py', 'patch_fd_pread.py', 'patch_af_command_args.py',
