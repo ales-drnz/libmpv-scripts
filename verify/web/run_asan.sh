@@ -4,15 +4,16 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 # Runs the Node check of a web build made with WEB_SANITIZE=address: the C
-# harness (3 cycles and the 60 s files). A check fails when it fails as in run_checks.sh, and also when its
-# output holds an AddressSanitizer report: Node does not exit after a report
-# in a worker, so each run is watched and stopped at the report, or at its
-# timeout.
+# harness (3 cycles and the 60 s files). A check fails when it exits
+# non-zero, and also when its output holds an AddressSanitizer report: Node
+# does not exit after a report in a worker, so each run is watched and
+# stopped at the report, or at its timeout.
 #
 #   run_asan.sh <module dir> <spike dir> <fixtures dir> <work dir>
 #
-# The dirs are those of run_checks.sh, from the sanitized build; the module
-# dir is checked to exist, for when the module is run again.
+# The dirs are those of run_checks.sh, from the sanitized build. The module
+# dir is taken for the same usage as run_checks.sh but not used: only the
+# harness of the spike dir runs.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -1,7 +1,8 @@
 # SHA-256 of every source tarball the build scripts download: "<sha256>  <url>",
 # and the commit of every git tag they clone: "<commit>  <url>#<tag>". The
 # web build also checks two files of the emsdk release it compiles with:
-# "<sha256>  emsdk:<version>/upstream/<file>".
+# "<sha256>  emsdk:<version>/upstream/<file>", and for clang, pinned per host,
+# "<sha256>  emsdk:<version>/<os>-<arch>/upstream/bin/clang".
 # Checked by verify_source and verify_git_source in _helpers.sh. Add the line
 # a local build prints for an unpinned source (or run with RECORD_SOURCES=<file>).
 af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9  https://breakfastquay.com/files/releases/rubberband-4.0.0.tar.bz2

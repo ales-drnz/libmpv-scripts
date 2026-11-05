@@ -1,28 +1,36 @@
-## [0.3.1] - 3-11-2026
+## [0.3.1] - 5-11-2026
 
 ### All platforms
 **Breaking**
 - `mpv_event_end_file` ends with `mak_duration` and `mak_position`, the duration and position of the entry when it ended (-1 when unknown). `mak-end-file-fields` says how many `mak_` fields it carries.
 
+**Added**
+- `manifest.json` has `structLayout`, the size and offsets of the client API structs per data model.
+
 **Fixed**
-- A pull output (PipeWire, CoreAudio, AudioUnit, WASAPI, AAudio, SDL) plays to the end with keep-open, instead of parking up to 0.2 s early.
-- A chunked body whose resume is refused ends on a read error.
+- A pull output (PipeWire, CoreAudio, AudioUnit, WASAPI, AAudio, AudioTrack, OpenSL ES) plays to the end with keep-open, instead of parking up to 0.2 s early.
+- A chunked body from a server with `Accept-Ranges` whose resume is refused ends on a read error (not on the web).
 - A seek after a read error tries the read again with mpv's Matroska demuxer.
 - `eof-cached` reads no for a cache range that ends on a read error.
 - The duration hint wins over a duration estimated from the bitrate, and yields to an exact one.
-- A hinted stream cut by a read error publishes no loudness.
+- A hinted stream cut by a read error is not `ready` and publishes no loudness.
+- `waveform-duration-hint` refuses a length past 5e6 s, and the file plays without one.
+- A stream that seeks only with `force-seekable` takes the duration hint and is opened once.
 - The AAC priming of a fragmented MP4 is skipped again outside DASH.
-- Each stream of an `fd://` source reads at its own position.
+- Each stream of an `fd://` source reads at its own position (`fd_pread` toggle).
 - The analysis of an `fd://` source reads that source even when the client reuses the descriptor on `FILE_LOADED`.
 - An `af` change that drops the held EOF ends a stream that cannot seek.
 - The libraries say `mpv v0.41.0+r21`.
 
 ### Web
 **Breaking**
-- The module has ABI 2, and takes a shared memory of the client.
+- The module has ABI 2: its layout table has `mak_duration` and `mak_position`.
+
+**Added**
+- The module takes a shared `wasmMemory` of the client, and starts at 32 MB instead of 128.
 
 **Fixed**
-- The module reads files through short answers, outages, credentials and refused resumes.
+- The module reads files through short answers, outages, credentials, refused resumes and expired redirects, and a failed preflight no longer refuses the origin.
 - A `makWebAudio.init` that fails leaves no context and no device.
 
 ## [0.3.0] - 2-11-2026

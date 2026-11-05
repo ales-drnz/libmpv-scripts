@@ -166,15 +166,15 @@ running, whichever Player started it.
 Files patched
 =============
 
-    audio/mak_waveform.h   NEW — waveform product API + scan-engine interface
-    audio/mak_waveform.c   NEW — waveform state, reader, progressive/rolling
-    audio/mak_scan.h       NEW — scan engine API
-    audio/mak_scan.c       NEW — coordinator, lifetime, entry points
-    audio/mak_scan_worker.c  NEW — one worker's decode and binning
-    audio/mak_scan_source.c  NEW — opening a URL or a descriptor
-    audio/mak_scan_internal.h  NEW — what the three share
-    audio/mak_feed.h/.c    NEW — cache-fed engine
-    demux/mak_demux_feed.h/.c  NEW — packet feed queue
+    audio/mak_waveform.h   NEW: waveform product API and scan-engine interface
+    audio/mak_waveform.c   NEW: waveform state, reader, progressive and rolling
+    audio/mak_scan.h       NEW: scan engine API
+    audio/mak_scan.c       NEW: coordinator, lifetime, entry points
+    audio/mak_scan_worker.c  NEW: one worker's decode and binning
+    audio/mak_scan_source.c  NEW: opening a URL or a descriptor
+    audio/mak_scan_internal.h  NEW: what the three share
+    audio/mak_feed.h/.c    NEW: cache-fed engine
+    demux/mak_demux_feed.h/.c  NEW: packet feed queue
     demux/demux.c          feed field, push, end of file, release, attach,
                            copy of the estimated duration flag
     demux/demux.h          the estimated duration flag of struct demuxer

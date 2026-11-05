@@ -2,7 +2,7 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-# Pinned dependency versions — single source of truth across the 5
+# Pinned dependency versions: single source of truth across the 6
 # build_libmpv_<platform>.sh scripts.
 #
 # Override any version with an environment variable:
@@ -65,7 +65,7 @@ export LIBSMB2_VERSION="${LIBSMB2_VERSION:-6.0.0}"
 export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 
 # ── TLS backend (every platform) ─────────────────────────────────────────────
-# OpenSSL is the unified TLS backend across all five platforms. On Apple
+# OpenSSL is the unified TLS backend across the five native platforms. On Apple
 # we deliberately do NOT use SecureTransport: it's been deprecated by
 # Apple since 10.15, doesn't support TLS 1.3, and is on its way out of
 # upstream curl/ffmpeg (curl removed it in June 2025).

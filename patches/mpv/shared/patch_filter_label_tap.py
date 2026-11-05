@@ -75,7 +75,7 @@ Files patched
     audio/mak_tap.c                NEW — singleton ring buffers + reader
     filters/f_output_chain.c       hook inserted in `user_wrapper_process`
     player/mak_property_headers.inc  the tap header
-    player/mak_property_getters.inc  the getters / setter
+    player/mak_property_getters.inc  the getters and the setter
     player/mak_property_table.inc    the property entries (the seam of
                                      patch_property_seam.py)
     meson.build                    new source registered
@@ -195,7 +195,7 @@ COMMAND_TABLE = (
     '    {"audio-tap-frames", mp_property_audio_tap_frames},\n'
 )
 
-# The getters / setter, in player/mak_property_getters.inc.
+# The getters and the setter, in player/mak_property_getters.inc.
 COMMAND_GETTER = (
     '/* ' + MARKER + ' ─── read-write property: comma-separated list\n'
     ' * of chain labels whose pre / post audio frames should be\n'

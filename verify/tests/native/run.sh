@@ -21,7 +21,8 @@
 #
 # Needs gcc, meson, ninja, pkg-config, python3, curl, the ffmpeg command
 # with the libopus, libmp3lame and libvorbis encoders, and the FFmpeg
-# development files (mpv 0.41 wants libavcodec 60.31.102 or later), and
+# development files (mpv 0.41 wants libavcodec 60.31.102 or later),
+# libplacebo's (mpv includes its headers even with libplacebo optional), and
 # SDL2's for ao=sdl, the pull output of gapless_tail_test (its dummy driver).
 # audiotrack_test needs jni.h from the NDK in ANDROID_NDK_HOME.
 #

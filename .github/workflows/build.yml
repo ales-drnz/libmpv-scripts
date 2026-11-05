@@ -390,9 +390,9 @@ jobs:
           if-no-files-found: ignore
 
   # The web build again with AddressSanitizer on every unit (WEB_SANITIZE),
-  # and its Node checks, which fail on any report (verify/web/run_asan.sh).
-  # Not in the needs of release, like tui: the release module is built
-  # without it, and a report shows beside the run.
+  # and its Node check of the C harness, which fails on any report
+  # (verify/web/run_asan.sh). Not in the needs of release, like tui: the
+  # release module is built without it, and a report shows beside the run.
   web-asan:
     name: Web with AddressSanitizer
     needs: release-branch
@@ -557,7 +557,8 @@ jobs:
 
   # The TUI's go vet and go test, and the checks of the L13 exit code
   # classification, of the FFmpeg component markers, of the manifest written
-  # from the build records and of the anchor engine of the patches. Not in
+  # from the build records, of the release branch, of the struct layout and
+  # of the anchor engine of the patches. Not in
   # the needs of release: a red test here does not hold back the binaries,
   # it only shows next to them.
   tui:
