@@ -7,13 +7,13 @@ package main
 import "testing"
 
 // Regression: leaving the verify log dropped the cursor onto the build
-// dashboard with selBand still pointing at the Tools band (index 2), which the
-// dashboard's 2-band grid doesn't have → gridDown did bands[2] and panicked.
+// dashboard with selBand still pointing at the Tools band, which the
+// dashboard's compile grid doesn't have → gridDown indexed past it and panicked.
 // The grid nav must clamp a stale cursor instead of indexing out of range.
 func TestGridNavClampsStaleCursor(t *testing.T) {
 	m := &model{targets: menuTargets()}
 	bands := m.dashBands() // dashboard shows only the compile bands
-	if len(bands) >= 3 {
+	if len(bands) != compileBands {
 		t.Fatalf("dashBands should drop the Tools band, got %d bands", len(bands))
 	}
 	// A cursor left far out of range from another tab/screen.
@@ -38,7 +38,7 @@ func TestKeyDashStaleCursorNoPanic(t *testing.T) {
 	for _, k := range []string{"j", "k", "h", "l", "c"} {
 		m := newTestModel()
 		m.screen = scDash
-		m.selBand, m.selCol, m.selRow = 2, 4, 8 // stale from the Tools tab
-		_ = press(m, k)                         // must not panic
+		m.selBand, m.selCol, m.selRow = compileBands, 4, 8 // stale from the Tools tab
+		_ = press(m, k)                                    // must not panic
 	}
 }
