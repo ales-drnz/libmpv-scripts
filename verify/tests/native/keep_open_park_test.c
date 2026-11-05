@@ -18,7 +18,8 @@
 //   seekend  seeks while parked: to 10 ms before the end it is no park
 //            until a resume plays them; to the end itself, paused with
 //            nothing to play, keep-open-parked is yes again (r22 before:
-//            a seek in pause never parked again)
+//            a seek in pause never parked again), also after a pause in the
+//            middle, whose device delay the seek dropped
 #include "playback_test.h"
 
 // Pumps until [name] reads [want], for up to [secs]. Returns whether it did.
@@ -113,6 +114,17 @@ int main(int argc, char **argv)
         mt_check(wait_str(h, "keep-open-parked", "yes", 3, &ev),
                  "landed on the end, paused, it parks again");
         mt_check(mt_str_is(h, "pause", "yes"), "still paused");
+        // A pause in the middle, with the device holding audio, then a seek
+        // to the end: the seek dropped what the device held, a park again.
+        mt_cmd(h, "seek", "1", "absolute", NULL);
+        mpv_set_property_string(h, "pause", "no");
+        pb_pump(h, 300, &ev);
+        mpv_set_property_string(h, "pause", "yes");
+        pb_pump(h, 100, &ev);
+        mt_check(mt_str_is(h, "keep-open-parked", "no"), "paused in the middle");
+        mt_cmd(h, "seek", "2", "absolute", NULL);
+        mt_check(wait_str(h, "keep-open-parked", "yes", 3, &ev),
+                 "paused in the middle, then a seek to the end, a park");
     } else if (m_stop) {
         mt_check(wait_str(h, "keep-open-parked", "yes", 10, &ev),
                  "playing to the end parks");
