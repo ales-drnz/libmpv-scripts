@@ -24,7 +24,9 @@ emcc (or `EMSDK`). `CHROME` may be chrome-headless-shell or a full Chrome,
 which runs with `--headless=new`.
 
 The Build on GitHub runs it in its web job, on the zip and with the
-runner's Chrome, before the release takes the module.
+runner's Chrome, before the release takes the module. Its web-firefox job
+runs the browser checks again in a headless Firefox, beside the release:
+a failure there does not stop it.
 
 ## With AddressSanitizer
 
@@ -51,7 +53,7 @@ has the patches and filters of the build and `module`: `abi` (MAK_WEB_ABI of
 (MAK_WA_ABI, the first word of the webaudio output's table) and
 `emscripten`. `lib_harness.mjs` checks both versions against the module and
 the record beside it, and the layout table of `mak_web_layout()`, which
-gives the offsets of the two END_FILE fields of `patch_read_error.py` (0
+gives the offsets of the four END_FILE fields of `patch_read_error.py` (0
 without the patch). `scripts/verify_binaries.sh` checks the zip statically.
 
 ## The module and the harness of the build

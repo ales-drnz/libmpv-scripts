@@ -2,7 +2,7 @@
 
 #### Audio-only libmpv, built for every platform.
 
-[![](https://img.shields.io/badge/libmpv--scripts-0.3.0-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
+[![](https://img.shields.io/badge/libmpv--scripts-0.3.1-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
 [![](https://img.shields.io/badge/mpv-v0.41.0-orange.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/FFmpeg-8.1.1-green.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg?style=for-the-badge)](LICENSE)
@@ -40,12 +40,12 @@ On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows and Andr
 | Windows | x86_64, arm64 | `libmpv_windows-<arch>.dll` |
 | Web | wasm32 with threads | `libmpv_web.zip` |
 
-- **API**: only `mpv_*`, plus the `mak_pcm_*` functions that feed live PCM to the `mak-pcm` protocol. No video decoders.
+- **API**: only `mpv_*`, plus the `mak_pcm_*` functions that feed live PCM to the `mak-pcm` protocol. On the web the module also exports the `mak_web_*`, `mak_wa_*` and `mak_webio_*` calls of its glue, and `malloc` and `free`. No video decoders.
 - **Linux and Android**: the SONAME is `libmpv_audio_kit.so`, so it can live next to another plugin's libmpv. Linux needs glibc 2.31 and ALSA; PipeWire (0.3.57 or later) and PulseAudio are loaded only when installed.
 - **Web**: Emscripten 6.0.12 with pthreads. The zip holds `libmpv.mjs`, `libmpv.wasm`, the AudioWorklet `mak_webaudio_processor.js` and `build_web.json`. The page must be cross-origin isolated (COOP and COEP). A server of another origin must send CORS headers and expose `Content-Range`, or a server that caps each answer cuts the file. The memory starts at 32 MB and grows to 2 GB; a client can pass a smaller shared `wasmMemory`. No SMB.
 - **Records**: each build leaves `build_<target>.json` (license, patches, filters) and its license texts. The Manifest action turns them into `manifest.json` and `licenses.zip`, and fails when the libraries disagree.
 
-Versions are set in `scripts/shared/_versions.sh`. `scripts/shared/_sources.sha256` pins every source by SHA-256 or by commit, and the web build's compiler too.
+Versions are set in `scripts/shared/_versions.sh`. `scripts/shared/_sources.sha256` pins every source by SHA-256 or by commit, and the web build's compiler on Linux x86_64.
 
 ---
 
@@ -170,7 +170,7 @@ It builds FFmpeg, mpv and their dependencies as WebAssembly archives in `builds/
 `./build` accepts targets as arguments and runs them in order, stopping at the first failure:
 
 ```bash
-./build all            # everything this host can build, then the manifest
+./build all            # everything this host can build except the web, then the manifest
 ./build macos verify   # build macOS, then verify it
 ./build list           # every target
 ```
@@ -184,19 +184,21 @@ These variables are passed to the Docker builds:
 | `FORCE_DOWNLOAD=1` | download the sources again |
 | `KEEP_BUILD=1` | keep the build folders |
 | `WIPE_ALL=1` | also delete the downloaded sources |
-| `STRICT_SOURCES=1` | stop on a source that is not pinned, as CI does |
-| `RECORD_SOURCES=<file>` | append the hash of every unpinned source to a file |
 | `LIBMPV_GPL=1` | the GPL build with Rubber Band (see [Licenses](#licenses)) |
 
-To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` and so on (see `scripts/shared/_versions.sh`).
+`STRICT_SOURCES=1` and `RECORD_SOURCES=<file>` apply to the builds on the host (macOS, iOS, web, and Android on a Mac) and to CI. The first stops on a source that is not pinned, the second appends the line of every unpinned source to a file.
+
+To build another version of a dependency, set `MPV_VERSION`, `FFMPEG_VERSION` and so on (see `scripts/shared/_versions.sh`). This works for a build on the host or a build script run directly: `./build` does not pass them to Docker.
 
 #### 3.6 On GitHub Actions
 
 Every push to a `release/` branch runs `.github/workflows/build.yml` with `STRICT_SOURCES=1`:
 
+- its first job, `release-branch`, stops the run when `LIBMPV_RELEASE` is not the `rN` of a `release/rN` branch;
 - it builds all nine libraries and the web module, Apple included;
 - it uploads them as the `libmpv-release` artifact, with the records, `licenses.zip` and `manifest.json`;
-- it runs `./build verify`, the patch tests, a tone with the Linux library in a bare Debian 11, and the web checks in Node and Chrome.
+- it runs `./build verify`, the patch tests, a tone with the Linux library in a bare Debian 11, and the web checks in Node and Chrome;
+- beside the release, without holding it back, it runs the web checks in Firefox and the web build with AddressSanitizer.
 
 A build stopped by an unpinned source uploads the line to add as an `unpinned-sources-<job>` artifact.
 
@@ -213,7 +215,7 @@ scripts/update_libmpv.sh r21                        # a published release
 scripts/update_libmpv.sh r21 path/to/manifest.json  # before publishing it
 ```
 
-It writes the release into `lib/src/internals/libmpv_release.dart` and the hashes from `manifest.json` into the hook, installs the web module of `libmpv_web.zip` in `web/` once its hashes and ABI check, and copies the manifest to `tool/codegen`. Before publishing, `libmpv_web.zip` must sit beside `manifest.json`, as it does in the Build's `libmpv-release` artifact.
+It writes the release into `lib/src/internals/libmpv_release.dart` and the hashes from `manifest.json` into the hook, installs the web module of `libmpv_web.zip` in `web/` once its hashes and ABI check, and copies the manifest to `tool/codegen`. Before publishing, `libmpv_web.zip` and `licenses.zip` must sit beside `manifest.json`, as they do in the Build's `libmpv-release` artifact.
 
 #### 4.2 Local or downloaded libraries
 
@@ -236,7 +238,7 @@ The patches, the network protocols and the web module have tests of their own. T
 
 #### 4.4 Publishing a release
 
-1. Build all nine libraries and the web module, usually by pushing a `release/` branch (see [3.6](#36-on-github-actions)).
+1. Build all nine libraries and the web module, usually by pushing a `release/rN` branch (see [3.6](#36-on-github-actions)).
 2. Create the `libmpv-rN` release on `mpv_audio_kit` and upload the libraries, `libmpv_web.zip`, `licenses.zip` and `manifest.json`.
 3. In `mpv_audio_kit`, run `scripts/update_libmpv.sh rN`.
 
@@ -256,7 +258,7 @@ Each build downloads the pinned sources, applies the patches in `patches/` to mp
 - **A Linux, Windows or Android build fails right away**: Docker isn't running.
 - **macOS and iOS are greyed out**: they need a Mac with Xcode. GitHub Actions can build them instead.
 - **The first Docker build is slow**: it is building the image, later builds reuse it.
-- **"Unpinned source"**: a download is not in `scripts/shared/_sources.sha256`. Add the line the error prints, or build without `STRICT_SOURCES=1` and collect the lines with `RECORD_SOURCES`.
+- **"Unpinned source"**: a download is not in `scripts/shared/_sources.sha256`. Add the line the error prints, or collect the lines with `RECORD_SOURCES=<file>` in a build on the host. In CI they are uploaded as an `unpinned-sources-<job>` artifact.
 - **"the Linux build is native-only"**: Linux builds only for the host's architecture. Use a host of the other architecture, or GitHub Actions.
 - **Android in Docker is slow on Apple Silicon**: the NDK is x86_64 only. Build on the host (the default), or turn on Rosetta in Docker Desktop.
 

@@ -29,7 +29,7 @@ Node and each browser of `BROWSERS` (Chrome, Firefox) decode, filter, play throu
 bash verify/tests/native/run.sh <work dir>
 ```
 
-It builds a debug libmpv with AddressSanitizer against the system FFmpeg, runs the C tests of the patched mpv, then the tests of the patch scripts. It needs meson, ninja, the `ffmpeg` command, the FFmpeg development files and those of SDL2 (`ao=sdl` on its dummy driver is the pull output of the tests), and takes a few minutes.
+It builds a debug libmpv with AddressSanitizer against the system FFmpeg, runs the C tests of the patched mpv, then the tests of the patch scripts. It needs meson, ninja, the `ffmpeg` command, the FFmpeg development files, those of libplacebo (mpv includes its headers) and those of SDL2 (`ao=sdl` on its dummy driver is the pull output of the tests), and takes a few minutes.
 
 ## Network tests
 

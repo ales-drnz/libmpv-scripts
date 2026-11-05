@@ -32,7 +32,7 @@ Every target ships libmpv as a separate dynamic library or module. Whether an ap
 It is published with the libraries, with one folder per target. Each folder holds:
 
 - the texts of mpv, FFmpeg and each library the build links into it, taken from the source trees of the versions built;
-- the notice of the embedded CA bundle;
+- the notice of the embedded CA bundle (not on the web);
 - the texts of the toolchain runtimes the build links statically, when their license asks for a notice in a binary (from `scripts/shared/licenses`, which says where each comes from);
 - this repository's `LICENSE`, `LICENSE.LGPL-2.1` and `NOTICE`;
 - `README.txt`, with the commit of this repository and the URL and SHA-256 (or commit) of each source;
