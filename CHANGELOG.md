@@ -1,3 +1,21 @@
+## [0.3.2] - 5-11-2026
+
+### Contributions
+- [@erikjara](https://github.com/erikjara): added the tvOS build ([#3](https://github.com/ales-drnz/libmpv-scripts/pull/3)).
+
+### All platforms
+**Fixed**
+- An analysis turned on once an `fd://` source has loaded reads that source, even when the client has reused the descriptor, and each player of the process keeps its own (not on Windows).
+- The libraries say `mpv v0.41.0+r22`.
+
+### tvOS
+**Added**
+- `build_libmpv_tvos.sh` makes `libmpv_tvos.xcframework.zip` with the iOS script and the tvOS SDKs, for Apple TV and its simulator. The Build, the TUI and `verify_binaries.sh` know it.
+
+### Apple
+**Added**
+- `verify_binaries.sh` checks that the slices of an xcframework are of its platform, with a device slice on iOS and tvOS.
+
 ## [0.3.1] - 5-11-2026
 
 ### All platforms
