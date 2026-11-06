@@ -23,6 +23,12 @@
 //   dead      the track dies with audioserver (F278)
 //   pause     pause 0.5 s and resume: no frame lost (F276)
 //   seek      pause, reset (a seek), resume: no frame from before the seek
+//   ac3       audio-spdif of AC3: the track opens IEC61937 at 48 kHz, the
+//             output rate (control)
+//   eac3      audio-spdif of E-AC3, which IEC61937 carries at four times
+//             its rate: the track opens at 192 kHz though the output runs
+//             at 48 kHz (r22: the driver lowered every rate to the output
+//             one, and the track played the bursts at a quarter)
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -197,9 +203,18 @@ static jobject sim_NewObject(JNIEnv *env, jclass clazz, jmethodID m, ...)
     return s;
 }
 
+// The rate of the last AudioFormat.Builder.setSampleRate.
+static jint builder_rate;
+
 static jobject sim_CallObjectMethod(JNIEnv *env, jobject o, jmethodID m, ...)
 {
-    (void)env; (void)o; (void)m;
+    (void)env; (void)o;
+    if (!strcmp(field_of(m)->name, "setSampleRate")) {
+        va_list ap;
+        va_start(ap, m);
+        builder_rate = va_arg(ap, jint);
+        va_end(ap);
+    }
     return &dummy_object;
 }
 
@@ -243,6 +258,11 @@ static jint sim_CallIntMethod(JNIEnv *env, jobject o, jmethodID m, ...)
             (void)va_arg(ap, jobject);
             jint len = va_arg(ap, jint);
             ret = sim_write(s, bbuf_addr, len);
+        } else if (!strcmp(f->signature, "([SIII)I")) {
+            // IEC61937 bursts: the spdif modes only open the track.
+            (void)va_arg(ap, jobject);
+            (void)va_arg(ap, jint);
+            ret = va_arg(ap, jint);
         } else {
             printf("FAIL unexpected write %s\n", f->signature);
             failures++;
@@ -289,7 +309,21 @@ static jobject sim_NewDirectByteBuffer(JNIEnv *env, void *addr, jlong cap)
     return &dummy_object;
 }
 
+static jshortArray sim_NewShortArray(JNIEnv *env, jsize len)
+{
+    (void)env; (void)len;
+    return &dummy_object;
+}
+
+static void sim_SetShortArrayRegion(JNIEnv *env, jshortArray a, jsize start,
+                                    jsize len, const jshort *buf)
+{
+    (void)env; (void)a; (void)start; (void)len; (void)buf;
+}
+
 static const struct JNINativeInterface sim_iface = {
+    .NewShortArray = sim_NewShortArray,
+    .SetShortArrayRegion = sim_SetShortArrayRegion,
     .NewObject = sim_NewObject,
     .CallObjectMethod = sim_CallObjectMethod,
     .CallBooleanMethod = sim_CallBooleanMethod,
@@ -393,7 +427,10 @@ int af_fmt_to_bytes(int format)
     return format == AF_FORMAT_FLOAT ? 4 : format == AF_FORMAT_U8 ? 1 : 2;
 }
 bool af_fmt_is_float(int format) { return format == AF_FORMAT_FLOAT; }
-bool af_fmt_is_spdif(int format) { (void)format; return false; }
+bool af_fmt_is_spdif(int format)
+{
+    return format >= AF_FORMAT_S_AAC && format <= AF_FORMAT_S_TRUEHD;
+}
 void af_fill_silence(void *dst, size_t bytes, int format)
 {
     memset(dst, format == AF_FORMAT_U8 ? 0x80 : 0, bytes);
@@ -515,6 +552,33 @@ int main(int argc, char **argv)
         return 2;
     }
     const char *mode = argv[1];
+    if (!strcmp(mode, "ac3") || !strcmp(mode, "eac3")) {
+        // audio-spdif: ad_spdif gives IEC61937 stereo at the rate of the
+        // bursts, four times the codec's for E-AC3.
+        bool eac3 = !strcmp(mode, "eac3");
+        int rate = eac3 ? RATE * 4 : RATE;
+        struct ao *ao = talloc_zero(NULL, struct ao);
+        ao->driver = &audio_out_audiotrack;
+        ao->priv = talloc_zero_size(ao, sizeof(struct priv));
+        ao->samplerate = rate;
+        ao->format = eac3 ? AF_FORMAT_S_EAC3 : AF_FORMAT_S_AC3;
+        ao->channels = (struct mp_chmap)MP_CHMAP_INIT_STEREO;
+        ao->num_planes = 1;
+        ao->sstride = 4;
+        atomic_store(&src_dry, true);
+        check(init(ao) >= 0, "the IEC61937 track opens");
+        struct priv *p = ao->priv;
+        check(p->format == 13, "IEC61937 encoding (%d)", p->format);
+        check(ao->samplerate == rate && p->samplerate == rate,
+              "the bursts keep their rate %d (ao %d, track %d)", rate,
+              ao->samplerate, p->samplerate);
+        check(builder_rate == rate, "the AudioFormat has rate %d (%d)", rate,
+              builder_rate);
+        uninit(ao);
+        talloc_free(ao);
+        printf(failures ? "RESULT FAIL (%d)\n" : "RESULT PASS\n", failures);
+        return failures ? 1 : 0;
+    }
     printf("driver: set_pause %s\n", audio_out_audiotrack.set_pause ? "yes" : "no");
     pthread_t dev;
     pthread_create(&dev, NULL, device_thread, NULL);
