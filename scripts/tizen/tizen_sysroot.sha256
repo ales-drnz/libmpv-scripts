@@ -1,0 +1,23 @@
+# SHA-256 of the Tizen 6.0 packages of the sysroot, by tizen_sysroot.py --update
+237b7b8d709a5a9b66263ef9570101f4edd28dd4bce3f57cb0f9e44a9b5cb6d7 armv7l:base/armv7l/gcc-9.2.0-1.13.armv7l.rpm
+2dd748a81ea6dfc603d8bbf9dd295fba678042c64fccbaaf8210ce2b0e376eaf armv7l:base/armv7l/glibc-2.30-1.15.armv7l.rpm
+446b6ca3928040d5dcd19255755a9ba66958be2389cfdd82f2286cdeb00a795e armv7l:base/armv7l/glibc-devel-2.30-1.15.armv7l.rpm
+b1ba8ca4cbe9673c15890cf3f2194c31c65f7d5e0701a394885951da1f888fe4 armv7l:base/armv7l/libgcc-9.2.0-1.13.armv7l.rpm
+278973ff5f26a0f89e85cf52dde669ba6ab8090867be9f66ff05300c93b49b61 armv7l:base/armv7l/linux-glibc-devel-3.10-1.14.armv7l.rpm
+8cf18971028d89fc1b6a0e9cc0024cb6961be196aec312024e5587fa5ca8a15d armv7l:unified/armv7l/capi-base-common-0.4.59-1.armv7l.rpm
+f8a64859540f2d260555942fd969ca3c7c19f2e81b559897544852f69e6ef015 armv7l:unified/armv7l/capi-base-common-devel-0.4.59-1.armv7l.rpm
+236ae1c868951195f8253bcc231e85347a0356e89d33156b902f1a237a4da961 armv7l:unified/armv7l/capi-media-audio-io-0.5.39-0.armv7l.rpm
+5ec03d2165758c1a339fcb995b69e5121d4153569ee113b700aa57884eedc1f4 armv7l:unified/armv7l/capi-media-audio-io-devel-0.5.39-0.armv7l.rpm
+58ce65f03ab16e42aee1c4c1d368332308a1a60665c68158433098b2c9ee9083 armv7l:unified/armv7l/capi-media-sound-manager-0.6.32-0.armv7l.rpm
+7cab0b4add65c5db45928f6a4fd137fe769eef4769b6ec71eca541589a0ae84f armv7l:unified/armv7l/capi-media-sound-manager-devel-0.6.32-0.armv7l.rpm
+07a7a0b1ae30b425f00dd95498af283c803a6c14c02026bb31b76114d8a7dd8a i686:base/i686/gcc-9.2.0-1.13.i686.rpm
+d960d6c00d73ac6e6756ba8ea0a3308f09ff59e533282e565cc9e7a335fef3cf i686:base/i686/glibc-2.30-1.15.i686.rpm
+a96463239376f06ca8f7c08a3cacfe5ba6f340c66aba629cb34101e0df0b4004 i686:base/i686/glibc-devel-2.30-1.15.i686.rpm
+30d0f6d9a12c8e1314aa19453c1d6835eb3de4e44cf0bd6c253cbe1337edc03c i686:base/i686/libgcc-9.2.0-1.13.i686.rpm
+b0819fd3bdcbdf8a6b52c0aafdddc8b55915982cd9e94f6d14764d9fadfbc06f i686:base/i686/linux-glibc-devel-3.10-1.14.i686.rpm
+172094a7c703fcfe74693f1949e0d322098e3598b644c7c3de16a610ebed06ae i686:unified/i686/capi-base-common-0.4.59-1.i686.rpm
+340c731e10b860f13b13fb9bae166c1850a164f746aea8e97d202c70f5ee067e i686:unified/i686/capi-base-common-devel-0.4.59-1.i686.rpm
+bb1e37a291bf32d4288f3387ef565fd0090a130bc08dc84b6419a01005404608 i686:unified/i686/capi-media-audio-io-0.5.39-0.i686.rpm
+7f7b6adf9d86da06f8bc427d2cde162551debe404547abf1017e630baf049aec i686:unified/i686/capi-media-audio-io-devel-0.5.39-0.i686.rpm
+ce17c72e9fc571852d51ab0e44326a22e5d2bc8163a9c447c15c19e8a0cc7830 i686:unified/i686/capi-media-sound-manager-0.6.32-0.i686.rpm
+27ec35621cf50b95d131af1be28d167ba455ff725ad2b954230295ea172e8549 i686:unified/i686/capi-media-sound-manager-devel-0.6.32-0.i686.rpm
