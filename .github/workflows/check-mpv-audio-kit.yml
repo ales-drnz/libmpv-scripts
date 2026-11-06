@@ -585,20 +585,22 @@ jobs:
 
   # '[android emu]' runs only this job, '[full check]' adds it to the rest:
   # test_app's Android integration tests on emulators (API 24, 29 and 34,
-  # google_apis, x86_64) against the Android libraries of LIBS_RUN. It
+  # google_apis, and an Android TV of API 36, the first TV image in
+  # x86_64; all x86_64) against the Android libraries of LIBS_RUN. It
   # carries the audiotrack checks (F277 thread at rest during a pause or an
   # underrun, F276 no audio lost at pause, F278 output reopened after
   # audioserver dies), which no runner without an emulator can see, the
   # players of an isolate or an engine that goes away (F170), the media
-  # session through Media3 (media_session_test) and its service through a
-  # call (android_focus_foreground_test, F172). Each file ends pass, fail
+  # session through Media3 (media_session_test), the media keys of a remote
+  # through it (android_remote_keys_test), and its service through a call
+  # (android_focus_foreground_test, F172). Each file ends pass, fail
   # or infra (android_emulator.sh): only fail fails the job, infra is a
   # warning and a line of the summary, and a release needs zero fail and
   # its infra files run again.
   android-emu:
     needs: plan
     if: needs.plan.outputs.android == 'true'
-    name: Android emulator API ${{ matrix.api }}
+    name: Android emulator API ${{ matrix.api }}${{ matrix.target == 'android-tv' && ' TV' || '' }}
     runs-on: ubuntu-24.04
     # Six files of at most two 8 minute tries each, plus the boot: a job cut
     # by its timeout could not tell infra from fail.
@@ -606,7 +608,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [24, 29, 34]
+        include:
+          - {api: 24, target: google_apis}
+          - {api: 29, target: google_apis}
+          - {api: 34, target: google_apis}
+          - {api: 36, target: android-tv}
     defaults:
       run:
         shell: bash
@@ -653,19 +659,19 @@ jobs:
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api }}
-          target: google_apis
+          target: ${{ matrix.target }}
           arch: x86_64
           force-avd-creation: false
           # No -noaudio: the audiotrack checks need the emulated audio device,
           # which consumes frames at real time even with no host sound card.
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}
+          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           working-directory: kit/test_app
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: android-emu-${{ matrix.api }}
+          name: android-emu-${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           path: kit/test_app/emu-logs
 
   # '[native]' runs only this job: the C tests of the

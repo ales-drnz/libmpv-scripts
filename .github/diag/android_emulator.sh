@@ -2,8 +2,10 @@
 # android_emulator.sh <api>: runs test_app's Android integration tests on the
 # booted emulator, from kit/test_app: the audiotrack ones (F277, F276,
 # F278), the players of an exiting isolate or engine (F170), the media
-# session through Media3 (media_session_test) and its service through a
-# call (android_focus_foreground_test, F172).
+# session through Media3 (media_session_test), the media keys of a remote
+# (android_remote_keys_test) and its service through a call
+# (android_focus_foreground_test, F172). <api> names the logs: 36-tv for
+# the Android TV image.
 # The F278 test needs audioserver killed from the host while it plays: it
 # prints "[f278] playing" when it is ready, this script then kills
 # audioserver, writes f278_killed in the app's cache once a new one is up,
@@ -98,6 +100,36 @@ run android_owner_exit_test.dart
 run android_engine_exit_test.dart
 run media_session_test.dart
 run android_focus_foreground_test.dart
+# The media keys: the test prints "[key] KEYCODE_..." and waits for the
+# player to follow; this relays each one with input keyevent, as a remote
+# or a headset does. One try: the relay is part of it.
+keys=android_remote_keys_test.dart
+log="emu-logs/keys-$api.log"
+echo "== $keys on API $api"
+timeout -s INT -k 30 480 flutter test "integration_test/$keys" -d emulator-5554 -r expanded "${defines[@]}" > "$log" 2>&1 &
+pid=$!
+sent=0
+while kill -0 $pid 2>/dev/null; do
+  mapfile -t cues < <(grep -o '\[key\] KEYCODE_[A-Z_]*' "$log")
+  while [ $sent -lt ${#cues[@]} ]; do
+    key=${cues[$sent]#\[key\] }
+    echo "pressing $key at $(date +%T)"
+    adb shell input keyevent "$key"
+    sent=$((sent + 1))
+  done
+  sleep 0.2
+done
+wait $pid
+r=$?
+cat "$log"
+if [ $r = 0 ]; then
+  outcome $keys pass
+elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
+  dump keys
+  outcome $keys infra
+else
+  outcome $keys fail
+fi
 # F278: the test waits for the kill. One try: the kill is part of it.
 f278=android_audiotrack_dead_object_test.dart
 log="emu-logs/dead-object-$api.log"
