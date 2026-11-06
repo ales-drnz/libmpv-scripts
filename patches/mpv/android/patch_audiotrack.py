@@ -39,6 +39,13 @@ blocking write, which paces the loop while there is audio.
    the rest of a cut chunk and writes it first on the resume. A reset in
    between (a seek or a stop) drops it.
 
+4. Passthrough rate. init() lowered the rate to the native rate of the
+   output (AudioTrack.getNativeOutputSampleRate) for every format. With
+   audio-spdif, IEC61937 carries E-AC3 at four times its rate, 192 kHz
+   for a 48 kHz stream: the track opened at 48 kHz and the receiver got
+   the bursts at a quarter of their rate. An IEC61937 track now keeps
+   the rate of its bursts; AC3, at its own rate, is the same as before.
+
 The paused delay of a pull output in buffer.c, fix 4 until libmpv-r23,
 is in patch_gapless_tail.py since, for every pull output.
 
@@ -66,6 +73,7 @@ AUDIOTRACK = "audio/out/ao_audiotrack.c"
 IDLE = "MAK_AUDIOTRACK_IDLE_PATCH_V1"
 DEAD = "MAK_AUDIOTRACK_DEAD_OBJECT_PATCH_V1"
 PAUSE = "MAK_AUDIOTRACK_PAUSE_PATCH_V1"
+SPDIF_RATE = "MAK_AUDIOTRACK_SPDIF_RATE_PATCH_V1"
 
 
 def apply(p):
@@ -214,6 +222,17 @@ def apply(p):
             "    .set_pause = set_pause,\n",
         ),
     ], marker=PAUSE)
+
+    # ── 4. Passthrough rate: IEC61937 keeps the rate of its bursts ────────
+    p.edits(AUDIOTRACK, [
+        (
+            "    if (AudioTrack.getNativeOutputSampleRate) {\n",
+            f"    // {SPDIF_RATE}: IEC61937 runs at the\n"
+            "    // rate of its bursts, four times the codec's for E-AC3.\n"
+            "    if (AudioTrack.getNativeOutputSampleRate &&\n"
+            "        p->format != AudioFormat.ENCODING_IEC61937) {\n",
+        ),
+    ], marker=SPDIF_RATE)
 
 
 anchor.main(apply, "patch_audiotrack")
