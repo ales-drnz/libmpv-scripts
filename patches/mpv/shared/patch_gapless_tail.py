@@ -79,8 +79,11 @@ in hardware; an output without set_pause() resets its device on a pause,
 and what it held goes (upstream as well).
 
   - audio/out/buffer.c ao_get_delay(): a pull output paused in hardware
-    holds what it had left at the pause (queued_time_ns, which
-    ao_set_paused() keeps for the resume).
+    returns the delay saved at the pause (queued_time_ns), and the pause
+    and the resume set it under the buffer lock, with hw_paused, so a
+    read in between never sees the old one. Until libmpv-r23 this was
+    fix 4 of patch_audiotrack.py, on Android only: there an AudioTrack
+    buffer, about 140 ms, on PipeWire a quantum.
   - audio/out/buffer.c ao_set_paused(): the resume starts a pull output
     paused in hardware also when its callback read the last sample, and
     end_time_ns waits again for the rest.
@@ -171,40 +174,44 @@ BUFFER_C = [(
     '}\n',
 ), (
     '    } else {\n'
-    '        int64_t end = p->end_time_ns;\n'
-    '        int64_t now = mp_time_ns();\n'
-    '        driver_delay = MPMAX(0, MP_TIME_NS_TO_S(end - now));\n'
-    '    }\n',
+    '        int64_t end = p->end_time_ns;\n',
     f'    }} else if (p->hw_paused) {{\n'
-    f'        // {MARKER}: a pull device paused in hardware holds what it\n'
-    '        // had left at the pause.\n'
+    f'        // {MARKER}: paused in hardware, the device plays\n'
+    '        // nothing: the delay is the one saved at the pause, not one\n'
+    '        // that runs down on the clock.\n'
     '        driver_delay = MPMAX(0, MP_TIME_NS_TO_S(p->queued_time_ns));\n'
     '    } else {\n'
-    '        int64_t end = p->end_time_ns;\n'
-    '        int64_t now = mp_time_ns();\n'
-    '        driver_delay = MPMAX(0, MP_TIME_NS_TO_S(end - now));\n'
-    '    }\n',
+    '        int64_t end = p->end_time_ns;\n',
 ), (
-    '                do_change_state = true;\n'
-    '                p->streaming = false;\n'
+    '                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n',
     '                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n'
-    '            }\n'
-    '        }\n'
-    '        wakeup = true;\n'
-    '    } else if (p->playing && p->paused && !paused) {\n',
-    '                do_change_state = true;\n'
-    '                p->streaming = false;\n'
-    '                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n'
-    f'                // {MARKER}: for ao_get_delay() from now on.\n'
+    f'                // {MARKER}: saved with hw_paused, under the lock\n'
+    '                // ao_get_delay takes.\n'
     '                if (is_hw_paused)\n'
-    '                    p->queued_time_ns = p->end_time_ns - mp_time_ns();\n'
-    '            }\n'
-    '        }\n'
-    '        wakeup = true;\n'
+    '                    p->queued_time_ns = p->end_time_ns - mp_time_ns();\n',
+), (
+    '    } else if (p->playing && p->paused && !paused) {\n',
     f'    // {MARKER}: a pull output paused in hardware after its callback\n'
     '    // read the last sample still holds the rest in its device.\n'
     '    } else if ((p->playing || (!ao->driver->write && p->hw_paused)) &&\n'
     '               p->paused && !paused) {\n',
+), (
+    '            is_hw_paused = p->hw_paused;\n'
+    '            p->hw_paused = false;\n',
+    '            is_hw_paused = p->hw_paused;\n'
+    '            p->hw_paused = false;\n'
+    f'            // {MARKER}\n'
+    '            if (is_hw_paused)\n'
+    '                p->end_time_ns = p->queued_time_ns + mp_time_ns();\n',
+), (
+    '                ao->driver->set_pause(ao, true);\n'
+    '                p->queued_time_ns = p->end_time_ns - mp_time_ns();\n'
+    '            } else {\n'
+    '                p->end_time_ns = p->queued_time_ns + mp_time_ns();\n'
+    '                ao->driver->set_pause(ao, false);\n',
+    f'                ao->driver->set_pause(ao, true); /* {MARKER} */\n'
+    '            } else {\n'
+    '                ao->driver->set_pause(ao, false);\n',
 )]
 
 AUDIO_C = [
