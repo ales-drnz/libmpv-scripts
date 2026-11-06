@@ -129,6 +129,11 @@ int main(int argc, char **argv)
                  "playing to the end parks");
         mt_cmd(h, "stop", NULL, NULL, NULL);
         mt_check(wait_str(h, "idle-active", "yes", 5, &ev), "idle after stop");
+        // idle-active is yes once the stop is asked (stop_play), before
+        // terminate_playback() closes the file; its end-file comes after.
+        for (double t0 = mt_now(); !ev.end_files && mt_now() - t0 < 5;)
+            pb_pump(h, 5, &ev);
+        mt_check(ev.end_files >= 1, "the file closed (%d)", ev.end_files);
         mt_check(mt_str_is(h, "keep-open-parked", "no"),
                  "a stop at the park leaves it");
     } else if (m_park) {
