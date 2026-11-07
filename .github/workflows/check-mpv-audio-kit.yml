@@ -658,6 +658,7 @@ jobs:
           flutter pub get
           flutter build apk --debug
       - name: Integration tests on the emulator
+        if: matrix.target != 'android-tv'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api }}
@@ -671,6 +672,40 @@ jobs:
           disable-animations: true
           script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           working-directory: kit/test_app
+      # The Android TV image without the emulator runner: right after the
+      # boot its adbd goes away for a moment, and the runner's own adb calls
+      # (keyevent 82) failed the step before any test. Same options, and a
+      # wait for an adb that answers twice in a row.
+      - name: Integration tests on the Android TV emulator
+        if: matrix.target == 'android-tv'
+        working-directory: kit/test_app
+        env:
+          API: ${{ matrix.api }}
+        run: |
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          image="system-images;android-$API;android-tv;x86_64"
+          yes | "$tools/sdkmanager" --licenses > /dev/null || true
+          "$tools/sdkmanager" --install emulator platform-tools "$image" > /dev/null
+          echo no | "$tools/avdmanager" create avd --force -n tv --package "$image" --device tv_1080p
+          printf 'hw.cpu.ncore=2\n' >> "$HOME/.android/avd/tv.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -avd tv -no-window -gpu swiftshader_indirect \
+            -no-boot-anim -no-snapshot -camera-back none > emu-boot.log 2>&1 &
+          adb wait-for-device
+          ok=0
+          for i in $(seq 1 300); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then
+              ok=$((ok + 1))
+              [ $ok -ge 2 ] && break
+            else
+              ok=0
+            fi
+            sleep 3
+          done
+          [ $ok -ge 2 ] || { tail -40 emu-boot.log; echo "::error::the TV emulator did not boot"; exit 1; }
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell settings put global animator_duration_scale 0 || true
+          bash ../../scripts/.github/diag/android_emulator.sh "$API-tv"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

@@ -101,37 +101,50 @@ run android_engine_exit_test.dart
 run media_session_test.dart
 run android_focus_foreground_test.dart
 # The media keys: the test prints "[key] KEYCODE_..." and waits for the
-# player to follow; this relays each one with input keyevent, as a remote
-# or a headset does. One try: the relay is part of it.
-keys=android_remote_keys_test.dart
-log="emu-logs/keys-$api.log"
-echo "== $keys on API $api"
-timeout -s INT -k 30 480 flutter test "integration_test/$keys" -d emulator-5554 -r expanded "${defines[@]}" > "$log" 2>&1 &
-pid=$!
-sent=0
-while kill -0 $pid 2>/dev/null; do
-  mapfile -t cues < <(grep -o '\[key\] KEYCODE_[A-Z_]*' "$log")
-  while [ $sent -lt ${#cues[@]} ]; do
-    key=${cues[$sent]#\[key\] }
-    echo "pressing $key at $(date +%T)"
-    adb shell input keyevent "$key"
-    sent=$((sent + 1))
-    # Which session Android hands media keys to, and the state of each.
-    adb shell dumpsys media_session > "emu-logs/media-session-$api-$sent-$key.txt" 2>&1
+# player to follow. Two ways, one try each (the relay is part of it):
+# input presses the key as a remote or a headset does, through the window
+# in front first; dispatch hands it to the media sessions with `media
+# dispatch`, as with another app in front.
+run_keys() { # input | dispatch
+  local via=$1 keys=android_remote_keys_test.dart log pid sent=0 r key cues
+  log="emu-logs/keys-$via-$api.log"
+  echo "== $keys on API $api, keys by $via"
+  timeout -s INT -k 30 480 flutter test "integration_test/$keys" -d emulator-5554 -r expanded "${defines[@]}" > "$log" 2>&1 &
+  pid=$!
+  while kill -0 $pid 2>/dev/null; do
+    mapfile -t cues < <(grep -o '\[key\] KEYCODE_[A-Z_]*' "$log")
+    while [ $sent -lt ${#cues[@]} ]; do
+      key=${cues[$sent]#\[key\] }
+      echo "pressing $key by $via at $(date +%T)"
+      if [ "$via" = input ]; then
+        adb shell input keyevent "$key"
+      else
+        # media dispatch names the keys without KEYCODE_MEDIA_, in lower
+        # case and with dashes.
+        k=${key#KEYCODE_MEDIA_}
+        k=${k,,}
+        adb shell media dispatch "${k//_/-}"
+      fi
+      sent=$((sent + 1))
+      # Which session Android hands media keys to, and the state of each.
+      adb shell dumpsys media_session > "emu-logs/media-session-$via-$api-$sent-$key.txt" 2>&1
+    done
+    sleep 0.2
   done
-  sleep 0.2
-done
-wait $pid
-r=$?
-cat "$log"
-if [ $r = 0 ]; then
-  outcome $keys pass
-elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
-  dump keys
-  outcome $keys infra
-else
-  outcome $keys fail
-fi
+  wait $pid
+  r=$?
+  cat "$log"
+  if [ $r = 0 ]; then
+    outcome "$keys ($via)" pass
+  elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
+    dump "keys-$via"
+    outcome "$keys ($via)" infra
+  else
+    outcome "$keys ($via)" fail
+  fi
+}
+run_keys input
+run_keys dispatch
 # F278: the test waits for the kill. One try: the kill is part of it.
 f278=android_audiotrack_dead_object_test.dart
 log="emu-logs/dead-object-$api.log"
