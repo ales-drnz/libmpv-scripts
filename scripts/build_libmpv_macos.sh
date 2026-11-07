@@ -54,6 +54,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
 source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_cross.sh"
+source "$SCRIPT_DIR/shared/_apple.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
 # Target architectures. Apple's clang on macOS cross-compiles to either
@@ -70,7 +72,6 @@ ARCH=""
 
 MACOS_MIN="12.0"
 
-JOBS="${JOBS:-$(sysctl -n hw.logicalcpu)}"
 HOST_ARCH="$(uname -m)"
 
 # macOS-only dependency versions (centralised ones live in _versions.sh)
@@ -94,46 +95,11 @@ PREFIX=""
 # The build never writes outside libmpv-scripts.
 OUTPUT_DIR="$BUILD_ROOT/xcframework-stage"
 
-# ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-# Every invocation gets its own file so we can diff across runs. Each line
-# in the log is prefixed with [YYYY-MM-DD HH:MM:SS] so we can measure how
-# long each phase of the build actually took (the terminal stays clean —
-# timestamps live only in the file). Old logs (>20) are pruned automatically.
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_macos_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_macos_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
-echo "════════════════════════════════════════════════════════════"
+apple_start_log macos
 
 mkdir -p "$OUTPUT_DIR"
 
 # Logging helpers (log / ok / warn / err / die / fail) come from _helpers.sh
-
-# ── Check requirements ───────────────────────────────────────────────────────
-check_tools() {
-  log "Checking necessary tools..."
-  local missing=()
-  for tool in meson ninja nasm cmake pkg-config python3 autoconf automake libtool git; do
-    command -v "$tool" &>/dev/null || missing+=("$tool")
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    warn "Missing tools: ${missing[*]}"
-    if command -v brew &>/dev/null; then
-      log "Installing with Homebrew..."
-      brew install "${missing[@]}" 2>/dev/null || true
-    else
-      fail "Homebrew not found. Install manually: ${missing[*]}"
-    fi
-  fi
-  ok "All tools present"
-}
 
 # Source download / git clone / extract helpers come from _helpers.sh
 
@@ -150,11 +116,6 @@ arch_flags() {
 
   echo "-arch $ARCH -mmacosx-version-min=$macos_min $sdk_flags $(lto_deps_cflags) $(vis_deps_cflags)"
 }
-
-# Optional ccache/sccache wrapper (export CC_PREFIX=ccache)
-CC_PREFIX="${CC_PREFIX:-}"
-CC_BIN="${CC_PREFIX:+${CC_PREFIX} }clang"
-CXX_BIN="${CC_PREFIX:+${CC_PREFIX} }clang++"
 
 build_for_arch() {
   mkdir -p "$PREFIX"
@@ -182,9 +143,18 @@ build_for_arch() {
   export CC="$CC_BIN"
   export CXX="$CXX_BIN"
 
-  build_zlib       "$PREFIX"
-  build_bzip2      "$PREFIX"
-  build_xz         "$PREFIX"
+  # What the shared dep builds (_cross.sh, _apple.sh) take: this arch's tree
+  # and prefix, and its autoconf host.
+  export CROSS_BUILD_DIR="$BUILD_DIR"
+  export CROSS_PREFIX_DIR="$PREFIX"
+  export CROSS_AUTOTOOLS_HOST="--host=$(apple_host "$ARCH")"
+  CROSS_BUILD_SUFFIX=""
+  CROSS_LABEL="$ARCH"
+
+  local af; af="$(arch_flags)"
+  CFLAGS="$af -Oz" apple_build_zlib
+  AR=ar RANLIB=ranlib CFLAGS="$af -Oz -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="$af -Oz" cross_build_xz
 
   # Font stack — built ONLY when libass is kept (strip_libass disabled in
   # Settings ▸ Patches). By default patch_strip_libass.py removes libass from
@@ -193,7 +163,7 @@ build_for_arch() {
   # only freetype consumes libpng via -DPNG_ROOT; nothing else links expat). When
   # the user restores libass, mpv re-detects it via pkg-config.
   if ! libass_stripped; then
-    build_expat          "$PREFIX"
+    CFLAGS="$af -O2" cross_build_expat
     build_libpng         "$PREFIX"
     build_freetype       "$PREFIX"
     build_fribidi        "$PREFIX"
@@ -205,12 +175,12 @@ build_for_arch() {
 
   # libplacebo: headers required by mpv csputils.h unconditionally.
   # Built minimal — no vulkan/shaderc/d3d11/opengl.
-  build_libplacebo "$PREFIX"
+  apple_build_libplacebo $(write_meson_native "$PREFIX")
 
-  build_speexdsp   "$PREFIX"
+  CFLAGS="$af -O2" apple_build_speexdsp
   # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
   if gpl_build; then
-    build_rubberband "$PREFIX"
+    apple_build_rubberband $(write_meson_native "$PREFIX")
   fi
   # OpenSSL Configure honours the exported CFLAGS/LDFLAGS (which carry
   # -arch + -isysroot via arch_flags); the darwin64-<arch>-cc target
@@ -219,7 +189,7 @@ build_for_arch() {
   local openssl_target="darwin64-${ARCH}-cc"
   build_openssl    "$PREFIX" "$BUILD_DIR" "$openssl_target"
   build_libsmb2    "$PREFIX"
-  build_libxml2    "$PREFIX"
+  CFLAGS="$af -Oz" LDFLAGS="$af" cross_build_libxml2
 
   # libarchive, mujs and luajit are not built — mpv is configured with
   # -Dlibarchive=disabled / -Dlua=disabled / -Djavascript=disabled which
@@ -233,78 +203,6 @@ build_for_arch() {
 # Single library builds
 # =============================================================================
 
-build_zlib() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/libz.a" ]] && { ok "zlib already compiled"; return; }
-  log "Build zlib $ZLIB_VERSION..."
-  local src="$BUILD_DIR/src/zlib-$ZLIB_VERSION.tar.gz"
-  download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -Oz" \
-    ./configure --prefix="$prefix" --static
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-  ok "zlib ✓"
-}
-
-build_bzip2() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/libbz2.a" ]] && { ok "bzip2 already compiled"; return; }
-  log "Build bzip2 $BZIP2_VERSION..."
-  local src="$BUILD_DIR/src/bzip2-$BZIP2_VERSION.tar.gz"
-  download "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make -j"$JOBS" \
-    CC="$CC_BIN" \
-    CFLAGS="$(arch_flags) -Oz -D_FILE_OFFSET_BITS=64" \
-    AR="ar" RANLIB="ranlib" \
-    libbz2.a
-  install -m 644 libbz2.a "$prefix/lib/"
-  install -m 644 bzlib.h  "$prefix/include/"
-  popd >/dev/null
-  ok "bzip2 ✓"
-}
-
-build_xz() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/liblzma.a" ]] && { ok "xz already compiled"; return; }
-  log "Build xz $XZ_VERSION..."
-  local src="$BUILD_DIR/src/xz-$XZ_VERSION.tar.gz"
-  download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -Oz" \
-  ./configure --prefix="$prefix" --host="$(autoconf_host)" \
-    --enable-static --disable-shared \
-    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
-    --disable-scripts --disable-doc
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-  ok "xz/liblzma ✓"
-}
-
-build_expat() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/libexpat.a" ]] && { ok "expat already compiled"; return; }
-  log "Build expat $LIBEXPAT_VERSION..."
-  local src="$BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.gz"
-  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -O2" \
-  ./configure --prefix="$prefix" --host="$(autoconf_host)" \
-    --enable-static --disable-shared \
-    --without-docbook --without-examples --without-tests
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-  ok "expat ✓"
-}
-
 build_libpng() {
   local prefix="$1"
   [[ -f "$prefix/lib/libpng.a" ]] && { ok "libpng already compiled"; return; }
@@ -315,7 +213,7 @@ build_libpng() {
   pushd "$dir" >/dev/null
   CFLAGS="$(arch_flags) -O2" \
   LDFLAGS="$(arch_flags)" \
-  ./configure --prefix="$prefix" --host="$(autoconf_host)" \
+  ./configure --prefix="$prefix" --host="$(apple_host "$ARCH")" \
     --enable-static --disable-shared \
     --with-zlib-prefix="$prefix"
   make -j"$JOBS"
@@ -472,7 +370,7 @@ build_libass() {
   CFLAGS="$(arch_flags) -O2" \
   LDFLAGS="$(arch_flags) -L$prefix/lib" \
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  ./configure --prefix="$prefix" --host="$(autoconf_host)" \
+  ./configure --prefix="$prefix" --host="$(apple_host "$ARCH")" \
     --enable-static --disable-shared \
     --disable-require-system-font-provider \
     --with-pic                            \
@@ -481,82 +379,6 @@ build_libass() {
   make install
   popd >/dev/null
   ok "libass ✓"
-}
-
-build_libplacebo() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/libplacebo.a" ]] && { ok "libplacebo already compiled"; return; }
-  log "Build libplacebo $LIBPLACEBO_VERSION..."
-  local gitdir="$BUILD_DIR/src/libplacebo-git"
-  download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
-  git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
-  local bdir="$BUILD_DIR/build/libplacebo"
-  mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  meson setup "$gitdir" \
-    --prefix="$prefix" \
-    --buildtype=release \
-    --default-library=static \
-    -Dvulkan=disabled \
-    -Dshaderc=disabled \
-    -Dglslang=disabled \
-    -Dopengl=disabled \
-    -Dd3d11=disabled \
-    -Ddemos=false \
-    -Dtests=false \
-    $(write_meson_native "$prefix")
-  ninja -j"$JOBS"
-  ninja install
-  popd >/dev/null
-  ok "libplacebo ✓"
-}
-
-build_speexdsp() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/libspeexdsp.a" ]] && { ok "speexdsp already compiled"; return; }
-  log "Build speexdsp $SPEEXDSP_VERSION..."
-  local src="$BUILD_DIR/src/speexdsp-$SPEEXDSP_VERSION.tar.gz"
-  download "https://downloads.xiph.org/releases/speex/speexdsp-${SPEEXDSP_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -O2" \
-  ./configure --prefix="$prefix" --host="$(autoconf_host)" \
-    --enable-static --disable-shared
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-  ok "speexdsp ✓"
-}
-
-build_rubberband() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/librubberband.a" ]] && { ok "rubberband already compiled"; return; }
-  log "Build rubberband $RUBBERBAND_VERSION..."
-  local src="$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
-  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  # rubberband 4.0+ uses unqualified `size_t` in src/common/mathmisc.{h,cpp};
-  # modern gcc/clang under -std=c++20 rejects it. Inject <stddef.h>. Idempotent.
-  python3 "$LIBMPV_SCRIPTS_ROOT/patches/rubberband/patch_rubberband_size_t.py" "$dir"
-  local bdir="$BUILD_DIR/build/rubberband"
-  mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  meson setup "$dir" \
-    --prefix="$prefix" \
-    --buildtype=release \
-    --default-library=static \
-    -Dfft=builtin \
-    -Dresampler=speex \
-    -Dladspa=disabled \
-    -Dvamp=disabled \
-    -Djni=disabled \
-    $(write_meson_native "$prefix")
-  ninja -j"$JOBS"
-  ninja install
-  popd >/dev/null
-  ok "rubberband ✓"
 }
 
 build_libsmb2() {
@@ -585,47 +407,8 @@ build_libsmb2() {
   ok "libsmb2 ✓"
 }
 
-build_libxml2() {
-  local prefix="$1"
-  [[ -f "$prefix/lib/libxml2.a" ]] && { ok "libxml2 already compiled"; return; }
-  log "Build libxml2 $LIBXML2_VERSION..."
-  local src="$BUILD_DIR/src/libxml2-$LIBXML2_VERSION.tar.xz"
-  download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$(arch_flags) -Oz" \
-  LDFLAGS="$(arch_flags)" \
-  ./configure --prefix="$prefix" --host="$(autoconf_host)" \
-    --enable-static --disable-shared \
-    --without-python --without-readline --without-history \
-    --without-http --without-ftp --without-html \
-    --without-legacy --without-docbook --without-catalog \
-    --without-schematron --without-modules --without-debug \
-    --without-iconv --without-lzma --without-zlib
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-  ok "libxml2 ✓"
-}
-
 build_ffmpeg() {
   local prefix="$1"
-  [[ -f "$prefix/lib/libavcodec.a" ]] && { ok "ffmpeg already compiled"; return; }
-  log "Build ffmpeg $FFMPEG_VERSION..."
-  local src="$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION.tar.gz"
-  download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
-  # A pristine tree on every build: src/ survives cleanup_build, and a
-  # reused tree would keep the result of older patches.
-  rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-
-  patch_record_start ffmpeg "$prefix"
-  apply_ffmpeg_patches "$dir"
-
-  local bdir="$BUILD_DIR/build/ffmpeg"
-  mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-
   local sdk
   sdk="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo "")"
   # eh_frame_cflags() is the stronger C-only unwind-table trim — safe for ffmpeg
@@ -642,11 +425,8 @@ build_ffmpeg() {
   # audio-filter whitelist stays enabled (AUDIO_FILTERS, ~86 entries, ~50 KB total)
   # so `setCustomAudioFilters` has full coverage. swscale stays enabled because
   # mpv requires it as a mandatory dependency (cover-art pipeline).
-
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  "$dir/configure" \
-    --prefix="$prefix" \
-    $(ffmpeg_common_args) \
+  cross_build_ffmpeg macos \
     --enable-cross-compile \
     --arch="$ARCH" \
     --target-os=darwin \
@@ -658,11 +438,6 @@ build_ffmpeg() {
     --disable-libpulse \
     --disable-videotoolbox \
     --enable-audiotoolbox
-  verify_ffmpeg_config "$bdir" "macos"
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-  ok "ffmpeg ✓"
 }
 
 build_mpv() {
@@ -685,26 +460,16 @@ build_mpv() {
 
   # macOS-only patches: required before the shared ones (touch meson.build).
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/apple/patch_utils_mac.py" "$dir/meson.build"
-  # Inject the export filter into mpv's libmpv `library()` call so ld64
-  # only exposes mpv_* in the final dylib's symbol table.
-  if [[ "${VIS_HIDDEN:-1}" != "0" ]]; then
-    python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/apple/patch_export_filter.py" \
-      "$dir" "$SCRIPT_DIR/shared/mpv.exports" "$prefix"
-  fi
+  apple_mpv_export_filter "$dir" "$prefix"
   apply_mpv_patches_common "$dir"
 
   local bdir="$BUILD_DIR/build/mpv-$ARCH"
   mkdir -p "$bdir"
 
-  # mpv-only C eh_frame trim, folded INTO the cross-file c_args (see
-  # write_meson_native). Passing it as a command-line `-Dc_args` instead would
-  # REPLACE the cross-file c_args and drop `-arch ${ARCH}` from the compile,
-  # breaking the cross-compiled x86_64 slice into a stub.
-  local ehf_arg="" _f
-  for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
-  # mpv orchestration code favours size: -Oz (placed after meson's own
-  # -Os so it wins). DSP stays in ffmpeg (and rubberband), untouched by this.
-  ehf_arg="$ehf_arg, '-Oz'"
+  # mpv-only C flags, folded INTO the machine file's c_args (see
+  # apple_meson_options): a command-line `-Dc_args` would drop `-arch ${ARCH}`
+  # from the compile, breaking the cross-compiled x86_64 slice into a stub.
+  local ehf_arg; ehf_arg="$(apple_mpv_c_args)"
 
   pushd "$bdir" >/dev/null
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
@@ -723,17 +488,6 @@ build_mpv() {
   popd >/dev/null
 
   ok "mpv ($ARCH) ✓"
-}
-
-# ── Helper: autoconf host triple for the current target arch ────────────────
-# autoconf picks arch-specific asm from $host. Without --host it defaults to
-# the build machine's arch — wrong for a cross-compiled x86_64 slice on an
-# Apple-Silicon host (it would assemble aarch64 asm into an x86_64 object).
-autoconf_host() {
-  case "$ARCH" in
-    arm64)  echo "aarch64-apple-darwin" ;;
-    x86_64) echo "x86_64-apple-darwin" ;;
-  esac
 }
 
 # ── Helper: generate the meson machine file for the current target arch ─────
@@ -758,37 +512,14 @@ write_meson_native() {
   sdk="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || echo "")"
   pkgcfg="$(command -v pkg-config)"
 
-  local sdk_arg=""
-  [[ -n "$sdk" ]] && sdk_arg=", '-isysroot', '${sdk}'"
-
-  local lto_arg=""
-  [[ "${ENABLE_LTO_DEPS:-1}" != "0" ]] && lto_arg=", '-flto=thin'"
-  local vis_arg=""
-  [[ "${VIS_HIDDEN:-1}" != "0" ]] && vis_arg=", '-fvisibility=hidden', '-fvisibility-inlines-hidden'"
-
-  cat > "$file" << EOF
-[binaries]
-c         = '${CC_BIN}'
-cpp       = '${CXX_BIN}'
-objc      = '${CC_BIN}'
-objcpp    = '${CXX_BIN}'
-ar        = 'ar'
-strip     = 'strip'
-pkg-config = '${pkgcfg}'
-
-[built-in options]
-c_args      = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}${extra_c_args}]
-cpp_args    = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
-objc_args   = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
-objcpp_args = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}${vis_arg}]
-c_link_args      = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}]
-cpp_link_args    = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}]
-objc_link_args   = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}]
-objcpp_link_args = ['-arch', '${ARCH}', '-mmacosx-version-min=${MACOS_MIN}'${sdk_arg}${lto_arg}]
-
-[properties]
-pkg_config_libdir = ['${prefix}/lib/pkgconfig', '${prefix}/lib64/pkgconfig']
-EOF
+  {
+    apple_meson_binaries "$pkgcfg"
+    echo
+    apple_meson_options "$ARCH" "-mmacosx-version-min=${MACOS_MIN}" "$sdk" "$extra_c_args"
+    echo
+    echo "[properties]"
+    echo "pkg_config_libdir = ['${prefix}/lib/pkgconfig', '${prefix}/lib64/pkgconfig']"
+  } > "$file"
 
   if [[ "$ARCH" == "$HOST_ARCH" ]]; then
     echo "--native-file=${file}"
@@ -823,7 +554,7 @@ finalize_arch() {
   cp -L "$src" "$out"
   chmod +w "$out"
   install_name_tool -id "@rpath/libmpv.framework/libmpv" "$out" 2>/dev/null
-  codesign -s - --force --identifier com.ales-drnz.libmpv "$out" 2>/dev/null
+  apple_sign "$out"
   # Stub-slice guard: a cross-compile that lost its `-arch` flag compiles the
   # wrong architecture's objects, which ld64 then silently ignores, yielding a
   # tiny dylib with no mpv_* exports. Fail HERE, per-arch, rather than lipo a
@@ -915,68 +646,14 @@ assemble_xcframework() {
   cp "$universal_dylib" "$ver/libmpv"
   chmod +w "$ver/libmpv"
   install_name_tool -id "@rpath/libmpv.framework/libmpv" "$ver/libmpv"
-  # Re-sign the Mach-O AFTER the last edit (strip -x + install_name_tool both
-  # rewrite the binary and invalidate the linker's adhoc signature). On Apple
-  # Silicon the kernel SIGKILLs any process that dlopen()s a broken-signature
-  # dylib, which breaks the host `flutter test` resolver (DynamicLibrary.open)
-  # and the libmpv-scripts verify dlopen — a consumer app re-signs on embed, but
-  # direct host loads do not. The later `codesign --deep` on the xcframework does
-  # NOT reliably re-sign this inner Mach-O, so sign it explicitly here.
-  # --identifier is MANDATORY: it must equal the Info.plist CFBundleIdentifier
-  # (com.ales-drnz.libmpv). A bare Mach-O signed without it defaults to
-  # `libmpv-<hash>`; on iOS that mismatch breaks device installs, and keeping
-  # mac/iOS identical avoids the same class of bug on notarized macOS bundles.
-  codesign -s - --force --identifier com.ales-drnz.libmpv "$ver/libmpv" 2>/dev/null || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
+  # Re-sign after the last edit (strip -x + install_name_tool), see apple_sign.
+  apple_sign "$ver/libmpv" || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
   # Headers: pick from any arch's prefix — identical across arches.
   local first_arch="${ARCHS%% *}"
   cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/" 2>/dev/null || true
-  cat > "$ver/Modules/module.modulemap" <<'EOF'
-framework module mpv {
-  umbrella header "client.h"
-  export *
-  module * { export * }
-}
-EOF
-  cat > "$ver/Resources/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>libmpv</string>
-<key>CFBundleIdentifier</key><string>com.ales-drnz.libmpv</string>
-<key>CFBundleName</key><string>libmpv</string>
-<key>CFBundlePackageType</key><string>FMWK</string>
-<key>CFBundleShortVersionString</key><string>${MPV_VERSION}</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>LSMinimumSystemVersion</key><string>${MACOS_MIN}</string>
-</dict></plist>
-EOF
-  cat > "$ver/Resources/PrivacyInfo.xcprivacy" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>NSPrivacyTracking</key>
-  <false/>
-  <key>NSPrivacyCollectedDataTypes</key>
-  <array/>
-  <key>NSPrivacyAccessedAPITypes</key>
-  <array>
-    <dict>
-      <key>NSPrivacyAccessedAPIType</key>
-      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key>
-      <array><string>3B52.1</string></array>
-    </dict>
-    <dict>
-      <key>NSPrivacyAccessedAPIType</key>
-      <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key>
-      <array><string>35F9.1</string></array>
-    </dict>
-  </array>
-</dict>
-</plist>
-EOF
+  apple_write_modulemap "$ver/Modules/module.modulemap"
+  apple_write_info_plist "$ver/Resources/Info.plist" LSMinimumSystemVersion "$MACOS_MIN"
+  apple_write_privacy_manifest "$ver/Resources/PrivacyInfo.xcprivacy"
 
   # Versioned-bundle symlinks: Current → A, then the top-level entries that
   # consumers (and `@rpath/libmpv.framework/libmpv`) resolve through.
@@ -1006,13 +683,8 @@ EOF
     prefixes+=("$BUILD_ROOT/$arch/prefix")
   done
   write_build_record macos "${prefixes[@]}"
-  # Every arch extracts the same sources: the texts of the first one, whose
-  # mpv tree is mpv-<arch> (build_mpv).
-  local licenses=("mpv=mpv-${ARCHS%% *}" ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp)
-  patch_on libsmb2 && licenses+=(libsmb2)
-  gpl_build && licenses+=(rubberband)
-  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
-  write_licenses macos "$BUILD_ROOT/${ARCHS%% *}/src" "${licenses[@]}"
+  # The texts of the first arch, whose mpv tree is mpv-<arch> (build_mpv).
+  apple_write_licenses macos "$BUILD_ROOT/${ARCHS%% *}/src" "mpv-${ARCHS%% *}"
 
   # 5. Verify the universal dylib inside the framework.
   verify_dylib "$fw/libmpv"
@@ -1041,7 +713,7 @@ main() {
   fi
   echo ""
 
-  check_tools
+  apple_check_tools meson ninja nasm cmake pkg-config python3 autoconf automake libtool git
 
   # Build each requested arch into its own fully separate tree
   # (BUILD_ROOT/<arch>: src extract + build dirs + prefix) so a

@@ -59,9 +59,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
 source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_cross.sh"
+source "$SCRIPT_DIR/shared/_apple.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
-
-JOBS="${JOBS:-$(sysctl -n hw.logicalcpu)}"
 
 # tvOS has the audio stack of iOS (AudioUnit, AVFoundation, AVAudioSession),
 # so the same build makes it: only the SDKs, the version flags and the
@@ -84,11 +84,6 @@ esac
 LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
-# Optional ccache/sccache wrapper (export CC_PREFIX=ccache)
-CC_PREFIX="${CC_PREFIX:-}"
-CC_BIN="${CC_PREFIX:+${CC_PREFIX} }clang"
-CXX_BIN="${CC_PREFIX:+${CC_PREFIX} }clang++"
-
 # LTO defaults to enabled on iOS (same as every other platform). The historic
 # `ENABLE_LTO_DEPS=0` reason — bitcode-only .o files rejected by
 # `xcodebuild -create-xcframework` when wrapping static archives — no longer
@@ -104,23 +99,7 @@ PREFIX_BASE="$BUILD_DIR/prefix"
 # The build never writes outside libmpv-scripts.
 OUTPUT_DIR="$BUILD_DIR/xcframework-stage"
 
-# ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-# Every invocation gets its own file so we can diff across runs. Each line
-# in the log is prefixed with [YYYY-MM-DD HH:MM:SS] so we can measure how
-# long each phase of the build actually took (the terminal stays clean —
-# timestamps live only in the file). Old logs (>20) are pruned automatically.
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_${APPLE_OS}_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_${APPLE_OS}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
-echo "════════════════════════════════════════════════════════════"
+apple_start_log "$APPLE_OS"
 
 # Slices to build (appletvos and appletvsimulator on tvOS):
 #   device:    iphoneos arm64
@@ -143,20 +122,6 @@ fi
 IOS_MIN="15.0"
 
 # Logging helpers (log / ok / warn / err / die / fail) come from _helpers.sh
-
-# ── Check requirements ────────────────────────────────────────────────────────
-check_tools() {
-  log "Checking tools..."
-  local missing=()
-  for t in meson ninja nasm cmake pkg-config python3 autoconf automake libtool git xcodebuild; do
-    command -v "$t" &>/dev/null || missing+=("$t")
-  done
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    command -v brew &>/dev/null || fail "Homebrew required to install: ${missing[*]}"
-    brew install "${missing[@]}" 2>/dev/null || true
-  fi
-  ok "Tools OK"
-}
 
 # Download / git clone / extract helpers come from _helpers.sh
 
@@ -188,38 +153,15 @@ write_ios_cross() {
   fi
   local cpu_family="aarch64"
   [[ "$arch" == "x86_64" ]] && cpu_family="x86_64"
-  local lto_arg=""
-  [[ "${ENABLE_LTO_DEPS:-1}" != "0" ]] && lto_arg=", '-flto=thin'"
-  local vis_arg=""
-  [[ "${VIS_HIDDEN:-1}" != "0" ]] && vis_arg=", '-fvisibility=hidden', '-fvisibility-inlines-hidden'"
-  # mpv C-only eh_frame trim, injected INTO the cross-file c_args (NOT via a
-  # command-line -Dc_args, which would OVERRIDE the array and drop -arch/-isysroot
-  # — that breaks meson's iOS-SDK symbol checks like kAudioUnitSubType_RemoteIO).
-  local ehf_arg="" _f
-  for _f in $(eh_frame_cflags); do ehf_arg="$ehf_arg, '$_f'"; done
-  # mpv orchestration code favours size: -Oz (placed after meson's own
-  # -Os so it wins). DSP stays in ffmpeg (and rubberband), untouched by this.
-  ehf_arg="$ehf_arg, '-Oz'"
-  cat > "$file" << EOF
-[binaries]
-c = '${CC_BIN}'
-cpp = '${CXX_BIN}'
-objc = '${CC_BIN}'
-objcpp = '${CXX_BIN}'
-ar = 'ar'
-strip = 'strip'
-pkg-config = 'pkg-config'
-
-[built-in options]
-c_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}${ehf_arg}]
-cpp_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
-objc_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
-objcpp_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}${vis_arg}]
-c_link_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}]
-cpp_link_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}]
-objc_link_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}]
-objcpp_link_args = ['-arch', '$arch', '$min_flag', '-isysroot', '$sysroot'${lto_arg}]
-
+  # The mpv C-only flags (eh_frame trim, -Oz) go INTO the cross-file c_args,
+  # see apple_meson_options.
+  {
+    apple_meson_binaries pkg-config
+    echo
+    apple_meson_options "$arch" "$min_flag" "$sysroot" "$(apple_mpv_c_args)"
+    echo
+  } > "$file"
+  cat >> "$file" << EOF
 [host_machine]
 system = 'ios'
 cpu_family = '${cpu_family/x86_64/x86}'
@@ -239,28 +181,8 @@ EOF
 write_native_file() {
   local file="$BUILD_DIR/meson_native.ini"
   [[ -f "$file" ]] && { echo "$file"; return; }
-  cat > "$file" << EOF
-[binaries]
-c = '${CC_BIN}'
-cpp = '${CXX_BIN}'
-objc = '${CC_BIN}'
-objcpp = '${CXX_BIN}'
-ar = 'ar'
-strip = 'strip'
-pkg-config = 'pkg-config'
-EOF
+  apple_meson_binaries pkg-config > "$file"
   echo "$file"
-}
-
-# ── meson_setup wrapper (unsets SDKROOT so native sanity check passes) ───────
-meson_setup() {
-  # SDKROOT pointing at the iOS SDK causes meson's build-machine sanity check
-  # to fail (dyld thinks the native binary is a simulator program).
-  # The cross-file already carries -isysroot, so SDKROOT is not needed here.
-  (
-    unset SDKROOT
-    meson setup "$@"
-  )
 }
 
 # =============================================================================
@@ -298,6 +220,14 @@ EOF
   export CC="$CC_BIN"
   export CXX="$CXX_BIN"
 
+  # What the shared dep builds (_cross.sh, _apple.sh) take: one prefix per
+  # slice, the src/ trees shared by the slices, build/ dirs named after it.
+  export CROSS_BUILD_DIR="$BUILD_DIR"
+  export CROSS_PREFIX_DIR="$prefix"
+  export CROSS_AUTOTOOLS_HOST="--host=$(apple_host "$arch")"
+  CROSS_BUILD_SUFFIX="-${sdk}-${arch}"
+  CROSS_LABEL="$sdk/$arch"
+
   local sysroot; sysroot="$(sdk_path "$sdk")"
   # Note: Do NOT export SDKROOT here.  The -isysroot flag in CFLAGS / cross-file
   # is sufficient for cross-compilation, and exporting SDKROOT causes dyld to
@@ -310,11 +240,12 @@ EOF
   # Settings ▸ Patches). By default libass is stripped from mpv
   # (patch_strip_libass.py), so freetype/harfbuzz/fontconfig/fribidi/libass —
   # plus their font-only deps expat + libpng — are unreferenced and skipped.
-  slice_zlib       "$sdk" "$arch" "$prefix" "$cf"
-  slice_bzip2      "$sdk" "$arch" "$prefix" "$cf"
-  slice_xz         "$sdk" "$arch" "$prefix" "$cf"
+  local machine=(--cross-file="$(write_ios_cross "$sdk" "$arch")" --native-file="$(write_native_file)")
+  CFLAGS="$cf -Oz" apple_build_zlib
+  AR=ar RANLIB=ranlib CFLAGS="$cf -Oz -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="$cf -Oz" cross_build_xz
   if ! libass_stripped; then
-    slice_expat      "$sdk" "$arch" "$prefix" "$cf"
+    CFLAGS="$cf -O2" cross_build_expat
     slice_libpng     "$sdk" "$arch" "$prefix" "$cf"
     slice_freetype   "$sdk" "$arch" "$prefix" "$cf"
     slice_fribidi    "$sdk" "$arch" "$prefix" "$cf"
@@ -323,16 +254,16 @@ EOF
     slice_fontconfig "$sdk" "$arch" "$prefix" "$cf"
     slice_libass     "$sdk" "$arch" "$prefix" "$cf"
   fi
-  slice_speexdsp   "$sdk" "$arch" "$prefix" "$cf"
+  CFLAGS="$cf -O2" apple_build_speexdsp
   # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
   if gpl_build; then
-    slice_rubberband "$sdk" "$arch" "$prefix" "$cf"
+    apple_build_rubberband "${machine[@]}"
   fi
   slice_openssl    "$sdk" "$arch" "$prefix" "$cf"
   slice_libsmb2    "$sdk" "$arch" "$prefix" "$cf"
-  slice_libxml2    "$sdk" "$arch" "$prefix" "$cf"
+  CFLAGS="$cf -Oz" LDFLAGS="$cf" cross_build_libxml2
   slice_ffmpeg     "$sdk" "$arch" "$prefix" "$cf" "$sysroot"
-  slice_libplacebo "$sdk" "$arch" "$prefix" "$cf"
+  apple_build_libplacebo "${machine[@]}"
   slice_mpv        "$sdk" "$arch" "$prefix" "$cf"
 }
 
@@ -358,97 +289,6 @@ cmake_static() {
 }
 
 # ── Libraries (pattern: check sentinel → build) ───────────────────────
-
-slice_zlib() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/libz.a" ]] && return
-  log "zlib ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/zlib-$ZLIB_VERSION.tar.gz"
-  download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make distclean 2>/dev/null || make clean 2>/dev/null || true
-  CFLAGS="$cf -Oz" ./configure --prefix="$prefix" --static
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "zlib ($sdk/$arch) ✓"
-}
-
-slice_bzip2() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/libbz2.a" ]] && return
-  log "bzip2 ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/bzip2-$BZIP2_VERSION.tar.gz"
-  download "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make clean 2>/dev/null || true
-  make -j"$JOBS" CC="clang" CFLAGS="$cf -Oz -D_FILE_OFFSET_BITS=64" AR="ar" RANLIB="ranlib" libbz2.a
-  install -m 644 libbz2.a "$prefix/lib/"
-  install -m 644 bzlib.h  "$prefix/include/"
-  popd >/dev/null
-  ok "bzip2 ($sdk/$arch) ✓"
-}
-
-slice_xz() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/liblzma.a" ]] && return
-  log "xz ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/xz-$XZ_VERSION.tar.gz"
-  download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make distclean 2>/dev/null || make clean 2>/dev/null || true
-  local host="aarch64-apple-darwin"
-  [[ "$arch" == "x86_64" ]] && host="x86_64-apple-darwin"
-
-  CFLAGS="$cf -Oz" ./configure --prefix="$prefix" --host="$host" --enable-static --disable-shared \
-    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo --disable-scripts --disable-doc
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "xz ($sdk/$arch) ✓"
-}
-
-slice_expat() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/libexpat.a" ]] && return
-  log "expat ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.gz"
-  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make distclean 2>/dev/null || make clean 2>/dev/null || true
-  local host="aarch64-apple-darwin"
-  [[ "$arch" == "x86_64" ]] && host="x86_64-apple-darwin"
-
-  CFLAGS="$cf -O2" ./configure --prefix="$prefix" --host="$host" --enable-static --disable-shared --without-docbook --without-examples --without-tests
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "expat ($sdk/$arch) ✓"
-}
-
-slice_libxml2() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/libxml2.a" ]] && return
-  log "libxml2 ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/libxml2-$LIBXML2_VERSION.tar.xz"
-  download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make distclean 2>/dev/null || make clean 2>/dev/null || true
-  local host="aarch64-apple-darwin"
-  [[ "$arch" == "x86_64" ]] && host="x86_64-apple-darwin"
-  CFLAGS="$cf -Oz" LDFLAGS="$cf" ./configure --prefix="$prefix" --host="$host" \
-    --enable-static --disable-shared \
-    --without-python --without-readline --without-history \
-    --without-http --without-ftp --without-html \
-    --without-legacy --without-docbook --without-catalog \
-    --without-schematron --without-modules --without-debug \
-    --without-iconv --without-lzma --without-zlib
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "libxml2 ($sdk/$arch) ✓"
-}
 
 slice_libpng() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4"
@@ -496,7 +336,7 @@ slice_fribidi() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" meson_setup "$dir" \
+  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" apple_meson_setup "$dir" \
     --prefix="$prefix" --buildtype=release --default-library=static \
     -Ddocs=false -Dtests=false \
     --cross-file="$(write_ios_cross "$sdk" "$arch")" \
@@ -515,7 +355,7 @@ slice_harfbuzz() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" meson_setup "$dir" \
+  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" apple_meson_setup "$dir" \
     --prefix="$prefix" --buildtype=release --default-library=static \
     -Dfreetype=enabled -Dglib=disabled -Dgobject=disabled -Dicu=disabled \
     -Dtests=disabled -Ddocs=disabled \
@@ -600,7 +440,7 @@ slice_fontconfig() {
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" meson_setup "$dir" \
+  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" apple_meson_setup "$dir" \
     --prefix="$prefix" --buildtype=release --default-library=static \
     -Dtests=disabled -Dtools=disabled -Ddoc=disabled \
     --cross-file="$(write_ios_cross "$sdk" "$arch")" \
@@ -628,47 +468,6 @@ slice_libass() {
   make -j"$JOBS"; make install
   popd >/dev/null
   ok "libass ($sdk/$arch) ✓"
-}
-
-slice_speexdsp() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/libspeexdsp.a" ]] && return
-  log "speexdsp ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/speexdsp-$SPEEXDSP_VERSION.tar.gz"
-  download "https://downloads.xiph.org/releases/speex/speexdsp-${SPEEXDSP_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make distclean 2>/dev/null || make clean 2>/dev/null || true
-  local host="aarch64-apple-darwin"
-  [[ "$arch" == "x86_64" ]] && host="x86_64-apple-darwin"
-
-  CFLAGS="$cf -O2" ./configure --prefix="$prefix" --host="$host" --enable-static --disable-shared
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "speexdsp ($sdk/$arch) ✓"
-}
-
-slice_rubberband() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/librubberband.a" ]] && return
-  log "rubberband ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
-  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  # rubberband 4.0+ uses unqualified `size_t` in src/common/mathmisc.{h,cpp};
-  # modern gcc/clang under -std=c++20 rejects it. Inject <stddef.h>. Idempotent.
-  python3 "$LIBMPV_SCRIPTS_ROOT/patches/rubberband/patch_rubberband_size_t.py" "$dir"
-  local bdir="$BUILD_DIR/build/rubberband-${sdk}-${arch}"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" meson_setup "$dir" \
-    --prefix="$prefix" --buildtype=release --default-library=static \
-    -Dfft=builtin -Dresampler=speex \
-    -Dladspa=disabled -Dvamp=disabled -Djni=disabled \
-    --cross-file="$(write_ios_cross "$sdk" "$arch")" \
-    --native-file="$(write_native_file)"
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "rubberband ($sdk/$arch) ✓"
 }
 
 slice_openssl() {
@@ -717,46 +516,8 @@ slice_libsmb2() {
   ok "libsmb2 ($sdk/$arch) ✓"
 }
 
-slice_libplacebo() {
-  local sdk="$1" arch="$2" prefix="$3" cf="$4"
-  [[ -f "$prefix/lib/libplacebo.a" ]] && return 0
-  log "libplacebo ($sdk/$arch)..."
-  local gitdir="$BUILD_DIR/src/libplacebo-git"
-  [[ -d "$gitdir/.git" ]] || download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
-  git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
-  local bdir="$BUILD_DIR/build/libplacebo-${sdk}-${arch}"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  meson_setup "$gitdir" \
-    --prefix="$prefix" --buildtype=release --default-library=static \
-    -Dvulkan=disabled -Dshaderc=disabled -Dglslang=disabled -Dopengl=disabled \
-    -Dd3d11=disabled -Ddemos=false -Dtests=false \
-    --cross-file="$(write_ios_cross "$sdk" "$arch")" \
-    --native-file="$(write_native_file)"
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "libplacebo ($sdk/$arch) ✓"
-}
-
 slice_ffmpeg() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4" sysroot="$5"
-  [[ -f "$prefix/lib/libavcodec.a" ]] && return
-  log "ffmpeg ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION.tar.gz"
-  download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
-  # A pristine tree on every build: src/ survives cleanup_build, and a
-  # reused tree would keep the result of older patches.
-  rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-
-  # ── Patch FFmpeg (libsmb2, mov advanced_editlist, DASH keep-alive) ───────
-  patch_record_start ffmpeg "$prefix"
-  apply_ffmpeg_patches "$dir"
-
-  local bdir="$BUILD_DIR/build/ffmpeg-${sdk}-${arch}"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-
   local min_flag
   if [[ "$sdk" == "$DEVICE_SDK" ]]; then
     min_flag="$DEVICE_MIN_FLAG=$IOS_MIN"
@@ -766,9 +527,7 @@ slice_ffmpeg() {
 
   # ── ffmpeg: smart audio-only build (see scripts/shared/_audio_only.sh) ─────────────
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  "$dir/configure" \
-    --prefix="$prefix" \
-    $(ffmpeg_common_args) \
+  cross_build_ffmpeg "$APPLE_OS" \
     --enable-cross-compile \
     --arch="$arch" \
     --target-os=darwin \
@@ -777,10 +536,6 @@ slice_ffmpeg() {
     --extra-ldflags="-arch $arch $min_flag -isysroot $sysroot -L$prefix/lib" \
     --disable-videotoolbox \
     --enable-audiotoolbox
-  verify_ffmpeg_config "$bdir" "$APPLE_OS"
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "ffmpeg ($sdk/$arch) ✓"
 }
 
 slice_mpv() {
@@ -811,12 +566,7 @@ slice_mpv() {
   # so iOS 15+ uses the native symbol (the upstream shim references the
   # iOS-26-removed kAudioObjectPropertyElementMaster).
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/ios/patch_compat_apple.py"     "$dir"
-  # Inject the export filter into mpv's libmpv `library()` call so ld64
-  # only exposes mpv_* in the final dylib's symbol table.
-  if [[ "${VIS_HIDDEN:-1}" != "0" ]]; then
-    python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/apple/patch_export_filter.py" \
-      "$dir" "$SCRIPT_DIR/shared/mpv.exports" "$prefix"
-  fi
+  apple_mpv_export_filter "$dir" "$prefix"
   # The mpv patches shared across every platform, see
   # scripts/shared/_audio_only.sh.
   apply_mpv_patches_common "$dir"
@@ -824,7 +574,7 @@ slice_mpv() {
   local bdir="$BUILD_DIR/build/mpv-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  meson_setup "$dir" \
+  apple_meson_setup "$dir" \
     --prefix="$prefix" \
     --buildtype=release \
     --default-library=shared \
@@ -875,19 +625,9 @@ assemble_xcframework() {
     # Strip local symbols + debug (~1.3M; meson does not strip). -x keeps the
     # exported mpv_* API + @rpath install_name. Done before the hygiene count.
     strip -x "$fw/libmpv" 2>/dev/null || true
-    # Re-sign the Mach-O AFTER the last edit (bitcode_strip / install_name_tool /
-    # strip -x all rewrite the binary and invalidate the linker's adhoc signature).
-    # A broken-signature dylib SIGKILLs on dlopen on Apple Silicon (iOS Simulator
-    # host loads, direct loads); a consumer app re-signs on embed, but the later
-    # `codesign --deep` on the xcframework does NOT reliably re-sign this inner
-    # Mach-O, so sign it explicitly here. Matches the macOS build.
-    # --identifier is MANDATORY: the Info.plist below sets CFBundleIdentifier to
-    # com.ales-drnz.libmpv, and iOS installd rejects a device install when a
-    # framework's code-signing identifier != its CFBundleIdentifier
-    # (MismatchedBundleIDSigningIdentifier). Signing a bare Mach-O with no
-    # --identifier defaults to `libmpv-<hash>` → broken installs. Xcode preserves
-    # this identifier when it re-signs on embed, so it MUST be correct here.
-    codesign -s - --force --identifier com.ales-drnz.libmpv "$fw/libmpv" 2>/dev/null || true
+    # Re-sign after the last edit (bitcode_strip, install_name_tool, strip -x),
+    # see apple_sign.
+    apple_sign "$fw/libmpv" || true
 
     # Export-filter hygiene (mirrors the macOS sanity check): the exports list
     # is `_mpv_*`, so with it applied we expect ~60 exported (T) symbols —
@@ -906,59 +646,9 @@ assemble_xcframework() {
     fi
 
     cp -r "$headers_src"/* "$fw/Headers/" 2>/dev/null || true
-    cat > "$fw/Modules/module.modulemap" <<'EOF'
-framework module mpv {
-  umbrella header "client.h"
-  export *
-  module * { export * }
-}
-EOF
-    # Required Info.plist. CFBundleExecutable must match the binary filename
-    # (here `libmpv`, no extension) — Apple validation tools reject mismatches.
-    cat > "$fw/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>libmpv</string>
-<key>CFBundleIdentifier</key><string>com.ales-drnz.libmpv</string>
-<key>CFBundleName</key><string>libmpv</string>
-<key>CFBundlePackageType</key><string>FMWK</string>
-<key>CFBundleShortVersionString</key><string>${MPV_VERSION}</string>
-<key>CFBundleVersion</key><string>1</string>
-<key>MinimumOSVersion</key><string>${IOS_MIN}</string>
-</dict></plist>
-EOF
-    # Privacy manifest declaring the required-reason APIs libmpv uses
-    # internally (file timestamps via fstat for cache files; monotonic clock
-    # via clock_gettime for playback timing). Mandatory since May 2024 for
-    # any third-party SDK that touches these APIs.
-    cat > "$fw/PrivacyInfo.xcprivacy" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>NSPrivacyTracking</key>
-  <false/>
-  <key>NSPrivacyCollectedDataTypes</key>
-  <array/>
-  <key>NSPrivacyAccessedAPITypes</key>
-  <array>
-    <dict>
-      <key>NSPrivacyAccessedAPIType</key>
-      <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key>
-      <array><string>3B52.1</string></array>
-    </dict>
-    <dict>
-      <key>NSPrivacyAccessedAPIType</key>
-      <string>NSPrivacyAccessedAPICategorySystemBootTime</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key>
-      <array><string>35F9.1</string></array>
-    </dict>
-  </array>
-</dict>
-</plist>
-EOF
+    apple_write_modulemap "$fw/Modules/module.modulemap"
+    apple_write_info_plist "$fw/Info.plist" MinimumOSVersion "$IOS_MIN"
+    apple_write_privacy_manifest "$fw/PrivacyInfo.xcprivacy"
   }
 
   local release_dir="$LIBMPV_SCRIPTS_ROOT/builds/release"
@@ -1025,11 +715,7 @@ EOF
   write_build_record "$APPLE_OS" "${prefixes[@]}"
   # The mpv tree of a slice is mpv-<sdk>_<arch> (slice_mpv): the first one.
   local first="${SLICES[0]}"
-  local licenses=("mpv=mpv-${first%%:*}_${first##*:}" ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp)
-  patch_on libsmb2 && licenses+=(libsmb2)
-  gpl_build && licenses+=(rubberband)
-  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
-  write_licenses "$APPLE_OS" "$BUILD_DIR/src" "${licenses[@]}"
+  apple_write_licenses "$APPLE_OS" "$BUILD_DIR/src" "mpv-${first%%:*}_${first##*:}"
 }
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -1038,7 +724,7 @@ main() {
   echo "╔══════════════════════════════════════════════════════════════╗"
   echo "║   build_libmpv_ios.sh — mpv $MPV_VERSION (dynamic xcframework) ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
-  check_tools
+  apple_check_tools meson ninja nasm cmake pkg-config python3 autoconf automake libtool git xcodebuild
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
   for slice in "${SLICES[@]}"; do
