@@ -19,7 +19,7 @@ The snapshots are pinned, and every package is checked against its
 SHA-256 in tizen_sysroot.sha256: a package that changed stops the build.
 --update writes that file from the snapshots' repodata.
 
-Usage: tizen_sysroot.py <armv7l|i686> <out dir> [--update]
+Usage: tizen_sysroot.py <armv7l|x86_64> <out dir> [--update]
 """
 import gzip
 import hashlib
@@ -51,12 +51,12 @@ PACKAGES = {
         'capi-media-sound-manager', 'capi-media-sound-manager-devel',
     ],
 }
-ARCHES = ('armv7l', 'i686')
+ARCHES = ('armv7l', 'x86_64')
 LOCK = Path(__file__).with_name('tizen_sysroot.sha256')
 
 
 def repo(kind, arch):
-    target = 'emulator' if kind == 'unified' and arch == 'i686' else 'standard'
+    target = 'emulator' if kind == 'unified' and arch == 'x86_64' else 'standard'
     return f'{SITE}/{SNAPSHOTS[kind]}/repos/{target}/packages'
 
 
@@ -164,7 +164,7 @@ def fix_up(root, arch):
     asm = root / 'usr/include/asm'
     if not asm.exists():
         asm.symlink_to('asm-arm' if arch == 'armv7l' else 'asm-x86')
-    lib = root / 'usr/lib'
+    lib = root / ('usr/lib64' if arch == 'x86_64' else 'usr/lib')
     for obj in sorted(lib.glob('gcc/*/*/*.[oa]')):
         shutil.copy2(obj, lib / obj.name)
 

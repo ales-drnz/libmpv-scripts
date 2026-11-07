@@ -173,7 +173,7 @@ jobs:
           path: builds/sources-*.txt
           if-no-files-found: ignore
 
-  # The Tizen TVs (armv7l) and their emulator (i686): clang against a
+  # The Tizen TVs (armv7l) and their emulator (x86_64): clang against a
   # sysroot of pinned Tizen 6.0 packages, cross from an x86_64 runner.
   tizen:
     name: Tizen ${{ matrix.arch }}
@@ -182,7 +182,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [armv7l, i686]
+        arch: [armv7l, x86_64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

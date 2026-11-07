@@ -12,7 +12,7 @@ import (
 // The Tizen builds: one Docker target per arch of build_libmpv_tizen.sh, on
 // the tizen image, and "all" for both. Cross from any host, so no host arch.
 func TestTizenTargets(t *testing.T) {
-	for arch, key := range map[string]string{"armv7l": "tizen-armv7l", "i686": "tizen-i686"} {
+	for arch, key := range map[string]string{"armv7l": "tizen-armv7l", "x86_64": "tizen-x86_64"} {
 		tg, ok := targetByKey(key)
 		if !ok {
 			t.Fatalf("no %s target", key)
@@ -27,7 +27,7 @@ func TestTizenTargets(t *testing.T) {
 		}
 	}
 	all, ok := targetByKey("tizen")
-	if !ok || all.kind != kAggregate || !slices.Equal(all.members, []string{"tizen-armv7l", "tizen-i686"}) {
+	if !ok || all.kind != kAggregate || !slices.Equal(all.members, []string{"tizen-armv7l", "tizen-x86_64"}) {
 		t.Errorf("tizen: %+v", all)
 	}
 	every, _ := targetByKey("all")

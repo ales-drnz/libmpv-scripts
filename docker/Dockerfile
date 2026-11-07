@@ -190,7 +190,7 @@ RUN pip3 install --no-cache-dir 'meson>=1.6.0,<1.8' 'ninja>=1.11' 'cmake>=3.28,<
 WORKDIR /src
 
 # ══════════════════════════════════════════════════════════════════════════════
-# tizen — clang and lld for the Tizen TVs (armv7l) and their emulator (i686)
+# tizen — clang and lld for the Tizen TVs (armv7l) and their emulator (x86_64)
 # ══════════════════════════════════════════════════════════════════════════════
 # No cross gcc: build_libmpv_tizen.sh drives clang against a sysroot of
 # Tizen 6.0 packages (scripts/tizen/tizen_sysroot.py), whose glibc and

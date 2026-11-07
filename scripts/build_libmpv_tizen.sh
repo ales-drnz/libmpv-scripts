@@ -7,7 +7,7 @@
 # build_libmpv_tizen.sh
 #
 # Compiles mpv as libmpv.so for Tizen: armv7l for the TVs (2021 on, Tizen 6.0
-# and later, ARM EABI with softfp floats) and i686 for the TV emulator.
+# and later, ARM EABI with softfp floats) and x86_64 for the TV emulator.
 #
 # === OUTPUT ===
 # builds/release/libmpv_tizen-<arch>.so
@@ -24,10 +24,10 @@
 #
 # Usage (from project root):
 #   ./scripts/build_libmpv_tizen.sh --arch=armv7l
-#   ./scripts/build_libmpv_tizen.sh --arch=i686
+#   ./scripts/build_libmpv_tizen.sh --arch=x86_64
 #
 # Options (env vars):
-#   ARCH=armv7l|i686        (default: armv7l; --arch=… overrides)
+#   ARCH=armv7l|x86_64      (default: armv7l; --arch=… overrides)
 #   JOBS=N                  (default: nproc)
 #   FORCE_DOWNLOAD=1, KEEP_BUILD=1, WIPE_ALL=1, ENABLE_LTO_DEPS=0,
 #   VIS_HIDDEN=0, SECTION_GC=0: as in build_libmpv_linux.sh
@@ -65,21 +65,16 @@ case "$ARCH" in
     OPENSSL_EXTRA=""
     FFMPEG_ARCH_ARGS="--arch=arm --cpu=armv7-a"
     ;;
-  i686)
-    TRIPLE="i686-linux-gnu"
-    # Tizen's x86 GCC is i586-tizen-linux-gnu; the code is for i686.
-    CLANG_TARGET="i586-tizen-linux-gnu"
-    ABI_FLAGS="-march=i686 -msse2 -mfpmath=sse"
-    MESON_CPU_FAMILY="x86"; MESON_CPU="i686"
-    OPENSSL_TARGET="linux-x86"
-    # clang's 64-bit atomics on x86-32 call libatomic, which the TV has not:
-    # OpenSSL's fallback takes a lock instead.
-    OPENSSL_EXTRA="-DBROKEN_CLANG_ATOMICS"
-    # FFmpeg's x86-32 assembly is not position independent: the emulator
-    # only checks behaviour, so it builds without it.
-    FFMPEG_ARCH_ARGS="--arch=x86_32 --cpu=i686 --disable-asm"
+  x86_64)
+    TRIPLE="x86_64-linux-gnu"
+    CLANG_TARGET="x86_64-tizen-linux-gnu"
+    ABI_FLAGS=""
+    MESON_CPU_FAMILY="x86_64"; MESON_CPU="x86_64"
+    OPENSSL_TARGET="linux-x86_64"
+    OPENSSL_EXTRA=""
+    FFMPEG_ARCH_ARGS="--arch=x86_64"
     ;;
-  *) die "Unsupported --arch=$ARCH (must be armv7l or i686)" ;;
+  *) die "Unsupported --arch=$ARCH (must be armv7l or x86_64)" ;;
 esac
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
@@ -124,7 +119,8 @@ setup_sysroot() {
   local pcdir="$BUILD_DIR/sysroot-pkgconfig"
   rm -rf "$pcdir"; mkdir -p "$pcdir"
   local pc
-  for pc in "$SYSROOT"/usr/lib/pkgconfig/*.pc; do
+  for pc in "$SYSROOT"/usr/lib/pkgconfig/*.pc "$SYSROOT"/usr/lib64/pkgconfig/*.pc; do
+    [[ -f "$pc" ]] || continue
     sed -E "s#^(prefix|exec_prefix|libdir|includedir)=/usr#\1=$SYSROOT/usr#" "$pc" > "$pcdir/$(basename "$pc")"
   done
   SYSROOT_PKGCONFIG="$pcdir"

@@ -185,11 +185,11 @@ func allTargets() []Target {
 		{Key: "web", Label: "wasm32", Group: "Web", InMenu: true, Note: "needs emsdk 6.0.12 and meson", kind: kNative, script: sWeb},
 
 		// ── Tizen (Docker — any host: clang cross-compiles both arches against
-		//    a sysroot of Tizen 6.0 packages). armv7l is the TVs, i686 the
+		//    a sysroot of Tizen 6.0 packages). armv7l is the TVs, x86_64 the
 		//    TV emulator. ──
 		{Key: "tizen-armv7l", Label: "armv7l", Group: "Tizen", InMenu: true, kind: kDocker, script: sTizen, image: "tizen", args: []string{"--arch=armv7l"}},
-		{Key: "tizen-i686", Label: "i686", Group: "Tizen", InMenu: true, kind: kDocker, script: sTizen, image: "tizen", args: []string{"--arch=i686"}},
-		{Key: "tizen", Label: "all", Group: "Tizen", InMenu: true, kind: kAggregate, members: []string{"tizen-armv7l", "tizen-i686"}},
+		{Key: "tizen-x86_64", Label: "x86_64", Group: "Tizen", InMenu: true, kind: kDocker, script: sTizen, image: "tizen", args: []string{"--arch=x86_64"}},
+		{Key: "tizen", Label: "all", Group: "Tizen", InMenu: true, kind: kAggregate, members: []string{"tizen-armv7l", "tizen-x86_64"}},
 
 		// ── Publish / validate ──
 		{Key: "manifest", Label: "Manifest", Group: "Tools", InMenu: true, kind: kNative, script: "scripts/write_manifest.sh",

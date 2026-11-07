@@ -175,7 +175,7 @@ EXPECTED_FORMATS=(
   "libmpv_ios.xcframework.zip|Zip archive data"
   "libmpv_tvos.xcframework.zip|Zip archive data"
   "libmpv_tizen-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
-  "libmpv_tizen-i686.so|ELF 32-bit LSB shared object, Intel (80386|i386)"
+  "libmpv_tizen-x86_64.so|ELF 64-bit LSB shared object, x86-64"
 )
 
 # Every observable property our mpv patch set registers. Validated by
@@ -529,7 +529,7 @@ _llvm_tool() {
   esac
 }
 
-# The Tizen sysroot of arch (armv7l, i686): the build's own when it is there,
+# The Tizen sysroot of arch (armv7l, x86_64): the build's own when it is there,
 # else unpacked once from the pinned packages (scripts/tizen/tizen_sysroot.py).
 _tizen_sysroot() {
   local arch="$1"
@@ -554,7 +554,7 @@ layer12_und_resolvable() {
     android/arm64-v8a)    triple="aarch64-linux-android" ;;
     android/armeabi-v7a)  triple="arm-linux-androideabi" ;;
     android/x86_64)       triple="x86_64-linux-android" ;;
-    tizen/armv7l|tizen/i686)
+    tizen/armv7l|tizen/x86_64)
       sysroot="$(_tizen_sysroot "$arch")" || {
         fail "L12: the Tizen sysroot of $arch could not be unpacked"
         return 0
@@ -594,7 +594,7 @@ layer12_und_resolvable() {
       fi
       ;;
     tizen)
-      search_dirs=("$sysroot/lib" "$sysroot/usr/lib")
+      search_dirs=("$sysroot/lib64" "$sysroot/usr/lib64" "$sysroot/lib" "$sysroot/usr/lib")
       ;;
   esac
   # The host's nm reads only its own arch: llvm-nm reads the Tizen ones.
@@ -644,7 +644,7 @@ layer12_und_resolvable() {
   if [[ "$platform" == "linux" || "$platform" == "tizen" ]]; then
     # shellcheck disable=SC2206  # the globs expand here, on purpose
     local lds=(/lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*)
-    [[ "$platform" == tizen ]] && lds=("$sysroot"/lib/ld-linux*.so.*)
+    [[ "$platform" == tizen ]] && lds=("$sysroot"/lib/ld-linux*.so.* "$sysroot"/lib64/ld-linux*.so.*)
     for ld in "${lds[@]}"; do
       [[ -f "$ld" ]] || continue
       "$nm" -D --defined-only --extern-only "$ld" 2>/dev/null \
@@ -898,7 +898,7 @@ _l13_tizen_dlopen() {
   case "$arch" in
     armv7l) target="armv7l-tizen-linux-gnueabi" qemu="qemu-arm-static"
             flags=(-march=armv7-a -mfpu=neon -mfloat-abi=softfp -mthumb) ;;
-    i686)   target="i586-tizen-linux-gnu" qemu="qemu-i386-static" flags=(-march=i686) ;;
+    x86_64) target="x86_64-tizen-linux-gnu" qemu="qemu-x86_64-static" ;;
     *) warn "L13: unsupported tizen arch=$arch"; return 0 ;;
   esac
   command -v "$qemu" >/dev/null 2>&1 || { fail "L13: $qemu missing"; return 0; }
@@ -930,7 +930,11 @@ EOF
     rm -rf "$tmp"; return 0
   fi
   local out rc
-  out="$(timeout 120 "$qemu" -L "$sysroot" -E LD_LIBRARY_PATH="$tmp" "$tmp/dlopen_test" "$artifact" 2>&1)"; rc=$?
+  # The sysroot has no ld.so.cache, and qemu then hands the loader the
+  # host's, whose x86_64 entries the Tizen loader would take: its own
+  # directories come first in the search path instead.
+  local libs="$tmp:/lib64:/usr/lib64:/lib:/usr/lib"
+  out="$(timeout 120 "$qemu" -L "$sysroot" -E LD_LIBRARY_PATH="$libs" "$tmp/dlopen_test" "$artifact" 2>&1)"; rc=$?
   rm -rf "$tmp"
   case "$rc" in
     0)   pass "L13 dlopen(RTLD_NOW) on Tizen's glibc under $qemu: loads + initializes + patched props respond" ;;
@@ -1453,7 +1457,6 @@ arch_from_artifact() {
     *-arm64-v8a.*)     echo "arm64-v8a" ;;
     *-arm64.*)         echo "arm64" ;;
     *-armv7l.*)        echo "armv7l" ;;
-    *-i686.*)          echo "i686" ;;
     *)                 echo "" ;;
   esac
 }

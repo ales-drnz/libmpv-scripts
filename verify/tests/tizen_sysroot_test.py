@@ -96,6 +96,15 @@ class Unpack(unittest.TestCase):
         self.assertEqual((self.root / 'usr/lib/crtbeginS.o').read_bytes(), b'o')
         self.assertEqual((self.root / 'usr/lib/libgcc.a').read_bytes(), b'a')
 
+    def test_fix_up_x86_64_is_lib64(self):
+        gcc = self.root / 'usr/lib64/gcc/x86_64-tizen-linux-gnu/9.2.0'
+        gcc.mkdir(parents=True)
+        (gcc / 'crtbeginS.o').write_bytes(b'o')
+        (self.root / 'usr/include').mkdir(parents=True)
+        ts.fix_up(self.root, 'x86_64')
+        self.assertEqual(os.readlink(self.root / 'usr/include/asm'), 'asm-x86')
+        self.assertEqual((self.root / 'usr/lib64/crtbeginS.o').read_bytes(), b'o')
+
 
 class Lock(unittest.TestCase):
     def test_every_package_of_both_arches_is_locked(self):
