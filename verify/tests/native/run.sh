@@ -96,7 +96,7 @@ CASES=(
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
-  "lib keep_open_park_test playback - pause park nopause stop unload afterend"
+  "lib keep_open_park_test playback - pause park nopause stop unload afterend seekend"
   "unit pcm_tap_idle_test - - idle slow pause quiet"
   "unit pull_pause_tail_test - - hold mid reset"
   "lib pcm_loop_test playback - file late ab next abnext off afdrop"
