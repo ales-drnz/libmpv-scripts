@@ -2,8 +2,7 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-"""Fix the Android AudioTrack output (audio/out/ao_audiotrack.c, and the
-paused delay of audio/out/buffer.c that its set_pause brings out).
+"""Fix the Android AudioTrack output (audio/out/ao_audiotrack.c).
 
 audiotrack is mpv's default output on Android. Its thread pulls a chunk of
 75 to 150 ms from mpv's buffer and writes it to the AudioTrack with a
@@ -40,23 +39,14 @@ blocking write, which paces the loop while there is audio.
    the rest of a cut chunk and writes it first on the resume. A reset in
    between (a seek or a stop) drops it.
 
-4. Paused delay. For a pull output paused in hardware, buffer.c kept the
-   delay of the audio the device held in queued_time_ns, but ao_get_delay
-   still read it off the clock (end_time_ns minus now). Paused, the delay
-   ran down and the position crept ahead by what the track held (about
-   140 ms on audiotrack), then went back as much on the resume; every read
-   that woke the core moved it. ao_get_delay now returns the saved delay
-   while paused, and the pause and the resume set it under the buffer lock,
-   with hw_paused, so a read in between never sees the old one.
+The paused delay of a pull output in buffer.c, fix 4 until libmpv-r23,
+is in patch_gapless_tail.py since, for every pull output.
 
 Each fix has its own marker and runs once. All anchors are checked before
 the file is written, so a mismatch leaves the tree as it was.
 
 Android only: ao_audiotrack.c is compiled only there, so the patch is
 applied from build_libmpv_android.sh, gated on the `audiotrack` patch id.
-Fix 4 changes shared code, but only the Android build gets it: there the
-paused delay is the size of an AudioTrack buffer, on the desktop outputs a
-few milliseconds.
 
 Usage: patch_audiotrack.py <mpv source dir>
 """
@@ -70,14 +60,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "_lib"))
 import anchor  # noqa: E402
 
 AUDIOTRACK = "audio/out/ao_audiotrack.c"
-BUFFER = "audio/out/buffer.c"
 
 # Each fix has its own marker, so a tree that has some of them gets the
 # others.
 IDLE = "MAK_AUDIOTRACK_IDLE_PATCH_V1"
 DEAD = "MAK_AUDIOTRACK_DEAD_OBJECT_PATCH_V1"
 PAUSE = "MAK_AUDIOTRACK_PAUSE_PATCH_V1"
-DELAY = "MAK_AUDIOTRACK_PAUSED_DELAY_PATCH_V1"
 
 
 def apply(p):
@@ -226,48 +214,6 @@ def apply(p):
             "    .set_pause = set_pause,\n",
         ),
     ], marker=PAUSE)
-
-    # ── 4. Paused delay: the delay saved at the pause, read under the lock ──
-    p.edits(BUFFER, [
-        (
-            "    } else {\n"
-            "        int64_t end = p->end_time_ns;\n",
-            f"    }} else if (p->hw_paused) {{\n"
-            f"        // {DELAY}: paused in\n"
-            "        // hardware, the device plays nothing: the delay is the one\n"
-            "        // saved at the pause, not one that runs down on the clock.\n"
-            "        driver_delay = MPMAX(0, MP_TIME_NS_TO_S(p->queued_time_ns));\n"
-            "    } else {\n"
-            "        int64_t end = p->end_time_ns;\n",
-        ),
-        (
-            "                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n",
-            "                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n"
-            f"                // {DELAY}: saved\n"
-            "                // with hw_paused, under the lock ao_get_delay takes.\n"
-            "                if (is_hw_paused)\n"
-            "                    p->queued_time_ns = p->end_time_ns - mp_time_ns();\n",
-        ),
-        (
-            "            is_hw_paused = p->hw_paused;\n"
-            "            p->hw_paused = false;\n",
-            "            is_hw_paused = p->hw_paused;\n"
-            "            p->hw_paused = false;\n"
-            f"            // {DELAY}\n"
-            "            if (is_hw_paused)\n"
-            "                p->end_time_ns = p->queued_time_ns + mp_time_ns();\n",
-        ),
-        (
-            "                ao->driver->set_pause(ao, true);\n"
-            "                p->queued_time_ns = p->end_time_ns - mp_time_ns();\n"
-            "            } else {\n"
-            "                p->end_time_ns = p->queued_time_ns + mp_time_ns();\n"
-            "                ao->driver->set_pause(ao, false);\n",
-            "                ao->driver->set_pause(ao, true);\n"
-            "            } else {\n"
-            "                ao->driver->set_pause(ao, false);\n",
-        ),
-    ], marker=DELAY)
 
 
 anchor.main(apply, "patch_audiotrack")

@@ -15,6 +15,11 @@
 //            seek back leaves it no
 //   nopause  keep-open-pause=no: no park, keep-open-parked stays no
 //   stop     a stop at the park leaves it: idle, keep-open-parked is no
+//   unload   keep-open=no: a pause in an on_unload hook, the file ended
+//            with the tail still playing, plays the tail before the
+//            output closes (r22: it paused at once, and the idle core
+//            closed the paused output with the tail in it)
+//   afterend the same in an on_after_end_file hook
 #include "playback_test.h"
 
 // Pumps until [name] reads [want], for up to [secs]. Returns whether it did.
@@ -30,14 +35,44 @@ static int wait_str(mpv_handle *h, const char *name, const char *want,
     return mt_str_is(h, name, want);
 }
 
+// keep-open=no, the file ends with the tail playing and [hook] runs: a
+// pause there, then the core goes idle. The tail plays before the output
+// closes: idle comes no sooner than the tail took to play.
+static void ended_pause(mpv_handle *h, const char *hook, double end)
+{
+    mpv_hook_add(h, 1, hook, 0);
+    double pos = -1, t0 = mt_now();
+    uint64_t id = 0;
+    while (!id && mt_now() - t0 < 10) {
+        mt_double(h, "time-pos", &pos);
+        mpv_event *e = mpv_wait_event(h, 0.002);
+        if (e->event_id == MPV_EVENT_HOOK)
+            id = ((mpv_event_hook *)e->data)->id;
+    }
+    mt_check(id != 0, "the %s hook ran", hook);
+    // The position the output played to when the file ended.
+    double tail = end - pos;
+    mt_check(tail > 0.1, "the tail plays when the file ends (%.3f s)", tail);
+    double hooked = mt_now();
+    mpv_set_property_string(h, "pause", "yes");
+    mpv_hook_continue(h, id);
+    struct pb_ev ev = {.end_reason = -1};
+    mt_check(wait_str(h, "idle-active", "yes", 5, &ev), "idle at the end");
+    double took = mt_now() - hooked;
+    mt_check(took > tail - 0.1,
+             "the tail played before the output closed (%.3f s, tail %.3f s)",
+             took, tail);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 4)
         return 2;
     const char *mode = argv[1], *fx = argv[2];
     int m_pause = !strcmp(mode, "pause"), m_park = !strcmp(mode, "park"),
-        m_nopause = !strcmp(mode, "nopause"), m_stop = !strcmp(mode, "stop");
-    if (!(m_pause || m_park || m_nopause || m_stop)) {
+        m_nopause = !strcmp(mode, "nopause"), m_stop = !strcmp(mode, "stop"),
+        m_unload = !strcmp(mode, "unload"), m_afterend = !strcmp(mode, "afterend");
+    if (!(m_pause || m_park || m_nopause || m_stop || m_unload || m_afterend)) {
         printf("unknown mode %s\n", mode);
         return 2;
     }
@@ -45,7 +80,7 @@ int main(int argc, char **argv)
     snprintf(path, sizeof path, "%s/sine60.flac", fx);
 
     mpv_handle *h = pb_create();
-    mpv_set_option_string(h, "keep-open", "yes");
+    mpv_set_option_string(h, "keep-open", m_unload || m_afterend ? "no" : "yes");
     mpv_set_option_string(h, "idle", "yes");
     if (m_nopause)
         mpv_set_option_string(h, "keep-open-pause", "no");
@@ -58,7 +93,9 @@ int main(int argc, char **argv)
     mpv_command(h, a);
     const double end = 2;
 
-    if (m_pause) {
+    if (m_unload || m_afterend) {
+        ended_pause(h, m_unload ? "on_unload" : "on_after_end_file", end);
+    } else if (m_pause) {
         mt_check(wait_str(h, "eof-reached", "yes", 10, &ev),
                  "eof-reached with the tail still playing");
         mt_check(mt_str_is(h, "pause", "no"), "not paused yet in the tail");
@@ -92,6 +129,11 @@ int main(int argc, char **argv)
                  "playing to the end parks");
         mt_cmd(h, "stop", NULL, NULL, NULL);
         mt_check(wait_str(h, "idle-active", "yes", 5, &ev), "idle after stop");
+        // idle-active is yes once the stop is asked (stop_play), before
+        // terminate_playback() closes the file; its end-file comes after.
+        for (double t0 = mt_now(); !ev.end_files && mt_now() - t0 < 5;)
+            pb_pump(h, 5, &ev);
+        mt_check(ev.end_files >= 1, "the file closed (%d)", ev.end_files);
         mt_check(mt_str_is(h, "keep-open-parked", "no"),
                  "a stop at the park leaves it");
     } else if (m_park) {

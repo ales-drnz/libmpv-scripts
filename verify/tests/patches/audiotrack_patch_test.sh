@@ -4,7 +4,7 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 # Checks patches/mpv/android/patch_audiotrack.py on pristine mpv (F277, F278,
-# F276, and the paused delay of buffer.c): it applies, each fix leaves its marker, a second run changes
+# F276): it applies, each fix leaves its marker, a second run changes
 # nothing, and an anchor of a fix that is not found once stops it with no
 # file written. With the NDK (ANDROID_NDK_HOME) the patched driver must
 # compile for API 24 on arm64, armv7 and x86_64 with no warning the
@@ -32,7 +32,6 @@ FIXES=(
   "MAK_AUDIOTRACK_IDLE_PATCH_V1|$F|            int samples = ao_read_data(ao, &p->chunk, read_samples, ts, NULL, false, false);"
   "MAK_AUDIOTRACK_DEAD_OBJECT_PATCH_V1|$F|    return AudioTrack_New(ao);"
   "MAK_AUDIOTRACK_PAUSE_PATCH_V1|$F|    .start     = start,"
-  "MAK_AUDIOTRACK_PAUSED_DELAY_PATCH_V1|$B|                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;"
 )
 
 # control: pristine tree.
