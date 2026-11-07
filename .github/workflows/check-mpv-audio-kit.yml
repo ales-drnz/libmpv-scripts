@@ -690,10 +690,17 @@ jobs:
           "$tools/sdkmanager" --install "cmdline-tools;latest" > /dev/null
           for d in "$ANDROID_HOME"/cmdline-tools/latest-*/bin; do [ -x "$d/avdmanager" ] && tools=$d; done
           "$tools/sdkmanager" --install emulator platform-tools "$image" > /dev/null
-          echo no | "$tools/avdmanager" create avd --force -n tv --package "$image" --device tv_1080p
-          avds="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-          [ -f "$avds/tv.avd/config.ini" ] || { echo "::error::avdmanager made no AVD"; exit 1; }
-          printf 'hw.cpu.ncore=2\n' >> "$avds/tv.avd/config.ini"
+          # One AVD home for avdmanager and the emulator: the newer tools
+          # put the AVD elsewhere by default.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$tools/avdmanager" create avd --force -n tv --package "$image" --device tv_1080p \
+            -p "$ANDROID_AVD_HOME/tv.avd"
+          [ -f "$ANDROID_AVD_HOME/tv.avd/config.ini" ] || {
+            "$tools/avdmanager" list avd; echo "::error::avdmanager made no AVD"; exit 1; }
+          [ -f "$ANDROID_AVD_HOME/tv.ini" ] || printf 'path=%s\npath.rel=avd/tv.avd\ntarget=android-%s\n' \
+            "$ANDROID_AVD_HOME/tv.avd" "$API" > "$ANDROID_AVD_HOME/tv.ini"
+          printf 'hw.cpu.ncore=2\n' >> "$ANDROID_AVD_HOME/tv.avd/config.ini"
           "$ANDROID_HOME/emulator/emulator" -avd tv -no-window -gpu swiftshader_indirect \
             -no-boot-anim -no-snapshot -camera-back none > emu-boot.log 2>&1 &
           adb wait-for-device

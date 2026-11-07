@@ -66,7 +66,7 @@ fails=0
 infras=0
 summary="emu-logs/summary-$api.txt"
 : > "$summary"
-outcome() { # file, pass | fail | infra
+outcome() { # file, pass | fail | infra | skip
   echo "$1 $2" | tee -a "$summary"
   case $2 in
     fail) fails=$((fails + 1)); echo "::error::$1 failed on API $api" ;;
@@ -123,8 +123,8 @@ run_keys() { # input | dispatch
         # case and with dashes.
         k=${key#KEYCODE_MEDIA_}
         k=${k,,}
-        # Android 10 and later: cmd media_session; the media tool before.
-        if [ "$sdk" -ge 29 ]; then
+        # Android 11 and later: cmd media_session; the media tool up to 9.
+        if [ "$sdk" -ge 30 ]; then
           adb shell cmd media_session dispatch "${k//_/-}"
         else
           adb shell media dispatch "${k//_/-}"
@@ -140,17 +140,23 @@ run_keys() { # input | dispatch
   r=$?
   cat "$log"
   if [ $r = 0 ]; then
-    outcome "$keys ($via)" pass
+    outcome "$keys:$via" pass
   elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
     dump "keys-$via"
-    outcome "$keys ($via)" infra
+    outcome "$keys:$via" infra
   else
-    outcome "$keys ($via)" fail
+    outcome "$keys:$via" fail
   fi
 }
 sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')
 run_keys input
-run_keys dispatch
+# Android 10 has no tool that reaches the sessions: its media tool hands
+# them nothing, and cmd media_session came with 11.
+if [ "$sdk" = 29 ]; then
+  outcome "android_remote_keys_test.dart:dispatch" skip
+else
+  run_keys dispatch
+fi
 # F278: the test waits for the kill. One try: the kill is part of it.
 f278=android_audiotrack_dead_object_test.dart
 log="emu-logs/dead-object-$api.log"
