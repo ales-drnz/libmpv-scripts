@@ -612,7 +612,9 @@ jobs:
           - {api: 24, target: google_apis}
           - {api: 29, target: google_apis}
           - {api: 34, target: google_apis}
-          - {api: 36, target: android-tv}
+          # A TV profile: with the default phone screen the SystemUI of the
+          # TV image crashes in a loop and takes the tests down with it.
+          - {api: 36, target: android-tv, profile: tv_1080p}
     defaults:
       run:
         shell: bash
@@ -660,6 +662,7 @@ jobs:
         with:
           api-level: ${{ matrix.api }}
           target: ${{ matrix.target }}
+          profile: ${{ matrix.profile }}
           arch: x86_64
           force-avd-creation: false
           # No -noaudio: the audiotrack checks need the emulated audio device,
