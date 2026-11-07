@@ -75,6 +75,7 @@ MACOS_MIN="12.0"
 HOST_ARCH="$(uname -m)"
 
 # macOS-only dependency versions (centralised ones live in _versions.sh)
+# shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
 LIBPLACEBO_VERSION="7.349.0"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
@@ -147,9 +148,10 @@ build_for_arch() {
   # and prefix, and its autoconf host.
   export CROSS_BUILD_DIR="$BUILD_DIR"
   export CROSS_PREFIX_DIR="$PREFIX"
-  export CROSS_AUTOTOOLS_HOST="--host=$(apple_host "$ARCH")"
-  CROSS_BUILD_SUFFIX=""
-  CROSS_LABEL="$ARCH"
+  CROSS_AUTOTOOLS_HOST="--host=$(apple_host "$ARCH")"
+  export CROSS_AUTOTOOLS_HOST
+  # shellcheck disable=SC2034  # read by the shared builds
+  CROSS_BUILD_SUFFIX="" CROSS_LABEL="$ARCH"
 
   local af; af="$(arch_flags)"
   CFLAGS="$af -Oz" apple_build_zlib

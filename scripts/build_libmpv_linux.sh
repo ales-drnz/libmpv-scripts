@@ -70,6 +70,7 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # ── Linux-only dependency versions (centralised ones live in _versions.sh) ────
+# shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
 LIBPLACEBO_VERSION="7.349.0"
 LIBUNIBREAK_VERSION="6.1"
 

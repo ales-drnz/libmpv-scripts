@@ -1,6 +1,7 @@
 # Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+# shellcheck shell=bash
 
 # The web module of verify_binaries.sh: check_web_binary, the static checks
 # of libmpv_web.zip. Sourced by verify_binaries.sh. Do not run directly.
@@ -79,7 +80,8 @@ check_web_binary() {
   local artifact="$1"
   local name; name="$(basename "$artifact")"
   printf "\n${BOLD}════ %s ${DIM}[web]${NC}\n" "$name"
-  CUR_BIN="$name"; CUR_PHASE=""
+  # shellcheck disable=SC2034  # read by the result helpers of common.sh
+  CUR_BIN="$name" CUR_PHASE=""
   emit bin "$name" "web"
 
   # ── 1. the zip, the record, the wasm format ──

@@ -1,6 +1,7 @@
 # Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+# shellcheck shell=bash disable=SC2164  # pushd and popd run under the caller's set -e
 
 # Shared parts of build_libmpv_macos.sh and build_libmpv_ios.sh (and so of
 # build_libmpv_tvos.sh, which runs the iOS script). Sourced after

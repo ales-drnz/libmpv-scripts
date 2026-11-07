@@ -81,6 +81,7 @@ case "$APPLE_OS" in
 esac
 
 # iOS-only dependency versions (centralised ones live in _versions.sh)
+# shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
 LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
@@ -224,9 +225,10 @@ EOF
   # slice, the src/ trees shared by the slices, build/ dirs named after it.
   export CROSS_BUILD_DIR="$BUILD_DIR"
   export CROSS_PREFIX_DIR="$prefix"
-  export CROSS_AUTOTOOLS_HOST="--host=$(apple_host "$arch")"
-  CROSS_BUILD_SUFFIX="-${sdk}-${arch}"
-  CROSS_LABEL="$sdk/$arch"
+  CROSS_AUTOTOOLS_HOST="--host=$(apple_host "$arch")"
+  export CROSS_AUTOTOOLS_HOST
+  # shellcheck disable=SC2034  # read by the shared builds
+  CROSS_BUILD_SUFFIX="-${sdk}-${arch}" CROSS_LABEL="$sdk/$arch"
 
   local sysroot; sysroot="$(sdk_path "$sdk")"
   # Note: Do NOT export SDKROOT here.  The -isysroot flag in CFLAGS / cross-file

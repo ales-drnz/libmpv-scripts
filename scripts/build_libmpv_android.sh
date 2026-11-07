@@ -71,6 +71,7 @@ fi
 
 
 # Android-only dependency versions (centralised ones live in _versions.sh)
+# shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
 LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
@@ -349,11 +350,12 @@ build_abi() {
   # (cmake_android_flags), so no CROSS_CMAKE_FILE here.
   export CROSS_BUILD_DIR="$BUILD_DIR"
   export CROSS_PREFIX_DIR="$prefix"
-  export CROSS_AUTOTOOLS_HOST="--host=$(abi_to_triple "$abi")"
+  CROSS_AUTOTOOLS_HOST="--host=$(abi_to_triple "$abi")"
+  export CROSS_AUTOTOOLS_HOST
   CROSS_MESON_FILE="$(write_android_cross "$abi" "$prefix")"
   export CROSS_MESON_FILE
-  CROSS_BUILD_SUFFIX="-android-$abi"
-  CROSS_LABEL="$abi"
+  # shellcheck disable=SC2034  # read by the shared builds
+  CROSS_BUILD_SUFFIX="-android-$abi" CROSS_LABEL="$abi"
 
   log "═══ ABI: $abi ═══"
 
