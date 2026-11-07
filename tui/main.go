@@ -414,7 +414,7 @@ type selColumn struct {
 //
 //	band 0: macOS · iOS · tvOS
 //	band 1: Windows · Linux · Android
-//	band 2: Web
+//	band 2: Web · Tizen
 //	band 3: Tools
 func (m model) selBands() [][]selColumn {
 	col := func(g string) selColumn {
@@ -429,7 +429,7 @@ func (m model) selBands() [][]selColumn {
 	return [][]selColumn{
 		{col("macOS"), col("iOS"), col("tvOS")},
 		{col("Windows"), col("Linux"), col("Android")},
-		{col("Web")},
+		{col("Web"), col("Tizen")},
 		{col("Tools")},
 	}
 }

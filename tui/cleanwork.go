@@ -42,7 +42,7 @@ func workCacheDir(ctx *buildCtx) string {
 // (The Group names match the per-OS work subdir names exactly.)
 func isOSGroup(g string) bool {
 	switch g {
-	case "macOS", "iOS", "tvOS", "Linux", "Windows", "Android", "Web":
+	case "macOS", "iOS", "tvOS", "Linux", "Windows", "Android", "Web", "Tizen":
 		return true
 	}
 	return false

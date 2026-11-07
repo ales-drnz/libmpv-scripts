@@ -50,7 +50,7 @@ func TestOSGroupAllDone(t *testing.T) {
 }
 
 func TestIsOSGroup(t *testing.T) {
-	for _, g := range []string{"macOS", "iOS", "tvOS", "Linux", "Windows", "Android", "Web"} {
+	for _, g := range []string{"macOS", "iOS", "tvOS", "Linux", "Windows", "Android", "Web", "Tizen"} {
 		if !isOSGroup(g) {
 			t.Errorf("isOSGroup(%q) = false, want true", g)
 		}
