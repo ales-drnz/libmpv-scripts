@@ -19,16 +19,32 @@ set -u
 api=$1
 defines=(--dart-define=MAK_CI=true "--dart-define=MAK_LIBMPV_RELEASE=${MAK_LIBMPV_RELEASE:?set from the manifest of the run}")
 mkdir -p emu-logs
+# Waits for the device after adbd restarts or the emulator boots again:
+# until it answers its properties, flutter sees it as "API null" and finds
+# no device (seen on API 34). boot holds the boot it waited for.
+ready() {
+  timeout 600 adb wait-for-device || return 1
+  for i in $(seq 1 300); do
+    [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ] &&
+      [ -n "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" ] && break
+    sleep 1
+  done
+  boot=$(adb shell cat /proc/sys/kernel/random/boot_id | tr -d '\r')
+}
+# Whether the emulator went away under the last file: adb lost it, or it
+# booted again (seen on the TV image of API 36). That file then says
+# nothing about the code: infra, and the next one waits for the device.
+lost() {
+  [ "$(adb get-state 2>/dev/null)" != device ] ||
+    [ "$(adb shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r')" != "$boot" ]
+}
+recover() { # file
+  echo "::warning::the emulator went away under $1 on API $api, emulator process $(pgrep -f qemu-system >/dev/null && echo alive || echo gone)"
+  ready && (adb logcat -b main -b system -b crash -b events -v time >> "emu-logs/logcat-$api.txt" 2>&1 &)
+}
 adb root || true
 sleep 2
-adb wait-for-device
-# adbd just restarted: until the device answers its properties, flutter
-# sees it as "API null" and finds no device (seen on API 34).
-for i in $(seq 1 120); do
-  [ "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1 ] &&
-    [ -n "$(adb shell getprop ro.build.version.sdk | tr -d '\r')" ] && break
-  sleep 1
-done
+ready
 echo "adb as $(adb shell id -un | tr -d '\r'), API $(adb shell getprop ro.build.version.sdk | tr -d '\r')"
 # The package verifier of the Google APIs image is a suspect of the adb
 # installs that never finish (API 24).
@@ -47,7 +63,7 @@ app=com.alesdrnz.mpv_audio_kit_test_app
 # runs once more. Its outcome is pass, fail or infra. fail: a test failed,
 # or the file hung once its tests had started. infra: every try timed out
 # before any test started (an install that never ended, an app that never
-# attached), which says nothing about the code. Only fail fails the job;
+# attached), or the emulator went away before one did, which says nothing about the code. Only fail fails the job;
 # infra is a warning and a line of the summary, and a release needs zero
 # fail and its infra files run again.
 dump() {
@@ -61,7 +77,7 @@ dump() {
 }
 # Whether the flutter test log $1 shows a test that started: a progress
 # line past the loading of the file.
-started() { grep -E '[0-9]+:[0-9]+ \+[0-9]+[^:]*: ' "$1" | grep -qv ': loading '; }
+started() { grep -E '[0-9]+:[0-9]+ \+[0-9]+[^:]*: ' "$1" | grep -qv -e ': loading ' -e ': Some tests failed'; }
 fails=0
 infras=0
 summary="emu-logs/summary-$api.txt"
@@ -84,6 +100,7 @@ run() {
     timeout -s INT -k 30 480 flutter test "integration_test/$name" -d emulator-5554 -r expanded "${defines[@]}" 2>&1 | tee "$log"
     r=${PIPESTATUS[0]}
     [ "$r" = 0 ] && { result=pass; break; }
+    if ! started "$log" && lost; then recover "$name"; continue; fi
     if [ "$r" != 124 ] && [ "$r" != 137 ]; then result=fail; break; fi
     started "$log" && hung=1
     echo "::warning::$name timed out on API $api (try $try$([ $hung = 1 ] && echo ', tests running'))"
@@ -141,6 +158,9 @@ run_keys() { # input | dispatch
   cat "$log"
   if [ $r = 0 ]; then
     outcome "$keys:$via" pass
+  elif ! started "$log" && lost; then
+    recover "$keys:$via"
+    outcome "$keys:$via" infra
   elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
     dump "keys-$via"
     outcome "$keys:$via" infra
@@ -190,6 +210,9 @@ r=$?
 cat "$log"
 if [ $r = 0 ]; then
   outcome $f278 pass
+elif ! started "$log" && lost; then
+  recover $f278
+  outcome $f278 infra
 elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
   dump "$f278"
   outcome $f278 infra

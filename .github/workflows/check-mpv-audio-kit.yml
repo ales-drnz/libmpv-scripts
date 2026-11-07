@@ -721,6 +721,9 @@ jobs:
           adb shell settings put global window_animation_scale 0 || true
           adb shell settings put global transition_animation_scale 0 || true
           adb shell settings put global animator_duration_scale 0 || true
+          # The emulator's own log, for an emulator that goes away.
+          mkdir -p emu-logs
+          trap 'cp emu-boot.log emu-logs/' EXIT
           bash ../../scripts/.github/diag/android_emulator.sh "$API-tv"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
