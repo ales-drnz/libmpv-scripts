@@ -49,6 +49,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
 source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_cross.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
 ANDROID_API="${ANDROID_API:-24}"
@@ -342,12 +343,25 @@ build_abi() {
   export CXXFLAGS="-O2 -fPIC $lto_extra $vis_extra $sec_extra $unwind_extra"
   export LDFLAGS="$lto_extra"
 
+  # The rest of what the cross_build_* of _cross.sh take: the NDK toolchain
+  # above, one prefix and one meson cross file per ABI, and build/ dirs
+  # named after the ABI. The NDK's cmake needs more than a toolchain file
+  # (cmake_android_flags), so no CROSS_CMAKE_FILE here.
+  export CROSS_BUILD_DIR="$BUILD_DIR"
+  export CROSS_PREFIX_DIR="$prefix"
+  export CROSS_AUTOTOOLS_HOST="--host=$(abi_to_triple "$abi")"
+  CROSS_MESON_FILE="$(write_android_cross "$abi" "$prefix")"
+  export CROSS_MESON_FILE
+  CROSS_BUILD_SUFFIX="-android-$abi"
+  CROSS_LABEL="$abi"
+
   log "═══ ABI: $abi ═══"
 
   android_zlib       "$abi" "$prefix"
   android_iconv      "$abi" "$prefix"
-  android_bzip2      "$abi" "$prefix"
-  android_xz         "$abi" "$prefix"
+  # The size pass of the compression deps is -Oz here.
+  CFLAGS="-Oz -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="-Oz -fPIC" cross_build_xz
   # Font chain — built ONLY when libass is kept (strip_libass disabled in
   # Settings ▸ Patches). By default patch_strip_libass.py drops mpv's libass
   # dependency, so the expat/libpng/freetype/fribidi/harfbuzz/freetype-r2/
@@ -355,7 +369,7 @@ build_abi() {
   # font-only here — ffmpeg uses zlib/lzma, libxml2 is built
   # --without-{iconv,lzma,zlib}).
   if ! libass_stripped; then
-    android_expat      "$abi" "$prefix"
+    CFLAGS="-O2 -fPIC" cross_build_expat
     android_libpng     "$abi" "$prefix"
     android_freetype   "$abi" "$prefix"
     android_fribidi    "$abi" "$prefix"
@@ -364,10 +378,11 @@ build_abi() {
     android_fontconfig "$abi" "$prefix"
     android_libass     "$abi" "$prefix"
   fi
-  android_speexdsp   "$abi" "$prefix"
+  CFLAGS="-O2 -fPIC" cross_build_speexdsp
   # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
   if gpl_build; then
-    android_rubberband "$abi" "$prefix"
+    cross_build_rubberband
+    android_rubberband_libm "$prefix"
   fi
   # OpenSSL's android-* targets own their toolchain resolution: they
   # locate `clang` / `llvm-ar` on $PATH and match them against
@@ -393,9 +408,9 @@ build_abi() {
       "-D__ANDROID_API__=${ANDROID_API}"
   )
   android_libsmb2    "$abi" "$prefix"
-  android_libxml2    "$abi" "$prefix"
+  CFLAGS="-Oz -fPIC" cross_build_libxml2
   android_ffmpeg     "$abi" "$prefix"
-  android_libplacebo "$abi" "$prefix"
+  cross_build_libplacebo
   android_mpv        "$abi" "$prefix"
 
   # Copy libmpv.so into builds/release
@@ -460,78 +475,6 @@ android_iconv() {
 
   popd >/dev/null
   ok "iconv ($abi) ✓"
-}
-
-android_bzip2() {
-  local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/libbz2.a" ]] && return
-  local src="$BUILD_DIR/src/bzip2-$BZIP2_VERSION.tar.gz"
-  download "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make clean 2>/dev/null || true
-  make -j"$JOBS" \
-    CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" \
-    CFLAGS="-Oz -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
-  install -m 644 libbz2.a "$prefix/lib/"
-  install -m 644 bzlib.h  "$prefix/include/"
-  popd >/dev/null
-  ok "bzip2 ($abi) ✓"
-}
-
-android_xz() {
-  local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/liblzma.a" ]] && return
-  local src="$BUILD_DIR/src/xz-$XZ_VERSION.tar.gz"
-  download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" \
-  CFLAGS="-Oz -fPIC" \
-  ./configure --prefix="$prefix" --host="$(abi_to_triple "$abi")" \
-    --enable-static --disable-shared \
-    --disable-xz --disable-xzdec --disable-lzmadec \
-    --disable-lzmainfo --disable-scripts --disable-doc
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "xz ($abi) ✓"
-}
-
-android_expat() {
-  local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/libexpat.a" ]] && return
-  local src="$BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.gz"
-  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make clean 2>/dev/null || true
-  CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" CFLAGS="-O2 -fPIC" \
-  ./configure --prefix="$prefix" --host="$(abi_to_triple "$abi")" \
-    --enable-static --disable-shared --without-docbook --without-examples --without-tests
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "expat ($abi) ✓"
-}
-
-android_libxml2() {
-  local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/libxml2.a" ]] && return
-  local src="$BUILD_DIR/src/libxml2-$LIBXML2_VERSION.tar.xz"
-  download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make clean 2>/dev/null || true
-  CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" CFLAGS="-Oz -fPIC" \
-  ./configure --prefix="$prefix" --host="$(abi_to_triple "$abi")" \
-    --enable-static --disable-shared \
-    --without-python --without-readline --without-history \
-    --without-http --without-ftp --without-html \
-    --without-legacy --without-docbook --without-catalog \
-    --without-schematron --without-modules --without-debug \
-    --without-iconv --without-lzma --without-zlib
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "libxml2 ($abi) ✓"
 }
 
 android_libpng() {
@@ -666,46 +609,10 @@ android_libass() {
   ok "libass ($abi) ✓"
 }
 
-android_speexdsp() {
-  local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/libspeexdsp.a" ]] && return
-  # Source tarball from GitHub mirror — downloads.xiph.org is intermittently
-  # unreachable. The GitHub archive has no configure shipped (it's the source
-  # repo, not a release tarball), so autogen.sh has to run first.
-  local src="$BUILD_DIR/src/speexdsp-SpeexDSP-$SPEEXDSP_VERSION.tar.gz"
-  download "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-${SPEEXDSP_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make clean 2>/dev/null || true
-  ./autogen.sh
-  CC="$(ndk_cc "$abi")" AR="$(ndk_ar)" RANLIB="$(ndk_ranlib)" CFLAGS="-O2 -fPIC" \
-  ./configure --prefix="$prefix" --host="$(abi_to_triple "$abi")" --enable-static --disable-shared
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "speexdsp ($abi) ✓"
-}
-
-android_rubberband() {
-  local abi="$1" prefix="$2"
-  if [[ ! -f "$prefix/lib/librubberband.a" ]]; then
-    local src="$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
-    download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
-    local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-    # rubberband 4.0+ uses unqualified `size_t` in src/common/mathmisc.{h,cpp};
-    # modern gcc/clang under -std=c++20 rejects it. Inject <stddef.h>. Idempotent.
-    python3 "$LIBMPV_SCRIPTS_ROOT/patches/rubberband/patch_rubberband_size_t.py" "$dir"
-    local bdir="$BUILD_DIR/build/rubberband-android-$abi"; mkdir -p "$bdir"
-    pushd "$bdir" >/dev/null
-    PKG_CONFIG_PATH="$prefix/lib/pkgconfig" meson setup "$dir" \
-      --prefix="$prefix" --buildtype=release --default-library=static \
-      -Dfft=builtin -Dresampler=speex \
-      -Dladspa=disabled -Dvamp=disabled -Djni=disabled \
-      --cross-file="$(write_android_cross "$abi" "$prefix")"
-    ninja -j"$JOBS"; ninja install
-    popd >/dev/null
-    ok "rubberband ($abi) ✓"
-  fi
-
+# rubberband's .pc on bionic: see the comment below. Runs after
+# cross_build_rubberband.
+android_rubberband_libm() {
+  local prefix="$1"
   # Post-install patch — applied on every run so a previously-built
   # prefix that pre-dates this fix gets the patch on the next rerun.
   # rubberband's installed `.pc` only declares `-lrubberband`. On
@@ -756,25 +663,7 @@ android_libsmb2() {
 
 android_ffmpeg() {
   local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/libavcodec.a" ]] && return
-  log "ffmpeg ($abi)..."
-  local src="$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION.tar.gz"
-  download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
-  # A pristine tree on every build: src/ survives cleanup_build, and a
-  # reused tree would keep the result of older patches.
-  rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-
-  # ── Patch FFmpeg (libsmb2, mov advanced_editlist, DASH keep-alive) ───────
-  patch_record_start ffmpeg "$prefix"
-  apply_ffmpeg_patches "$dir"
-
-  local bdir="$BUILD_DIR/build/ffmpeg-android-$abi"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-
-  local triple; triple="$(abi_to_triple "$abi")"
   local arch; arch="$(abi_to_arch "$abi")"
-  local tc; tc="$(ndk_toolchain)"
   local cc; cc="$(ndk_cc "$abi")"
 
   # Flags for armeabi-v7a: NEON
@@ -786,10 +675,7 @@ android_ffmpeg() {
   [[ "$abi" == "x86" ]] && extra_config="--disable-asm"
 
   # ── ffmpeg: smart audio-only build (see scripts/shared/_audio_only.sh) ─────────────
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  "$dir/configure" \
-    --prefix="$prefix" \
-    $(ffmpeg_common_args) \
+  cross_build_ffmpeg android \
     --enable-cross-compile \
     --arch="$arch" \
     --target-os=android \
@@ -802,51 +688,18 @@ android_ffmpeg() {
     --enable-jni \
     --disable-mediacodec \
     --disable-v4l2-m2m
-  verify_ffmpeg_config "$bdir" "android"
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "ffmpeg ($abi) ✓"
-}
-
-android_libplacebo() {
-  local abi="$1" prefix="$2"
-  [[ -f "$prefix/lib/libplacebo.a" ]] && return 0
-  log "libplacebo ($abi)..."
-  local gitdir="$BUILD_DIR/src/libplacebo-git"
-  [[ -d "$gitdir/.git" ]] || download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
-  git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
-  local bdir="$BUILD_DIR/build/libplacebo-android-$abi"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  meson setup "$gitdir" \
-    --prefix="$prefix" --buildtype=release --default-library=static \
-    -Dvulkan=disabled -Dshaderc=disabled -Dglslang=disabled -Dopengl=disabled \
-    -Dd3d11=disabled -Ddemos=false -Dtests=false \
-    --cross-file="$(write_android_cross "$abi" "$prefix")"
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "libplacebo ($abi) ✓"
 }
 
 android_mpv() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libmpv.so" ]] && return
   log "mpv $MPV_VERSION ($abi) [shared]..."
-  local src="$BUILD_DIR/src/mpv-$MPV_VERSION.tar.gz"
-  download "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz" "$src"
-  # The mpv patches are NOT idempotent and the source tree is shared across the
-  # ABIs of one run (extract() reuses an existing dir). Re-extract a pristine
-  # tree for each ABI — cheap, from the cached tarball — so the patches apply
-  # exactly once. Without this the 2nd ABI re-patches an already-patched tree and
-  # the build dies on a duplicate definition (e.g. mp_property_waveform_data).
-  rm -rf "$BUILD_DIR/src/mpv-$MPV_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  local bdir="$BUILD_DIR/build/mpv-android-$abi"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  # ── Apply the shared mpv patches (scripts/shared/_audio_only.sh) ─────────
-  patch_record_start mpv "$prefix"
-  apply_mpv_patches_common "$dir"
+  # A pristine tree for each ABI, with the shared mpv patches (cross_mpv_source):
+  # on a reused tree the 2nd ABI would die on a duplicate definition (e.g.
+  # mp_property_waveform_data).
+  cross_mpv_source
+  local dir="$CROSS_MPV_DIR"
+  local bdir; bdir="$(cross_bdir mpv)"; mkdir -p "$bdir"
   # audiotrack (toggleable): fixes of mpv's default Android output, see
   # patches/mpv/android/patch_audiotrack.py. ao_audiotrack.c is compiled on
   # Android only, so the patch is applied here rather than from
@@ -933,21 +786,17 @@ android_mpv() {
     link_extra+=("-Dcpp_link_args=$ld_args $cxx_static $bridge_obj -llog")
   fi
 
-  PKG_CONFIG_PATH="$prefix/lib/pkgconfig" \
-  meson setup "$dir" \
+  cross_mpv_build android \
     --prefix="$prefix" \
     --buildtype=release \
     --default-library=shared \
-    --cross-file="$(write_android_cross "$abi" "$prefix")" \
+    --cross-file="$CROSS_MESON_FILE" \
     $(mpv_common_args) \
     -Daudiotrack=enabled \
     -Daaudio=enabled \
     -Dopensles=enabled \
     -Dc_args="$(eh_frame_cflags) -Oz" \
     "${link_extra[@]}"
-  verify_mpv_config "$bdir" "android"
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
 
   # Dynsym hygiene check.
   local total_syms mpv_syms
