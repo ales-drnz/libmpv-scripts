@@ -684,6 +684,9 @@ jobs:
         run: |
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           image="system-images;android-$API;android-tv;x86_64"
+          # adb for this step and for android_emulator.sh, as the runner
+          # puts it on the path of its own steps.
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
           yes | "$tools/sdkmanager" --licenses > /dev/null || true
           # The runner's command-line tools read no SDK XML of version 4,
           # which the image of API 36 has: newer ones first.
