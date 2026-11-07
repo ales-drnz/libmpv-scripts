@@ -6,6 +6,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -226,9 +227,18 @@ func TestVerifyDetailHidesPhaseNeverEntered(t *testing.T) {
 // verifyPhaseOrder lists exactly the phases verify_binaries.sh enters, so a
 // phase added to the script without a section here fails this test.
 func TestVerifyPhaseOrderMatchesScript(t *testing.T) {
-	data, err := os.ReadFile("../scripts/verify_binaries.sh")
+	// The driver and its parts in scripts/verify/.
+	files, err := filepath.Glob("../scripts/verify/*.sh")
 	if err != nil {
 		t.Fatal(err)
+	}
+	var data []byte
+	for _, f := range append([]string{"../scripts/verify_binaries.sh"}, files...) {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = append(data, b...)
 	}
 	script := map[string]bool{}
 	for _, mm := range regexp.MustCompile(`(?m)^\s*phase ([a-z0-9]+)\s*$`).FindAllStringSubmatch(string(data), -1) {
