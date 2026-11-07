@@ -685,9 +685,15 @@ jobs:
           tools="$ANDROID_HOME/cmdline-tools/latest/bin"
           image="system-images;android-$API;android-tv;x86_64"
           yes | "$tools/sdkmanager" --licenses > /dev/null || true
+          # The runner's command-line tools read no SDK XML of version 4,
+          # which the image of API 36 has: newer ones first.
+          "$tools/sdkmanager" --install "cmdline-tools;latest" > /dev/null
+          for d in "$ANDROID_HOME"/cmdline-tools/latest-*/bin; do [ -x "$d/avdmanager" ] && tools=$d; done
           "$tools/sdkmanager" --install emulator platform-tools "$image" > /dev/null
           echo no | "$tools/avdmanager" create avd --force -n tv --package "$image" --device tv_1080p
-          printf 'hw.cpu.ncore=2\n' >> "$HOME/.android/avd/tv.avd/config.ini"
+          avds="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+          [ -f "$avds/tv.avd/config.ini" ] || { echo "::error::avdmanager made no AVD"; exit 1; }
+          printf 'hw.cpu.ncore=2\n' >> "$avds/tv.avd/config.ini"
           "$ANDROID_HOME/emulator/emulator" -avd tv -no-window -gpu swiftshader_indirect \
             -no-boot-anim -no-snapshot -camera-back none > emu-boot.log 2>&1 &
           adb wait-for-device

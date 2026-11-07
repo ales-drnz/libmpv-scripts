@@ -123,7 +123,12 @@ run_keys() { # input | dispatch
         # case and with dashes.
         k=${key#KEYCODE_MEDIA_}
         k=${k,,}
-        adb shell media dispatch "${k//_/-}"
+        # Android 10 and later: cmd media_session; the media tool before.
+        if [ "$sdk" -ge 29 ]; then
+          adb shell cmd media_session dispatch "${k//_/-}"
+        else
+          adb shell media dispatch "${k//_/-}"
+        fi
       fi
       sent=$((sent + 1))
       # Which session Android hands media keys to, and the state of each.
@@ -143,6 +148,7 @@ run_keys() { # input | dispatch
     outcome "$keys ($via)" fail
   fi
 }
+sdk=$(adb shell getprop ro.build.version.sdk | tr -d '\r')
 run_keys input
 run_keys dispatch
 # F278: the test waits for the kill. One try: the kill is part of it.
