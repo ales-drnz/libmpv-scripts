@@ -93,7 +93,7 @@ CASES=(
   "lib analysis_hint_test analysis 600000::norange known estimate"
   "unit loudness_lock_test - - run"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
-  "audiotrack audiotrack_test - - underrun silence dead pause seek"
+  "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "lib keep_open_park_test playback - pause park nopause stop unload afterend"
