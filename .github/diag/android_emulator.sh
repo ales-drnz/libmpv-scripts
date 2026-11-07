@@ -179,45 +179,51 @@ else
 fi
 # F278: the test waits for the kill. One try: the kill is part of it.
 f278=android_audiotrack_dead_object_test.dart
-log="emu-logs/dead-object-$api.log"
-echo "== $f278 on API $api"
-timeout -s INT -k 30 480 flutter test "integration_test/$f278" -d emulator-5554 -r expanded "${defines[@]}" > "$log" 2>&1 &
-pid=$!
-for i in $(seq 1 600); do
-  grep -q '\[f278\] playing' "$log" && break
-  kill -0 $pid 2>/dev/null || break
-  sleep 0.5
-done
-if grep -q '\[f278\] playing' "$log"; then
-  before=$(adb shell pidof audioserver | tr -d '\r')
-  adb shell kill -9 "$before" || adb shell killall audioserver || true
-  for i in $(seq 1 20); do
-    after=$(adb shell pidof audioserver | tr -d '\r')
-    [ -n "$after" ] && [ "$after" != "$before" ] && break
+# Killing audioserver takes root, which a production image refuses (the TV
+# image of API 36): there the phones cover F278.
+if [ "$(adb shell id -un | tr -d '\r')" != root ]; then
+  outcome $f278 skip
+else
+  log="emu-logs/dead-object-$api.log"
+  echo "== $f278 on API $api"
+  timeout -s INT -k 30 480 flutter test "integration_test/$f278" -d emulator-5554 -r expanded "${defines[@]}" > "$log" 2>&1 &
+  pid=$!
+  for i in $(seq 1 600); do
+    grep -q '\[f278\] playing' "$log" && break
+    kill -0 $pid 2>/dev/null || break
     sleep 0.5
   done
-  echo "audioserver pid ${before:-none} then ${after:-none} at $(date +%T)"
-  if [ -n "$before" ] && [ -n "$after" ] && [ "$after" != "$before" ]; then
-    # The test waits for this file, not for a stop: Android's AudioTrack can
-    # restore the track by itself, and then playback never stops.
-    adb shell run-as $app touch cache/f278_killed
-  else
-    echo "::warning::audioserver was not restarted on API $api"
+  if grep -q '\[f278\] playing' "$log"; then
+    before=$(adb shell pidof audioserver | tr -d '\r')
+    adb shell kill -9 "$before" || adb shell killall audioserver || true
+    for i in $(seq 1 20); do
+      after=$(adb shell pidof audioserver | tr -d '\r')
+      [ -n "$after" ] && [ "$after" != "$before" ] && break
+      sleep 0.5
+    done
+    echo "audioserver pid ${before:-none} then ${after:-none} at $(date +%T)"
+    if [ -n "$before" ] && [ -n "$after" ] && [ "$after" != "$before" ]; then
+      # The test waits for this file, not for a stop: Android's AudioTrack can
+      # restore the track by itself, and then playback never stops.
+      adb shell run-as $app touch cache/f278_killed
+    else
+      echo "::warning::audioserver was not restarted on API $api"
+    fi
   fi
-fi
-wait $pid
-r=$?
-cat "$log"
-if [ $r = 0 ]; then
-  outcome $f278 pass
-elif ! started "$log" && lost; then
-  recover $f278
-  outcome $f278 infra
-elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
-  dump "$f278"
-  outcome $f278 infra
-else
-  outcome $f278 fail
+  wait $pid
+  r=$?
+  cat "$log"
+  if [ $r = 0 ]; then
+    outcome $f278 pass
+  elif ! started "$log" && lost; then
+    recover $f278
+    outcome $f278 infra
+  elif { [ $r = 124 ] || [ $r = 137 ]; } && ! started "$log"; then
+    dump "$f278"
+    outcome $f278 infra
+  else
+    outcome $f278 fail
+  fi
 fi
 {
   echo "### Android emulator API $api"
