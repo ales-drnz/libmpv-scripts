@@ -116,6 +116,8 @@ while kill -0 $pid 2>/dev/null; do
     echo "pressing $key at $(date +%T)"
     adb shell input keyevent "$key"
     sent=$((sent + 1))
+    # Which session Android hands media keys to, and the state of each.
+    adb shell dumpsys media_session > "emu-logs/media-session-$api-$sent-$key.txt" 2>&1
   done
   sleep 0.2
 done
