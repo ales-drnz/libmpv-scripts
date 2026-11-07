@@ -20,6 +20,11 @@
 //            output closes (r22: it paused at once, and the idle core
 //            closed the paused output with the tail in it)
 //   afterend the same in an on_after_end_file hook
+//   seekend  seeks while parked: to 10 ms before the end it is no park
+//            until a resume plays them; to the end itself, paused with
+//            nothing to play, keep-open-parked is yes again (r22 before:
+//            a seek in pause never parked again), also after a pause in the
+//            middle, whose device delay the seek dropped
 #include "playback_test.h"
 
 // Pumps until [name] reads [want], for up to [secs]. Returns whether it did.
@@ -71,8 +76,10 @@ int main(int argc, char **argv)
     const char *mode = argv[1], *fx = argv[2];
     int m_pause = !strcmp(mode, "pause"), m_park = !strcmp(mode, "park"),
         m_nopause = !strcmp(mode, "nopause"), m_stop = !strcmp(mode, "stop"),
-        m_unload = !strcmp(mode, "unload"), m_afterend = !strcmp(mode, "afterend");
-    if (!(m_pause || m_park || m_nopause || m_stop || m_unload || m_afterend)) {
+        m_unload = !strcmp(mode, "unload"), m_afterend = !strcmp(mode, "afterend"),
+        m_seekend = !strcmp(mode, "seekend");
+    if (!(m_pause || m_park || m_nopause || m_stop || m_unload || m_afterend ||
+          m_seekend)) {
         printf("unknown mode %s\n", mode);
         return 2;
     }
@@ -124,6 +131,38 @@ int main(int argc, char **argv)
         mt_check(mt_str_is(h, "pause", "yes"), "paused by the park");
         mt_double(h, "time-pos", &pos);
         mt_check(pos > end - 0.005, "parked at the end (%.6f)", pos);
+    } else if (m_seekend) {
+        mt_check(wait_str(h, "keep-open-parked", "yes", 10, &ev),
+                 "playing to the end parks");
+        // 10 ms before the end: they wait for the resume, no park.
+        mt_cmd(h, "seek", "1.99", "absolute", NULL);
+        mt_check(wait_str(h, "keep-open-parked", "no", 2, &ev),
+                 "the seek leaves the park");
+        pb_pump(h, 500, &ev);
+        mt_check(mt_str_is(h, "keep-open-parked", "no") &&
+                 mt_str_is(h, "pause", "yes"),
+                 "paused with 10 ms left is no park");
+        mpv_set_property_string(h, "pause", "no");
+        mt_check(wait_str(h, "keep-open-parked", "yes", 3, &ev),
+                 "the resume plays them, then keep-open parks");
+        // To the end itself: nothing left, a park again while paused.
+        mt_cmd(h, "seek", "2", "absolute", NULL);
+        mt_check(wait_str(h, "keep-open-parked", "no", 2, &ev),
+                 "the seek to the end leaves the park");
+        mt_check(wait_str(h, "keep-open-parked", "yes", 3, &ev),
+                 "landed on the end, paused, it parks again");
+        mt_check(mt_str_is(h, "pause", "yes"), "still paused");
+        // A pause in the middle, with the device holding audio, then a seek
+        // to the end: the seek dropped what the device held, a park again.
+        mt_cmd(h, "seek", "1", "absolute", NULL);
+        mpv_set_property_string(h, "pause", "no");
+        pb_pump(h, 300, &ev);
+        mpv_set_property_string(h, "pause", "yes");
+        pb_pump(h, 100, &ev);
+        mt_check(mt_str_is(h, "keep-open-parked", "no"), "paused in the middle");
+        mt_cmd(h, "seek", "2", "absolute", NULL);
+        mt_check(wait_str(h, "keep-open-parked", "yes", 3, &ev),
+                 "paused in the middle, then a seek to the end, a park");
     } else if (m_stop) {
         mt_check(wait_str(h, "keep-open-parked", "yes", 10, &ev),
                  "playing to the end parks");
