@@ -59,7 +59,7 @@ check $? "hls.c and dashdec.c export the read-only option patch_read_error.py re
 
 # verify_binaries.sh finds each patched file in the binaries: one of its
 # FFmpeg markers is in the patched file and not in the pristine one.
-python3 - "$ROOT/scripts/verify_binaries.sh" "$REF/libavformat" "$T/alone/libavformat" $FILES <<'PY'
+python3 - "$ROOT/scripts/verify/common.sh" "$REF/libavformat" "$T/alone/libavformat" $FILES <<'PY'
 import re, sys
 script, ref, patched, *files = sys.argv[1:]
 table = re.search(r'^FFMPEG_PATCH_MARKERS=\((.*?)^\)', open(script).read(), re.S | re.M).group(1)

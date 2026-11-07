@@ -176,29 +176,13 @@ cmake_win() {
 # Dependencies
 # ════════════════════════════════════════════════════════════════════════════════
 
-# ── zlib ──────────────────────────────────────────────────────────────────────
-if [[ ! -f "$DIST/lib/libz.a" ]]; then
-  log "Building zlib $ZLIB_VERSION..."
-  Z=$(fetch zlib "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz")
-  tar -xf "$Z" -C "$SRC"
-  pushd "$SRC/zlib-$ZLIB_VERSION"
-    CHOST="$TRIPLE" ./configure --prefix="$DIST" --static
-    make -j"$JOBS" install
-  popd
-  ok "zlib ✓"
-fi
-
-# ── bzip2 ─────────────────────────────────────────────────────────────────────
+# ── zlib and bzip2 (cross_build_* of _cross.sh) ───────────────────────────────
+# zlib keeps its own default CFLAGS here (none are exported); bzip2 takes the
+# common flags, and gets a .pc of its own, which it does not ship.
+cross_build_zlib
 if [[ ! -f "$DIST/lib/libbz2.a" ]]; then
-  log "Building bzip2 $BZIP2_VERSION..."
-  BZ=$(fetch bzip2 "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz")
-  tar -xf "$BZ" -C "$SRC"
-  pushd "$SRC/bzip2-$BZIP2_VERSION"
-    make CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-         CFLAGS="$CFLAGS_COMMON" -j"$JOBS" libbz2.a
-    install -m644 libbz2.a "$DIST/lib/"
-    install -m644 bzlib.h  "$DIST/include/"
-    cat > "$DIST/lib/pkgconfig/bzip2.pc" <<PCF
+  CFLAGS="$CFLAGS_COMMON" cross_build_bzip2
+  cat > "$DIST/lib/pkgconfig/bzip2.pc" <<PCF
 prefix=${DIST}
 exec_prefix=\${prefix}
 libdir=\${prefix}/lib
@@ -208,8 +192,6 @@ Version: ${BZIP2_VERSION}
 Libs: -L\${libdir} -lbz2
 Cflags: -I\${includedir}
 PCF
-  popd
-  ok "bzip2 ✓"
 fi
 
 # ── xz (liblzma) ──────────────────────────────────────────────────────────────
@@ -365,29 +347,21 @@ fi
 fi  # ! libass_stripped
 
 # ── speexdsp ──────────────────────────────────────────────────────────────────
-if [[ ! -f "$DIST/lib/libspeexdsp.a" ]]; then
-  log "Building speexdsp $SPEEXDSP_VERSION..."
-  SP=$(fetch speexdsp "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-${SPEEXDSP_VERSION}.tar.gz")
-  tar -xf "$SP" -C "$SRC"
-  pushd "$SRC/speexdsp-SpeexDSP-$SPEEXDSP_VERSION"
-    # Patch (canonical MSYS2 fix): resample_neon.h uses int32_t / uint32_t
-    # without including <stdint.h>. Compiles on Linux because stdint
-    # leaks transitively, but on MinGW aarch64 (clang/llvm-mingw) the
-    # types are undeclared and the build fails with "unknown type name
-    # 'int32_t'". Insert before the first `#ifdef FIXED_POINT` (stable
-    # anchor across speexdsp versions). Idempotent.
-    if ! grep -q '#include <stdint.h>' libspeexdsp/resample_neon.h; then
-      sed -i '/^#ifdef FIXED_POINT/i\
+# Patch (canonical MSYS2 fix): resample_neon.h uses int32_t / uint32_t
+# without including <stdint.h>. Compiles on Linux because stdint
+# leaks transitively, but on MinGW aarch64 (clang/llvm-mingw) the
+# types are undeclared and the build fails with "unknown type name
+# 'int32_t'". Insert before the first `#ifdef FIXED_POINT` (stable
+# anchor across speexdsp versions). Idempotent.
+speexdsp_stdint() {
+  if ! grep -q '#include <stdint.h>' "$1/libspeexdsp/resample_neon.h"; then
+    sed -i '/^#ifdef FIXED_POINT/i\
 #include <stdint.h>\
 
-' libspeexdsp/resample_neon.h
-    fi
-    ./autogen.sh
-    CFLAGS="$CFLAGS_COMMON" ./configure "${AUTOCONF_COMMON[@]}"
-    make -j"$JOBS" install
-  popd
-  ok "speexdsp ✓"
-fi
+' "$1/libspeexdsp/resample_neon.h"
+  fi
+}
+CFLAGS="$CFLAGS_COMMON" cross_build_speexdsp speexdsp_stdint
 
 # ── rubberband ────────────────────────────────────────────────────────────────
 # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
@@ -575,21 +549,7 @@ PCEOF
 fi
 
 # ── libxml2 (needed by FFmpeg DASH demuxer) ───────────────────────────────────
-if [[ ! -f "$DIST/lib/libxml2.a" ]]; then
-  log "Building libxml2 $LIBXML2_VERSION..."
-  XML2=$(fetch libxml2 "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz")
-  tar -xf "$XML2" -C "$SRC"
-  pushd "$SRC/libxml2-$LIBXML2_VERSION"
-    CFLAGS="$CFLAGS_COMMON" ./configure "${AUTOCONF_COMMON[@]}" \
-      --without-python --without-readline --without-history \
-      --without-http --without-ftp --without-html \
-      --without-legacy --without-docbook --without-catalog \
-      --without-schematron --without-modules --without-debug \
-      --without-iconv --without-lzma --without-zlib
-    make -j"$JOBS" install
-  popd
-  ok "libxml2 ✓"
-fi
+CFLAGS="$CFLAGS_COMMON" cross_build_libxml2
 
 # ── FFmpeg ────────────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/libavcodec.a" ]]; then

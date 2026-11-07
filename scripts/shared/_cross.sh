@@ -1,9 +1,15 @@
 # Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
+# shellcheck shell=bash disable=SC2164  # pushd and popd run under the caller's set -e
 
-# Shared cross-compile setup for build_libmpv_linux.sh + build_libmpv_windows.sh.
-# Sourced by those two scripts. Do not run directly.
+# Shared cross-compile setup and dependency builds. Sourced by
+# build_libmpv_linux.sh, build_libmpv_windows.sh, build_libmpv_android.sh and,
+# through the dependency builds only, the Apple scripts. Do not run directly.
+#
+# cross_setup makes the toolchain of Linux and Windows. Android and Apple make
+# their own and set the same variables, so the cross_build_* functions at the
+# end of this file serve them all.
 #
 # Usage:
 #   CROSS_BUILD_DIR=/tmp/build-foo CROSS_PREFIX_DIR=/tmp/build-foo/prefix \
@@ -235,4 +241,259 @@ cross_folder_arch() {
     windows/x86_64)  echo "x86_64"  ;;
     *) echo "$2" ;;
   esac
+}
+
+# =============================================================================
+# Dependencies shared by the cross builds
+#
+# Each cross_build_<dep> takes its toolchain and its places from the
+# environment, so a new target reuses it by setting these:
+#   CC, AR, RANLIB          the compiler and archiver (and the rest of the
+#                           compiler env: CFLAGS, CXXFLAGS, LDFLAGS)
+#   CROSS_AUTOTOOLS_HOST    --host=<triple>, for configure
+#   CROSS_MESON_FILE        the meson cross file
+#   CROSS_CMAKE_FILE        the cmake toolchain file
+#   CROSS_TRIPLE            the triple, for zlib's CHOST
+#   CROSS_BUILD_DIR         src/ (the download cache) and build/ live here
+#   CROSS_PREFIX_DIR        the install prefix
+#   JOBS
+# and optionally:
+#   CROSS_BUILD_SUFFIX      added to each build/ dir name (Android: -android-<abi>)
+#   CROSS_LABEL             shown in the log lines (Android: the ABI)
+# A platform that wants other flags for one dep sets them on the call, e.g.
+#   CFLAGS="$CFLAGS -Os" cross_build_xz
+# =============================================================================
+
+# cross_bdir <name>: the build/ dir of <name> for this target.
+cross_bdir() { echo "$CROSS_BUILD_DIR/build/$1${CROSS_BUILD_SUFFIX:-}"; }
+
+# cross_ok <name>: the closing log line of a dep.
+cross_ok() { ok "$1${CROSS_LABEL:+ ($CROSS_LABEL)} ✓"; }
+
+# zlib reads CFLAGS from the environment itself, and keeps its own default
+# when it is unset, so this passes nothing.
+cross_build_zlib() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libz.a" ]] && return
+  local src="$CROSS_BUILD_DIR/src/zlib-$ZLIB_VERSION.tar.gz"
+  download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  pushd "$dir" >/dev/null
+  CHOST="$CROSS_TRIPLE" ./configure --prefix="$CROSS_PREFIX_DIR" --static
+  make -j"$JOBS"; make install
+  popd >/dev/null
+  cross_ok zlib
+}
+
+# The trees in src/ are reused by the next ABI or slice of the same run
+# (Android, iOS), so the autotools deps clean them before configure: a
+# slice whose config.h comes out the same would otherwise keep the objects
+# of the one before. On a fresh tree the clean finds no Makefile.
+#
+# bzip2 has no configure: its Makefile takes the toolchain and CFLAGS as
+# arguments.
+cross_build_bzip2() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libbz2.a" ]] && return
+  local src="$CROSS_BUILD_DIR/src/bzip2-$BZIP2_VERSION.tar.gz"
+  download "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  pushd "$dir" >/dev/null
+  make clean 2>/dev/null || true
+  make CC="$CC" AR="$AR" RANLIB="$RANLIB" \
+       -j"$JOBS" CFLAGS="$CFLAGS" libbz2.a
+  install -m 644 libbz2.a "$CROSS_PREFIX_DIR/lib/"
+  install -m 644 bzlib.h  "$CROSS_PREFIX_DIR/include/"
+  popd >/dev/null
+  cross_ok bzip2
+}
+
+cross_build_xz() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/liblzma.a" ]] && return
+  local src="$CROSS_BUILD_DIR/src/xz-$XZ_VERSION.tar.gz"
+  download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  pushd "$dir" >/dev/null
+  make distclean 2>/dev/null || make clean 2>/dev/null || true
+  # xz 5.8.x's configure aborts if its `-Werror`-usability probe trips on
+  # the build's non-default CFLAGS (LTO etc.). SKIP_WERROR_CHECK=yes is
+  # the upstream-sanctioned escape hatch — it only affects xz's own
+  # configure-time feature detection, not the built liblzma.
+  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$CROSS_PREFIX_DIR" --enable-static --disable-shared \
+    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
+    --disable-scripts --disable-doc \
+    SKIP_WERROR_CHECK=yes
+  make -j"$JOBS"; make install
+  popd >/dev/null
+  cross_ok xz
+}
+
+# expat: fontconfig's XML parser, in the font stack only.
+cross_build_expat() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libexpat.a" ]] && return
+  local src="$CROSS_BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.gz"
+  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.gz" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  pushd "$dir" >/dev/null
+  make distclean 2>/dev/null || make clean 2>/dev/null || true
+  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$CROSS_PREFIX_DIR" --enable-static --disable-shared \
+    --without-docbook --without-examples --without-tests
+  make -j"$JOBS"; make install
+  popd >/dev/null
+  cross_ok expat
+}
+
+# libxml2: FFmpeg's DASH demuxer.
+cross_build_libxml2() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libxml2.a" ]] && return
+  local src="$CROSS_BUILD_DIR/src/libxml2-$LIBXML2_VERSION.tar.xz"
+  download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  pushd "$dir" >/dev/null
+  make distclean 2>/dev/null || make clean 2>/dev/null || true
+  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$CROSS_PREFIX_DIR" --enable-static --disable-shared \
+    --without-python --without-readline --without-history \
+    --without-http --without-ftp --without-html \
+    --without-legacy --without-docbook --without-catalog \
+    --without-schematron --without-modules --without-debug \
+    --without-iconv --without-lzma --without-zlib
+  make -j"$JOBS"; make install
+  popd >/dev/null
+  cross_ok libxml2
+}
+
+# cross_build_speexdsp [prepare]: <prepare> <dir>, when given, runs on the
+# source tree before autogen.sh (Windows patches a header there).
+cross_build_speexdsp() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libspeexdsp.a" ]] && return
+  # Source tarball from GitHub mirror — downloads.xiph.org is intermittently
+  # unreachable. The GitHub archive has no configure shipped (it's the source
+  # repo, not a release tarball), so autogen.sh has to run first.
+  local src="$CROSS_BUILD_DIR/src/speexdsp-SpeexDSP-$SPEEXDSP_VERSION.tar.gz"
+  download "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-${SPEEXDSP_VERSION}.tar.gz" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  pushd "$dir" >/dev/null
+  make clean 2>/dev/null || true
+  [[ -n "${1:-}" ]] && "$1" "$dir"
+  ./autogen.sh
+  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$CROSS_PREFIX_DIR" --enable-static --disable-shared
+  make -j"$JOBS"; make install
+  popd >/dev/null
+  cross_ok speexdsp
+}
+
+# librubberband is GPL-2.0+: only the GPL build calls this (gpl_build).
+cross_build_rubberband() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/librubberband.a" ]] && return
+  local src="$CROSS_BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
+  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  # rubberband 4.0+ uses unqualified `size_t` in src/common/mathmisc.{h,cpp};
+  # modern gcc/clang under -std=c++20 rejects it. Inject <stddef.h>. Idempotent.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/rubberband/patch_rubberband_size_t.py" "$dir"
+  local bdir; bdir="$(cross_bdir rubberband)"; mkdir -p "$bdir"
+  pushd "$bdir" >/dev/null
+  meson setup "$dir" --cross-file "$CROSS_MESON_FILE" \
+    --prefix="$CROSS_PREFIX_DIR" --libdir=lib --buildtype=release --default-library=static \
+    -Dfft=builtin -Dresampler=speex -Dladspa=disabled -Dvamp=disabled -Djni=disabled
+  ninja -j"$JOBS"; ninja install
+  popd >/dev/null
+  cross_ok rubberband
+}
+
+# libplacebo at v$LIBPLACEBO_VERSION, which each platform pins itself.
+cross_build_libplacebo() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libplacebo.a" ]] && return 0
+  log "Building libplacebo $LIBPLACEBO_VERSION${CROSS_LABEL:+ ($CROSS_LABEL)}..."
+  local gitdir="$CROSS_BUILD_DIR/src/libplacebo-git"
+  download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
+  git -C "$gitdir" submodule update --init --recursive
+  apply_libplacebo_patches "$gitdir"
+  local bdir; bdir="$(cross_bdir libplacebo)"; mkdir -p "$bdir"
+  pushd "$bdir" >/dev/null
+  meson setup "$gitdir" --cross-file "$CROSS_MESON_FILE" \
+    --prefix="$CROSS_PREFIX_DIR" --buildtype=release --default-library=static \
+    -Dvulkan=disabled -Dshaderc=disabled -Dglslang=disabled \
+    -Dopengl=disabled -Dd3d11=disabled -Ddemos=false -Dtests=false
+  ninja -j"$JOBS"; ninja install
+  popd >/dev/null
+  cross_ok libplacebo
+}
+
+# libsmb2 with the cmake toolchain file and its ELF post-install fixes.
+cross_build_libsmb2() {
+  [[ -f "$CROSS_PREFIX_DIR/lib/libsmb2.a" ]] && return
+  log "Building libsmb2 v$LIBSMB2_VERSION${CROSS_LABEL:+ ($CROSS_LABEL)}..."
+  local dir="$CROSS_BUILD_DIR/src/libsmb2"
+  download_git "https://github.com/sahlberg/libsmb2.git" "$dir" "v$LIBSMB2_VERSION"
+
+  local bdir; bdir="$(cross_bdir libsmb2)"
+  rm -rf "$bdir"
+  mkdir -p "$bdir"
+  pushd "$bdir" >/dev/null
+  cmake "$dir" -DCMAKE_TOOLCHAIN_FILE="$CROSS_CMAKE_FILE" \
+    -DCMAKE_INSTALL_PREFIX="$CROSS_PREFIX_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -GNinja
+  ninja -j"$JOBS"
+  ninja install
+  apply_libsmb2_post_install_fixes "$CROSS_PREFIX_DIR" "linux"
+  popd >/dev/null
+  cross_ok libsmb2
+}
+
+# cross_build_ffmpeg <platform> <configure args...>: FFmpeg out of tree, with
+# the shared patches and ffmpeg_common_args, then the platform's own args in
+# the order given (configure keeps them in the library's configuration
+# string). <platform> is the one verify_ffmpeg_config checks.
+cross_build_ffmpeg() {
+  local platform="$1"; shift
+  [[ -f "$CROSS_PREFIX_DIR/lib/libavcodec.a" ]] && return
+  log "Building ffmpeg $FFMPEG_VERSION${CROSS_LABEL:+ ($CROSS_LABEL)}..."
+  local src="$CROSS_BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION.tar.gz"
+  download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
+  # A pristine tree on every build: src/ survives cleanup_build, and a
+  # reused tree would keep the result of older patches.
+  rm -rf "$CROSS_BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
+  local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  patch_record_start ffmpeg "$CROSS_PREFIX_DIR"
+  apply_ffmpeg_patches "$dir"
+
+  local bdir; bdir="$(cross_bdir ffmpeg)"; mkdir -p "$bdir"
+  pushd "$bdir" >/dev/null
+  "$dir/configure" \
+    --prefix="$CROSS_PREFIX_DIR" \
+    $(ffmpeg_common_args) \
+    "$@"
+  verify_ffmpeg_config "$bdir" "$platform"
+  make -j"$JOBS"; make install
+  popd >/dev/null
+  cross_ok ffmpeg
+}
+
+# cross_mpv_source: a pristine mpv tree with the shared patches, at
+# $CROSS_MPV_DIR. The mpv patches are NOT idempotent and src/ survives
+# cleanup_build (and is shared by the ABIs of an Android run), so the tree
+# is extracted again from the cached tarball every time.
+cross_mpv_source() {
+  local src="$CROSS_BUILD_DIR/src/mpv-$MPV_VERSION.tar.gz"
+  download "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz" "$src"
+  rm -rf "$CROSS_BUILD_DIR/src/mpv-$MPV_VERSION"
+  CROSS_MPV_DIR="$(extract "$src" "$CROSS_BUILD_DIR/src")"
+  patch_record_start mpv "$CROSS_PREFIX_DIR"
+  apply_mpv_patches_common "$CROSS_MPV_DIR"
+}
+
+# cross_mpv_build <platform> <meson args...>: configure, check and build the
+# tree of cross_mpv_source in $(cross_bdir mpv). The meson args go in the
+# order given: mpv keeps them in its configuration string.
+cross_mpv_build() {
+  local platform="$1"; shift
+  local bdir; bdir="$(cross_bdir mpv)"; mkdir -p "$bdir"
+  pushd "$bdir" >/dev/null
+  meson setup "$CROSS_MPV_DIR" "$@"
+  verify_mpv_config "$bdir" "$platform"
+  ninja -j"$JOBS"; ninja install
+  popd >/dev/null
+  cross_ok mpv
 }

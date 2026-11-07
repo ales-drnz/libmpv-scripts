@@ -70,7 +70,7 @@ done
 
 # verify_binaries.sh looks for the option name, which pristine FFmpeg has not
 # (advanced_editlist, the old marker, is upstream's own option).
-grep -q '"mak_frag_editlist|' "$ROOT/scripts/verify_binaries.sh"; check $? "verify_binaries.sh has the marker mak_frag_editlist"
+grep -q '"mak_frag_editlist|' "$ROOT/scripts/verify/common.sh"; check $? "verify_binaries.sh has the marker mak_frag_editlist"
 ! grep -rq mak_frag_editlist "$REF/libavformat"; check $? "pristine FFmpeg has no mak_frag_editlist"
 
 if (( fails > 0 )); then echo "$fails check(s) failed"; exit 1; fi
