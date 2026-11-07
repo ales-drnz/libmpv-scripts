@@ -7,8 +7,8 @@
 
 The TV rootstraps of the Tizen SDK are not public. The packages of the
 Tizen 6.0 snapshots on download.tizen.org are, and a TV from 2021 on
-runs the same glibc 2.30 and libgcc (GCC 9.2): the C runtime, the kernel
-headers and the two audio APIs ao_tizen uses, unpacked into one tree
+runs the same glibc 2.30, libgcc and libstdc++ (GCC 9.2): the C and C++
+runtimes, the kernel headers and the two audio APIs ao_tizen uses, in one tree
 that clang takes as --sysroot. flutter-tizen's embedder builds its
 sysroot the same way (tools/generate_sysroot.py).
 
@@ -40,10 +40,11 @@ SNAPSHOTS = {
     'base': 'Tizen-6.0-Base/tizen-6.0-base_20250219.050947',
     'unified': 'Tizen-6.0-Unified/tizen-6.0-unified_20251113.061353',
 }
-# The C runtime and libgcc come from Base; the audio APIs from Unified,
+# The C runtime, libgcc and libstdc++ (libplacebo has C++) come from Base; the audio APIs from Unified,
 # whose x86 packages are in the emulator repository.
 PACKAGES = {
-    'base': ['gcc', 'glibc', 'glibc-devel', 'libgcc', 'linux-glibc-devel'],
+    'base': ['gcc', 'glibc', 'glibc-devel', 'libgcc', 'libstdc++', 'libstdc++-devel',
+             'linux-glibc-devel'],
     'unified': [
         'capi-base-common', 'capi-base-common-devel',
         'capi-media-audio-io', 'capi-media-audio-io-devel',

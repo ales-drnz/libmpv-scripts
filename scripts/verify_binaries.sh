@@ -66,7 +66,8 @@
 #       every other layer missed (only a physical-device install enforces it).
 #  16.  ELF invariants (Linux + Android): SONAME is libmpv_audio_kit.so, no
 #       DT_RELR, LOAD segments aligned for 16 KB pages on 64-bit Android, and
-#       on Linux no GLIBC symbol version above LINUX_GLIBC_FLOOR.
+#       on Linux no GLIBC symbol version above LINUX_GLIBC_FLOOR, on Tizen
+#       none above TIZEN_GLIBC_FLOOR.
 #
 # The web module (libmpv_web.zip) gets its own static checks, check_web_binary:
 # the four files of the zip and the record's release and versions, a shared
@@ -173,6 +174,8 @@ EXPECTED_FORMATS=(
   "libmpv_android-x86_64.so|ELF 64-bit LSB shared object, x86-64"
   "libmpv_ios.xcframework.zip|Zip archive data"
   "libmpv_tvos.xcframework.zip|Zip archive data"
+  "libmpv_tizen-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
+  "libmpv_tizen-i686.so|ELF 32-bit LSB shared object, Intel (80386|i386)"
 )
 
 # Every observable property our mpv patch set registers. Validated by
@@ -263,7 +266,7 @@ expected_version_for() {
     libplacebo)
       # macOS / Linux desktop tracks 7.x; iOS / Android / Windows track 6.x.
       case "$platform" in
-        macos|linux) echo "7.349.0" ;;
+        macos|linux|tizen) echo "7.349.0" ;;
         *)           echo "6.338.2" ;;
       esac ;;
     *) echo "" ;;
@@ -349,6 +352,7 @@ platform_from_artifact() {
     *tvos*)    echo "tvos" ;;
     *ios*)     echo "ios" ;;
     *linux*)   echo "linux" ;;
+    *tizen*)   echo "tizen" ;;
     *windows*) echo "windows" ;;
     *android*) echo "android" ;;
     *)         echo "unknown" ;;
@@ -413,6 +417,12 @@ layer11_needed_allowlist() {
       #   i386:   ld-linux.so.2
       #   armhf:  ld-linux-armhf.so.3
       allowed_re='^(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|libasound|libX11|libXext|libXrandr|libXinerama|libva|libva-drm|libva-x11|libvdpau|ld-linux[-a-zA-Z0-9_]*)\.(so|so\.[0-9]+(\.[0-9]+)*)$'
+      ;;
+    tizen)
+      # glibc, and the two audio APIs of ao_tizen (capi-base-common comes
+      # with them). Anything else is missing on the TV: libgcc and
+      # libstdc++ are linked in.
+      allowed_re='^(libc|libm|libdl|libpthread|librt|ld-linux|libcapi-media-audio-io|libcapi-media-sound-manager|libcapi-base-common)\.so(\.[0-9]+)*$'
       ;;
     android)
       # NDK API surface for libmpv: bionic libc + libm + libdl, the loader
@@ -509,6 +519,29 @@ layer11_needed_allowlist() {
 #
 # Args: $1 = platform, $2 = arch (x86_64|aarch64|arm64-v8a|x86),
 #       $3 = artifact path, $4 = newline-separated NEEDED list
+# An llvm tool (nm, readelf, objdump, clang): llvm-mingw's in the verify
+# image, else the one on PATH. They read and target every arch.
+_llvm_tool() {
+  local d="${LLVM_MINGW_DIR:-/opt/llvm-mingw}/bin"
+  case "$1" in
+    clang) [[ -x "$d/clang" ]] && { echo "$d/clang"; return; }; echo clang ;;
+    *)     [[ -x "$d/llvm-$1" ]] && { echo "$d/llvm-$1"; return; }; echo "llvm-$1" ;;
+  esac
+}
+
+# The Tizen sysroot of arch (armv7l, i686): the build's own when it is there,
+# else unpacked once from the pinned packages (scripts/tizen/tizen_sysroot.py).
+_tizen_sysroot() {
+  local arch="$1"
+  local dir="${TIZEN_SYSROOT_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Tizen/$arch/sysroot}"
+  local lock="$LIBMPV_SCRIPTS_ROOT/scripts/tizen/tizen_sysroot.sha256"
+  if ! { [[ -f "$dir/.lock" ]] && cmp -s "$lock" "$dir/.lock"; }; then
+    python3 -B "$LIBMPV_SCRIPTS_ROOT/scripts/tizen/tizen_sysroot.py" "$arch" "$dir" >/dev/null || return 1
+    cp "$lock" "$dir/.lock"
+  fi
+  echo "$dir"
+}
+
 layer12_und_resolvable() {
   local platform="$1" arch="$2" artifact="$3" deps="$4"
   phase l12
@@ -521,6 +554,12 @@ layer12_und_resolvable() {
     android/arm64-v8a)    triple="aarch64-linux-android" ;;
     android/armeabi-v7a)  triple="arm-linux-androideabi" ;;
     android/x86_64)       triple="x86_64-linux-android" ;;
+    tizen/armv7l|tizen/i686)
+      sysroot="$(_tizen_sysroot "$arch")" || {
+        fail "L12: the Tizen sysroot of $arch could not be unpacked"
+        return 0
+      }
+      ;;
     windows/*)
       na "UND resolvability is nm/ELF-based; a PE's imports are bound by the Windows loader at runtime — covered by the L13 LoadLibrary load test instead."
       return 0
@@ -554,7 +593,13 @@ layer12_und_resolvable() {
         return 0
       fi
       ;;
+    tizen)
+      search_dirs=("$sysroot/lib" "$sysroot/usr/lib")
+      ;;
   esac
+  # The host's nm reads only its own arch: llvm-nm reads the Tizen ones.
+  local nm=nm
+  [[ "$platform" == tizen ]] && nm="$(_llvm_tool nm)"
 
   # Build exports union. Each NEEDED entry is resolved to its first match
   # under search_dirs. Missing system libs → warning (means our allowlist
@@ -584,7 +629,7 @@ layer12_und_resolvable() {
     # i=indirect, U=undefined. We want everything DEFINED — i.e. anything
     # that is NOT 'U'. The dynamic linker resolves UND of one .so against
     # any of these in another .so.
-    nm -D --defined-only --extern-only "$found" 2>/dev/null \
+    "$nm" -D --defined-only --extern-only "$found" 2>/dev/null \
       | awk '$2 != "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
       >> "$exports_db" || true
   done <<<"$deps"
@@ -593,13 +638,16 @@ layer12_und_resolvable() {
     warn "L12: NEEDED .so missing in container (cannot introspect): ${missing[*]}"
   fi
 
-  # Linux only: also fold in the dynamic linker's exports. ld-linux-*.so
+  # Linux and Tizen: also fold in the dynamic linker's exports. ld-linux-*.so
   # provides __libc_start_main, __cxa_finalize, dl_iterate_phdr, etc.,
   # which are referenced by binaries but rarely appear in NEEDED.
-  if [[ "$platform" == "linux" ]]; then
-    for ld in /lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*; do
+  if [[ "$platform" == "linux" || "$platform" == "tizen" ]]; then
+    # shellcheck disable=SC2206  # the globs expand here, on purpose
+    local lds=(/lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*)
+    [[ "$platform" == tizen ]] && lds=("$sysroot"/lib/ld-linux*.so.*)
+    for ld in "${lds[@]}"; do
       [[ -f "$ld" ]] || continue
-      nm -D --defined-only --extern-only "$ld" 2>/dev/null \
+      "$nm" -D --defined-only --extern-only "$ld" 2>/dev/null \
         | awk '$2 != "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
         >> "$exports_db" || true
     done
@@ -614,7 +662,7 @@ layer12_und_resolvable() {
   # with __ANDROID_API__ < 28 (added to bionic in 28), with a /dev/urandom
   # fallback, so the .so stays correct on the API-24 floor.
   local und_db="$(mktemp)"
-  if ! nm -D --undefined-only "$artifact" 2>/dev/null \
+  if ! "$nm" -D --undefined-only "$artifact" 2>/dev/null \
     | awk '$1 == "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
     | sort -u > "$und_db"; then
     fail "L12 UND resolvability: nm failed on $(basename "$artifact")"
@@ -673,6 +721,8 @@ layer12_und_resolvable() {
 #            and amd64 = qemu; reverse on x86_64 hosts).
 #   Windows→ cross-compile winload_test.exe with x86_64-w64-mingw32-gcc or
 #            aarch64-w64-mingw32-clang, run via wine64.
+#   Tizen  → dlopen_test built with clang against the Tizen sysroot, run
+#            with qemu-user -L <sysroot> and stubs of the capi libraries.
 #   Android→ skipped: no easy emulator-less load path. Layers 12+13 carry
 #            the load.
 #   macOS  → skipped here: the artifact path under .xcframework requires
@@ -696,6 +746,9 @@ layer13_load_test() {
       ;;
     android)
       na "no emulator-less Android load path; UND resolvability (L12) + JNI stub detection (L14) carry the runtime guarantee here."
+      ;;
+    tizen)
+      _l13_tizen_dlopen "$arch" "$artifact"
       ;;
     macos)
       # Runs the REAL dyld load when verify is invoked natively on a macOS host
@@ -830,6 +883,58 @@ _l13_linux_dlopen() {
   case "$rc" in
     0)   pass "L13 dlopen(RTLD_NOW): loads + initializes + patched props respond at runtime" ;;
     124) fail "L13 dlopen timed out after 60s: $out" ;;
+    *)   fail "L13 dlopen failed (exit=$rc): $out" ;;
+  esac
+  return 0
+}
+
+# Tizen: dlopen_test built with clang against the Tizen sysroot and run with
+# qemu-user, whose -L takes the sysroot as the root of the loader: libmpv
+# binds against the TVs' glibc 2.30 and libgcc. The real audio APIs need
+# the whole Tizen sound stack, so stubs of the same names stand in for them
+# (the helper plays nothing: ao=null).
+_l13_tizen_dlopen() {
+  local arch="$1" artifact="$2" target qemu flags=()
+  case "$arch" in
+    armv7l) target="armv7l-tizen-linux-gnueabi" qemu="qemu-arm-static"
+            flags=(-march=armv7-a -mfpu=neon -mfloat-abi=softfp -mthumb) ;;
+    i686)   target="i586-tizen-linux-gnu" qemu="qemu-i386-static" flags=(-march=i686) ;;
+    *) warn "L13: unsupported tizen arch=$arch"; return 0 ;;
+  esac
+  command -v "$qemu" >/dev/null 2>&1 || { fail "L13: $qemu missing"; return 0; }
+  local sysroot
+  sysroot="$(_tizen_sysroot "$arch")" || { fail "L13: the Tizen sysroot of $arch could not be unpacked"; return 0; }
+  local tmp tizen_cc
+  tmp="$(mktemp -d)"
+  tizen_cc=("$(_llvm_tool clang)" --target="$target" --sysroot="$sysroot" "${flags[@]}" -fuse-ld=lld)
+  cat > "$tmp/capi_stub.c" <<'EOF'
+int audio_out_create_new(void) { return -1; }
+int audio_out_destroy(void) { return -1; }
+int audio_out_set_sound_stream_info(void) { return -1; }
+int audio_out_prepare(void) { return -1; }
+int audio_out_unprepare(void) { return -1; }
+int audio_out_pause(void) { return -1; }
+int audio_out_resume(void) { return -1; }
+int audio_out_flush(void) { return -1; }
+int audio_out_write(void) { return -1; }
+int sound_manager_create_stream_information(void) { return -1; }
+int sound_manager_destroy_stream_information(void) { return -1; }
+EOF
+  local lib ok=1
+  for lib in libcapi-media-audio-io.so.0 libcapi-media-sound-manager.so.0 libcapi-base-common.so.0; do
+    "${tizen_cc[@]}" -shared -fPIC -Wl,-soname,"$lib" "$tmp/capi_stub.c" -o "$tmp/$lib" 2>/dev/null || ok=0
+  done
+  "${tizen_cc[@]}" -O0 "$LIBMPV_SCRIPTS_ROOT/verify/dlopen_test.c" -ldl -o "$tmp/dlopen_test" 2>/dev/null || ok=0
+  if (( ! ok )); then
+    fail "L13: dlopen helper or capi stubs failed to build for tizen/$arch"
+    rm -rf "$tmp"; return 0
+  fi
+  local out rc
+  out="$(timeout 120 "$qemu" -L "$sysroot" -E LD_LIBRARY_PATH="$tmp" "$tmp/dlopen_test" "$artifact" 2>&1)"; rc=$?
+  rm -rf "$tmp"
+  case "$rc" in
+    0)   pass "L13 dlopen(RTLD_NOW) on Tizen's glibc under $qemu: loads + initializes + patched props respond" ;;
+    124) fail "L13 dlopen timed out after 120s: $out" ;;
     *)   fail "L13 dlopen failed (exit=$rc): $out" ;;
   esac
   return 0
@@ -1347,6 +1452,8 @@ arch_from_artifact() {
     *-armeabi-v7a.*)   echo "armeabi-v7a" ;;
     *-arm64-v8a.*)     echo "arm64-v8a" ;;
     *-arm64.*)         echo "arm64" ;;
+    *-armv7l.*)        echo "armv7l" ;;
+    *-i686.*)          echo "i686" ;;
     *)                 echo "" ;;
   esac
 }
@@ -1415,7 +1522,7 @@ layer15_codesign_identity() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Layer 16 — ELF loader invariants (Linux + Android)
+# Layer 16 — ELF loader invariants (Linux, Tizen and Android)
 # ─────────────────────────────────────────────────────────────────────────────
 # The same facts the build scripts assert (assert_soname, assert_no_relr,
 # assert_load_align, assert_glibc_floor in _audio_only.sh), checked again on
@@ -1426,15 +1533,18 @@ layer15_codesign_identity() {
 #              below 2.36 refuses it, bionic below API 30 skips it silently.
 #   alignment  every LOAD segment aligned to >= 0x4000 on arm64-v8a and
 #              x86_64, which Android 15+ devices with 16 KB pages require.
-#   glibc      no GLIBC_x.y symbol version above LINUX_GLIBC_FLOOR.
+#   glibc      no GLIBC_x.y symbol version above LINUX_GLIBC_FLOOR (Tizen:
+#              TIZEN_GLIBC_FLOOR).
 # Args: $1 = platform, $2 = arch, $3 = artifact path, $4 = readelf
 layer16_elf_invariants() {
   local platform="$1" arch="$2" artifact="$3" readelf="${4:-readelf}"
   phase l16
   case "$platform" in
-    linux|android) ;;
+    linux|android|tizen) ;;
     *) na "ELF loader invariants; $platform binaries are not ELF."; return 0 ;;
   esac
+  local floor="$LINUX_GLIBC_FLOOR"
+  [[ "$platform" == tizen ]] && floor="$TIZEN_GLIBC_FLOOR"
 
   local dyn
   dyn="$(LC_ALL=C "$readelf" -dW "$artifact" 2>/dev/null)"
@@ -1483,10 +1593,10 @@ layer16_elf_invariants() {
       | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/GLIBC_//' | sort -Vu | tail -1)"
     if [[ -z "$newest" ]]; then
       fail "L16 glibc floor: no GLIBC symbol versions read (tool failure)"
-    elif [[ "$(printf '%s\n%s\n' "$newest" "$LINUX_GLIBC_FLOOR" | sort -V | tail -1)" == "$LINUX_GLIBC_FLOOR" ]]; then
-      pass "L16 glibc floor: needs $newest (max $LINUX_GLIBC_FLOOR)"
+    elif [[ "$(printf '%s\n%s\n' "$newest" "$floor" | sort -V | tail -1)" == "$floor" ]]; then
+      pass "L16 glibc floor: needs $newest (max $floor)"
     else
-      fail "L16 glibc floor: needs $newest, above $LINUX_GLIBC_FLOOR"
+      fail "L16 glibc floor: needs $newest, above $floor"
     fi
   fi
   return 0
@@ -1563,7 +1673,9 @@ check_binary() {
       ;;
     so)
       local NM READELF
-      if echo "$name" | grep -qE 'aarch64|arm64-v8a'; then
+      if [[ "$platform" == tizen ]]; then
+        NM="$(_llvm_tool nm)" READELF="$(_llvm_tool readelf)"
+      elif echo "$name" | grep -qE 'aarch64|arm64-v8a'; then
         NM=aarch64-linux-gnu-nm READELF=aarch64-linux-gnu-readelf
       else
         NM=x86_64-linux-gnu-nm READELF=x86_64-linux-gnu-readelf

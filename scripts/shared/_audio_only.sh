@@ -1021,6 +1021,14 @@ verify_mpv_config() {
       # patch_ao_webaudio.py and -Dwebaudio=enabled: the only output there.
       assert_define "$cfg" "HAVE_WEBAUDIO" "1"
       ;;
+    tizen)
+      # patch_ao_tizen.py and -Dtizen-audio=enabled: an app has no other
+      # output there, and the Linux ones would only fail at runtime.
+      assert_define "$cfg" "HAVE_TIZEN_AUDIO" "1"
+      assert_define "$cfg" "HAVE_ALSA"        "0"
+      assert_define "$cfg" "HAVE_PULSE"       "0"
+      assert_define "$cfg" "HAVE_PIPEWIRE"    "0"
+      ;;
   esac
 
   ok "mpv config audit passed ($platform)"
@@ -1487,6 +1495,9 @@ assert_soname() {
 # stage builds on Ubuntu 20.04 for this: 2.31 covers Debian 11, RHEL 9 and
 # every Ubuntu since 20.04.
 LINUX_GLIBC_FLOOR="2.31"
+# On Tizen: a TV of 2021 runs Tizen 6.0, whose glibc 2.30 is the sysroot's
+# (scripts/tizen/tizen_sysroot.py).
+TIZEN_GLIBC_FLOOR="2.30"
 
 # assert_glibc_floor <elf> <max> <readelf> — die if <elf> needs a GLIBC_x.y
 # symbol version newer than <max>.

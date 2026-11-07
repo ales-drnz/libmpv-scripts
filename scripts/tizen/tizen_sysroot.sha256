@@ -3,6 +3,8 @@
 2dd748a81ea6dfc603d8bbf9dd295fba678042c64fccbaaf8210ce2b0e376eaf armv7l:base/armv7l/glibc-2.30-1.15.armv7l.rpm
 446b6ca3928040d5dcd19255755a9ba66958be2389cfdd82f2286cdeb00a795e armv7l:base/armv7l/glibc-devel-2.30-1.15.armv7l.rpm
 b1ba8ca4cbe9673c15890cf3f2194c31c65f7d5e0701a394885951da1f888fe4 armv7l:base/armv7l/libgcc-9.2.0-1.13.armv7l.rpm
+6b2544d24c2a0ab0935831be4c2b76c254dac4d98fc588ef3a245d5d50eee31a armv7l:base/armv7l/libstdc++-9.2.0-1.13.armv7l.rpm
+0d04e35d875fe669544897d94c98a57b836b5cbb6b109c8bed975da4c81ea1af armv7l:base/armv7l/libstdc++-devel-9.2.0-1.13.armv7l.rpm
 278973ff5f26a0f89e85cf52dde669ba6ab8090867be9f66ff05300c93b49b61 armv7l:base/armv7l/linux-glibc-devel-3.10-1.14.armv7l.rpm
 8cf18971028d89fc1b6a0e9cc0024cb6961be196aec312024e5587fa5ca8a15d armv7l:unified/armv7l/capi-base-common-0.4.59-1.armv7l.rpm
 f8a64859540f2d260555942fd969ca3c7c19f2e81b559897544852f69e6ef015 armv7l:unified/armv7l/capi-base-common-devel-0.4.59-1.armv7l.rpm
@@ -14,6 +16,8 @@ f8a64859540f2d260555942fd969ca3c7c19f2e81b559897544852f69e6ef015 armv7l:unified/
 d960d6c00d73ac6e6756ba8ea0a3308f09ff59e533282e565cc9e7a335fef3cf i686:base/i686/glibc-2.30-1.15.i686.rpm
 a96463239376f06ca8f7c08a3cacfe5ba6f340c66aba629cb34101e0df0b4004 i686:base/i686/glibc-devel-2.30-1.15.i686.rpm
 30d0f6d9a12c8e1314aa19453c1d6835eb3de4e44cf0bd6c253cbe1337edc03c i686:base/i686/libgcc-9.2.0-1.13.i686.rpm
+47dba4a09e1aaf3c142e18230cba0c277b436648e6ee37bd4502453bd605bbf0 i686:base/i686/libstdc++-9.2.0-1.13.i686.rpm
+61483694b1b4e5c41e42bf3eea32ea3166186719d1f07d57e8a3d2a57da188e0 i686:base/i686/libstdc++-devel-9.2.0-1.13.i686.rpm
 b0819fd3bdcbdf8a6b52c0aafdddc8b55915982cd9e94f6d14764d9fadfbc06f i686:base/i686/linux-glibc-devel-3.10-1.14.i686.rpm
 172094a7c703fcfe74693f1949e0d322098e3598b644c7c3de16a610ebed06ae i686:unified/i686/capi-base-common-0.4.59-1.i686.rpm
 340c731e10b860f13b13fb9bae166c1850a164f746aea8e97d202c70f5ee067e i686:unified/i686/capi-base-common-devel-0.4.59-1.i686.rpm
