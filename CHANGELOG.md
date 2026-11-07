@@ -1,3 +1,23 @@
+## [0.3.3] - Unreleased
+
+### All platforms
+**Fixed**
+- A pause in an `on_unload` or `on_after_end_file` hook with `keep-open=no` plays the rest of the file before the output closes.
+- A pull output paused in its last few milliseconds keeps them: its delay holds while paused, and the resume plays the rest. This was the paused delay of `ao_audiotrack` alone, and now covers PipeWire, WASAPI and AAudio too.
+- The libraries say `mpv v0.41.0+r23`.
+
+### Android
+**Fixed**
+- E-AC3 passthrough opens the output at the rate of its IEC61937 stream, 192 kHz, instead of the output's own.
+
+**Added**
+- The check of the kit runs its Android tests on an Android TV emulator of API 36 too, with the media keys of a remote sent two ways.
+
+### Build
+- `scripts/shared/_cross.sh` holds the dependency builds of Linux, Android, Windows and the Apple platforms, and takes the toolchain from the environment. `scripts/shared/_apple.sh` holds what macOS, iOS and tvOS share. The binaries are the same as before.
+- `verify_binaries.sh` is a driver of `scripts/verify/`, one file per platform.
+- `doc/developing.md`: how to change and test a patch and release the binaries.
+
 ## [0.3.2] - 5-11-2026
 
 ### Contributions
