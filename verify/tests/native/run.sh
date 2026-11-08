@@ -98,6 +98,7 @@ CASES=(
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "lib keep_open_park_test playback - pause park nopause stop unload afterend seekend"
   "unit pcm_tap_idle_test - - idle slow pause quiet"
+  "unit tap_ring_test - - grow free flip rearm race"
   "unit pull_pause_tail_test - - hold mid reset"
   "lib pcm_loop_test playback - file late ab next abnext off afdrop"
   "lib chapter_list_test playback - meta index observe kit same"
