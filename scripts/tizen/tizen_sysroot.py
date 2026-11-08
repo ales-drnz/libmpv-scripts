@@ -35,7 +35,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-SITE = 'http://download.tizen.org/snapshots/TIZEN/Tizen-6.0'
+SITE = 'https://download.tizen.org/snapshots/TIZEN/Tizen-6.0'
 SNAPSHOTS = {
     'base': 'Tizen-6.0-Base/tizen-6.0-base_20250219.050947',
     'unified': 'Tizen-6.0-Unified/tizen-6.0-unified_20251113.061353',
@@ -192,16 +192,22 @@ def main():
                         + ''.join(f'{sha} {rel}\n' for rel, sha in sorted(keep.items())))
         print(f'{LOCK.name}: {len(wanted)} packages for {arch}')
         return
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
+    # Every package checked before the last sysroot goes: a build that
+    # stops leaves it.
     for kind, loc, sha in wanted:
         rel = f'{arch}:{kind}/{loc}'
         if lock.get(rel) != sha:
             sys.exit(f'{rel}: not in {LOCK.name} with this checksum (--update after a review)')
+    rpms = []
+    for kind, loc, sha in wanted:
         data = fetch(f'{repo(kind, arch)}/{loc}')
         if hashlib.sha256(data).hexdigest() != sha:
             sys.exit(f'{loc}: SHA-256 does not match')
+        rpms.append((loc, data))
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    for loc, data in rpms:
         unpack_cpio(rpm_payload(data), out)
         print(f'unpacked {loc}')
     fix_up(out, arch)

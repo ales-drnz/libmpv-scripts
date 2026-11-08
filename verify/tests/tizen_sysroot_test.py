@@ -5,8 +5,10 @@
 """Tests of scripts/tizen/tizen_sysroot.py without the network: the RPM
 payload and its cpio archive are unpacked whole (a hard link gets the
 data of the last of its names, an absolute symlink points inside the
-sysroot), the fix-ups give the asm headers and the start files, and a
-package missing from the lock or with another checksum stops the build.
+sysroot), the fix-ups give the asm headers and the start files, a
+package missing from the lock or with another checksum stops the build
+and leaves the sysroot of the last build, and the packages and their
+indexes come over https.
 
 Usage: python3 -B verify/tests/tizen_sysroot_test.py
 """
@@ -134,6 +136,55 @@ class Lock(unittest.TestCase):
                 sys.argv = argv
                 ts.primary, ts.fetch = saved
         self.assertIn('not in tizen_sysroot.sha256', str(stop.exception))
+
+
+class Keep(unittest.TestCase):
+    """A build that stops leaves the sysroot of the last one."""
+
+    def run_main(self, index, fetch):
+        saved = ts.primary, ts.fetch
+        ts.primary = lambda kind, arch: index
+        ts.fetch = fetch
+        argv = sys.argv
+        with tempfile.TemporaryDirectory() as out:
+            (Path(out) / 'old').write_text('last build')
+            sys.argv = ['tizen_sysroot.py', 'armv7l', out]
+            try:
+                with self.assertRaises((SystemExit, OSError)):
+                    ts.main()
+            finally:
+                sys.argv = argv
+                ts.primary, ts.fetch = saved
+            return (Path(out) / 'old').exists()
+
+    def locked_index(self):
+        index = {}
+        for rel, sha in ts.read_lock().items():
+            arch, path = rel.split(':', 1)
+            if arch != 'armv7l':
+                continue
+            kind, loc = path.split('/', 1)
+            for name in ts.PACKAGES[kind]:
+                if loc.startswith(f'armv7l/{name}-'):
+                    index.setdefault(name, (loc, sha))
+        return index
+
+    def test_a_refused_package_keeps_the_sysroot(self):
+        index = self.locked_index()
+        index['glibc'] = (index['glibc'][0], '0' * 64)
+        self.assertTrue(self.run_main(index, lambda url: self.fail('fetched ' + url)))
+
+    def test_a_failed_download_keeps_the_sysroot(self):
+        def fetch(url):
+            raise OSError('unreachable')
+        self.assertTrue(self.run_main(self.locked_index(), fetch))
+
+
+class Site(unittest.TestCase):
+    def test_https(self):
+        # --update writes the lock from these indexes: over http a man in
+        # the middle would pin his packages.
+        self.assertTrue(ts.SITE.startswith('https://'), ts.SITE)
 
 
 if __name__ == '__main__':
