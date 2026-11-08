@@ -43,7 +43,7 @@ EXPECTED_FORMATS=(
 #   pcm_tap           : pcm-tap-frame
 #   filter_label_tap  : audio-tap-frames, analyzer-taps
 #   bulk_analysis     : waveform-data, waveform-enabled,
-#                       waveform-duration-hint (an option)
+#                       waveform-duration-hint (an option), duration-estimated
 #   loudness_scan     : loudness-scan-data, loudness-scan-enabled
 #   af_command_args   : af-command-saves-args
 #   read_error        : demuxer-read-error, demuxer-skipped-segments, mak-end-file-fields
@@ -55,7 +55,7 @@ MPV_PATCHED_PROPS=(
   embedded-cover-art-data embedded-cover-art-mime
   pcm-tap-frame
   audio-tap-frames analyzer-taps
-  waveform-data waveform-enabled waveform-duration-hint
+  waveform-data waveform-enabled waveform-duration-hint duration-estimated
   loudness-scan-data loudness-scan-enabled
   af-command-saves-args
   demuxer-read-error demuxer-skipped-segments mak-end-file-fields
