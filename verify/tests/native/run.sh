@@ -81,6 +81,7 @@ CASES=(
   "lib fd_offset_test playback - two"
   "lib analysis_close_test analysis 600000 stop feedstop readystop loudoff loudkeep probe"
   "lib analysis_worker_test analysis - fail"
+  "lib analysis_reload_test analysis - same loop other loudon track ext fd rewrite"
   "lib analysis_oom_test analysis - start"
   "lib analysis_start_test analysis - ts late ogg"
   "lib analysis_start_test analysis 2000000 http"
