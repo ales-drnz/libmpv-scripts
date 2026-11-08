@@ -107,7 +107,10 @@ static int mp_property_waveform_enabled(void *ctx, struct m_property *prop,
  * duration from the bitrate (an MP3 without a Xing header, ADTS AAC, a
  * length a server guessed), so a client holding the real length can prefer
  * it. Unavailable without a duration, as duration is. Notified with
- * duration (MP_EVENT_DURATION_UPDATE) and on every file event. */
+ * duration (MP_EVENT_DURATION_UPDATE) and on every file event. Set when
+ * the file opens: it stays yes after mpv grows the duration from packet
+ * timestamps, and reads no for a timeline (EDL, cue sheet, ordered
+ * chapters), whose demuxer is not lavf's. */
 static int mp_property_duration_estimated(void *ctx, struct m_property *prop,
                                           int action, void *arg)
 {
