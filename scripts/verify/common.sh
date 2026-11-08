@@ -30,6 +30,8 @@ EXPECTED_FORMATS=(
   "libmpv_android-x86_64.so|ELF 64-bit LSB shared object, x86-64"
   "libmpv_ios.xcframework.zip|Zip archive data"
   "libmpv_tvos.xcframework.zip|Zip archive data"
+  "libmpv_tizen-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
+  "libmpv_tizen-x86_64.so|ELF 64-bit LSB shared object, x86-64"
 )
 
 # Every observable property our mpv patch set registers. Validated by
@@ -120,7 +122,7 @@ expected_version_for() {
     libplacebo)
       # macOS / Linux desktop tracks 7.x; iOS / Android / Windows track 6.x.
       case "$platform" in
-        macos|linux) echo "7.349.0" ;;
+        macos|linux|tizen) echo "7.349.0" ;;
         *)           echo "6.338.2" ;;
       esac ;;
     *) echo "" ;;
@@ -206,6 +208,7 @@ platform_from_artifact() {
     *tvos*)    echo "tvos" ;;
     *ios*)     echo "ios" ;;
     *linux*)   echo "linux" ;;
+    *tizen*)   echo "tizen" ;;
     *windows*) echo "windows" ;;
     *android*) echo "android" ;;
     *)         echo "unknown" ;;
@@ -270,6 +273,12 @@ layer11_needed_allowlist() {
       #   i386:   ld-linux.so.2
       #   armhf:  ld-linux-armhf.so.3
       allowed_re='^(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|libasound|libX11|libXext|libXrandr|libXinerama|libva|libva-drm|libva-x11|libvdpau|ld-linux[-a-zA-Z0-9_]*)\.(so|so\.[0-9]+(\.[0-9]+)*)$'
+      ;;
+    tizen)
+      # glibc, and the two audio APIs of ao_tizen (capi-base-common comes
+      # with them). Anything else is missing on the TV: libgcc and
+      # libstdc++ are linked in.
+      allowed_re='^(libc|libm|libdl|libpthread|librt|ld-linux|libcapi-media-audio-io|libcapi-media-sound-manager|libcapi-base-common)\.so(\.[0-9]+)*$'
       ;;
     android)
       # NDK API surface for libmpv: bionic libc + libm + libdl, the loader
@@ -383,6 +392,9 @@ layer13_load_test() {
       ;;
     android)
       na "no emulator-less Android load path; UND resolvability (L12) + JNI stub detection (L14) carry the runtime guarantee here."
+      ;;
+    tizen)
+      _l13_tizen_dlopen "$arch" "$artifact"
       ;;
     macos)
       # Runs the REAL dyld load when verify is invoked natively on a macOS host
@@ -650,6 +662,7 @@ arch_from_artifact() {
     *-armeabi-v7a.*)   echo "armeabi-v7a" ;;
     *-arm64-v8a.*)     echo "arm64-v8a" ;;
     *-arm64.*)         echo "arm64" ;;
+    *-armv7l.*)        echo "armv7l" ;;
     *)                 echo "" ;;
   esac
 }
@@ -725,7 +738,9 @@ check_binary() {
       ;;
     so)
       local NM READELF
-      if echo "$name" | grep -qE 'aarch64|arm64-v8a'; then
+      if [[ "$platform" == tizen ]]; then
+        NM="$(_llvm_tool nm)" READELF="$(_llvm_tool readelf)"
+      elif echo "$name" | grep -qE 'aarch64|arm64-v8a'; then
         NM=aarch64-linux-gnu-nm READELF=aarch64-linux-gnu-readelf
       else
         NM=x86_64-linux-gnu-nm READELF=x86_64-linux-gnu-readelf

@@ -39,6 +39,12 @@ layer12_und_resolvable() {
     android/arm64-v8a)    triple="aarch64-linux-android" ;;
     android/armeabi-v7a)  triple="arm-linux-androideabi" ;;
     android/x86_64)       triple="x86_64-linux-android" ;;
+    tizen/armv7l|tizen/x86_64)
+      sysroot="$(_tizen_sysroot "$arch")" || {
+        fail "L12: the Tizen sysroot of $arch could not be unpacked"
+        return 0
+      }
+      ;;
     windows/*)
       na "UND resolvability is nm/ELF-based; a PE's imports are bound by the Windows loader at runtime — covered by the L13 LoadLibrary load test instead."
       return 0
@@ -72,7 +78,13 @@ layer12_und_resolvable() {
         return 0
       fi
       ;;
+    tizen)
+      search_dirs=("$sysroot/lib64" "$sysroot/usr/lib64" "$sysroot/lib" "$sysroot/usr/lib")
+      ;;
   esac
+  # The host's nm reads only its own arch: llvm-nm reads the Tizen ones.
+  local nm=nm
+  [[ "$platform" == tizen ]] && nm="$(_llvm_tool nm)"
 
   # Build exports union. Each NEEDED entry is resolved to its first match
   # under search_dirs. Missing system libs → warning (means our allowlist
@@ -102,7 +114,7 @@ layer12_und_resolvable() {
     # i=indirect, U=undefined. We want everything DEFINED — i.e. anything
     # that is NOT 'U'. The dynamic linker resolves UND of one .so against
     # any of these in another .so.
-    nm -D --defined-only --extern-only "$found" 2>/dev/null \
+    "$nm" -D --defined-only --extern-only "$found" 2>/dev/null \
       | awk '$2 != "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
       >> "$exports_db" || true
   done <<<"$deps"
@@ -114,10 +126,13 @@ layer12_und_resolvable() {
   # Linux only: also fold in the dynamic linker's exports. ld-linux-*.so
   # provides __libc_start_main, __cxa_finalize, dl_iterate_phdr, etc.,
   # which are referenced by binaries but rarely appear in NEEDED.
-  if [[ "$platform" == "linux" ]]; then
-    for ld in /lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*; do
+  if [[ "$platform" == "linux" || "$platform" == "tizen" ]]; then
+    # shellcheck disable=SC2206  # the globs expand here, on purpose
+    local lds=(/lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*)
+    [[ "$platform" == tizen ]] && lds=("$sysroot"/lib/ld-linux*.so.* "$sysroot"/lib64/ld-linux*.so.*)
+    for ld in "${lds[@]}"; do
       [[ -f "$ld" ]] || continue
-      nm -D --defined-only --extern-only "$ld" 2>/dev/null \
+      "$nm" -D --defined-only --extern-only "$ld" 2>/dev/null \
         | awk '$2 != "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
         >> "$exports_db" || true
     done
@@ -132,7 +147,7 @@ layer12_und_resolvable() {
   # with __ANDROID_API__ < 28 (added to bionic in 28), with a /dev/urandom
   # fallback, so the .so stays correct on the API-24 floor.
   local und_db="$(mktemp)"
-  if ! nm -D --undefined-only "$artifact" 2>/dev/null \
+  if ! "$nm" -D --undefined-only "$artifact" 2>/dev/null \
     | awk '$1 == "U" && $NF != "" {sub(/@.*/,"",$NF); print $NF}' \
     | sort -u > "$und_db"; then
     fail "L12 UND resolvability: nm failed on $(basename "$artifact")"
@@ -252,9 +267,11 @@ layer16_elf_invariants() {
   local platform="$1" arch="$2" artifact="$3" readelf="${4:-readelf}"
   phase l16
   case "$platform" in
-    linux|android) ;;
+    linux|android|tizen) ;;
     *) na "ELF loader invariants; $platform binaries are not ELF."; return 0 ;;
   esac
+  local floor="$LINUX_GLIBC_FLOOR"
+  [[ "$platform" == tizen ]] && floor="$TIZEN_GLIBC_FLOOR"
 
   local dyn
   dyn="$(LC_ALL=C "$readelf" -dW "$artifact" 2>/dev/null)"
@@ -303,10 +320,10 @@ layer16_elf_invariants() {
       | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/GLIBC_//' | sort -Vu | tail -1)"
     if [[ -z "$newest" ]]; then
       fail "L16 glibc floor: no GLIBC symbol versions read (tool failure)"
-    elif [[ "$(printf '%s\n%s\n' "$newest" "$LINUX_GLIBC_FLOOR" | sort -V | tail -1)" == "$LINUX_GLIBC_FLOOR" ]]; then
-      pass "L16 glibc floor: needs $newest (max $LINUX_GLIBC_FLOOR)"
+    elif [[ "$(printf '%s\n%s\n' "$newest" "$floor" | sort -V | tail -1)" == "$floor" ]]; then
+      pass "L16 glibc floor: needs $newest (max $floor)"
     else
-      fail "L16 glibc floor: needs $newest, above $LINUX_GLIBC_FLOOR"
+      fail "L16 glibc floor: needs $newest, above $floor"
     fi
   fi
   return 0

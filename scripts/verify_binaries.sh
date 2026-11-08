@@ -162,7 +162,7 @@ FILTER="${1:-}"
 # The checks live in scripts/verify/: common.sh first (the tables, the
 # result helpers and check_binary), then one file per platform. A new
 # platform adds its file to this list.
-for part in common linux android windows apple web; do
+for part in common linux android windows apple web tizen; do
   # shellcheck source=/dev/null
   source "$SCRIPT_DIR/verify/$part.sh"
 done

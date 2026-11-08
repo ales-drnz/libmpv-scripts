@@ -49,6 +49,7 @@ func dockerImages() []dockerImage {
 		{"linux", "Linux", "Ubuntu 20.04 native GCC 10 (glibc 2.31), host arch only"},
 		{"windows", "Windows", "GNU MinGW-w64 (x86_64) + llvm-mingw (arm64)"},
 		{"android", "Android", "base toolchain; the NDK is fetched per build"},
+		{"tizen", "Tizen", "clang + lld, Tizen 6.0 sysroot unpacked per build"},
 		{"verify", "Verify", "all cross-compilers + qemu + Wine for the load tests"},
 	}
 }
