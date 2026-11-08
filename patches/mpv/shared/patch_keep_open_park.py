@@ -31,8 +31,11 @@ Fix
     of the park, so the notification of pause finds it. A client that
     paused in the tail gets it once a resume let the output play out.
   - player/playloop.c set_pause_state(): an unpause clears it, and only
-    the pause of the park drains the output at EOF; any other pause at
-    EOF pauses at once, the tail kept for the resume.
+    the pause of the park, or one after the file ended, drains the output
+    at EOF; any other pause at EOF pauses at once, the tail kept for the
+    resume. After the end (keep-open=no, a pause in an on_unload or
+    on_after_end_file hook) no resume can play the tail: the idle core
+    closes a paused output without a drain, and the tail would go.
   - player/playloop.c reset_playback_state(): a seek and a new file
     clear it; player/loadfile.c terminate_playback, the end of every file
     (stop, the next file, an error), too, so the idle core after a stop
@@ -86,11 +89,14 @@ PLAYLOOP_C = [
     ('set_pause_state drain',
      '            bool eof = mpctx->audio_status == STATUS_EOF;\n'
      '            ao_set_paused(mpctx->ao, internal_paused, eof);\n',
-     f'            // {MARKER}: only the park drains the output at EOF.\n'
-     '            // A pause of the client in the tail pauses at once and\n'
-     '            // keeps the tail for the resume.\n'
+     f'            // {MARKER}: only the park, or a pause after the end of\n'
+     '            // the file, drains the output at EOF. A pause of the\n'
+     '            // client in the tail pauses at once and keeps the tail for\n'
+     '            // the resume; after the end the idle core closes a paused\n'
+     '            // output with no drain, and the tail would go.\n'
      '            bool eof = mpctx->audio_status == STATUS_EOF &&\n'
-     '                       mpctx->mak_keep_open_parked;\n'
+     '                       (mpctx->mak_keep_open_parked ||\n'
+     '                        mpctx->stop_play == AT_END_OF_FILE);\n'
      '            ao_set_paused(mpctx->ao, internal_paused, eof);\n'),
     ('reset_playback_state',
      '    mpctx->hrseek_active = false;\n'

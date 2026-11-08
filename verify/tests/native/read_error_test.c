@@ -81,7 +81,10 @@
 //             events, before a client gets any property change of it.
 //             END_FILE carries the entry's own duration and position at
 //             its close (mak_duration, mak_position): 1 s and 4 s, at the
-//             end; -1 for both for the missing file, which never opened.
+//             end less what the output still holds (gapless closes the file
+//             once the decoder is done: up to audio-buffer, which the
+//             untimed output drains only as fast as its thread runs); -1
+//             for both for the missing file, which never opened.
 //             Then n.flac paused at start=1.5 and stopped: reason stop,
 //             duration 4, position 1.5.
 // At each park on a read error with the seekable cache, eof-cached of
@@ -433,6 +436,8 @@ int main(int argc, char **argv)
             {MPV_END_FILE_REASON_EOF, 1}, {MPV_END_FILE_REASON_EOF, 4},
             {MPV_END_FILE_REASON_ERROR, -1}, {MPV_END_FILE_REASON_EOF, 1},
         };
+        double abuf = 0.2;
+        mt_double(h, "audio-buffer", &abuf);
         for (int i = 0; i < 4 && i < s.ends && s.patched; i++) {
             struct mak_end_file *e = &s.end[i];
             mt_check(e->reason == want[i].reason, "END_FILE %d: reason %d (%d)", i,
@@ -445,9 +450,10 @@ int main(int argc, char **argv)
             }
             mt_check(fabs(e->mak_duration - want[i].dur) < 0.02, "END_FILE %d: duration %.0f s "
                      "(%.3f)", i, want[i].dur, e->mak_duration);
-            mt_check(e->mak_position > want[i].dur - 0.1 && e->mak_position < want[i].dur + 0.05,
-                     "END_FILE %d: position at the end, %.0f s (%.3f)", i, want[i].dur,
-                     e->mak_position);
+            mt_check(e->mak_position > want[i].dur - abuf - 0.05 &&
+                     e->mak_position < want[i].dur + 0.05,
+                     "END_FILE %d: position at the end less the output buffer, %.0f s "
+                     "less %.2f (%.3f)", i, want[i].dur, abuf, e->mak_position);
         }
         const char *paused[] = {"loadfile", n4, "replace", "-1", "start=1.5,pause=yes", NULL};
         int loaded = s.loaded;

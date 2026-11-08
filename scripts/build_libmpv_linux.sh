@@ -70,9 +70,9 @@ JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # ── Linux-only dependency versions (centralised ones live in _versions.sh) ────
+# shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
 LIBPLACEBO_VERSION="7.349.0"
 LIBUNIBREAK_VERSION="6.1"
-LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Linux/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
@@ -139,91 +139,10 @@ check_toolchain() {
 #   autotools → $CROSS_AUTOTOOLS_HOST (--host=…)
 #   cmake     → -DCMAKE_TOOLCHAIN_FILE=$CROSS_CMAKE_FILE
 #   meson     → --cross-file=$CROSS_MESON_FILE
+# The deps other targets build the same way (zlib, bzip2, xz, libxml2,
+# speexdsp, rubberband, libplacebo, libsmb2, FFmpeg, mpv) are the
+# cross_build_* of _cross.sh; the font stack and the audio stubs are here.
 # =============================================================================
-
-build_zlib() {
-  [[ -f "$PREFIX/lib/libz.a" ]] && return
-  local src="$BUILD_DIR/src/zlib-$ZLIB_VERSION.tar.gz"
-  download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  # Append -Os so it wins over the global -O2 export (last -O flag wins),
-  # while keeping the LTO/visibility/security flags it carries — matches the
-  # bzip2 -Os below and the other platforms' size pass for the compression
-  # deps. DSP/crypto deps (openssl, rubberband in the GPL build) keep -O2 via
-  # the unchanged global export.
-  CHOST="$CROSS_TRIPLE" CFLAGS="$CFLAGS -Os" ./configure --prefix="$PREFIX" --static
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "zlib ✓"
-}
-
-build_bzip2() {
-  [[ -f "$PREFIX/lib/libbz2.a" ]] && return
-  local src="$BUILD_DIR/src/bzip2-$BZIP2_VERSION.tar.gz"
-  download "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-       -j"$JOBS" CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
-  install -m 644 libbz2.a "$PREFIX/lib/"
-  install -m 644 bzlib.h  "$PREFIX/include/"
-  popd >/dev/null
-  ok "bzip2 ✓"
-}
-
-build_xz() {
-  [[ -f "$PREFIX/lib/liblzma.a" ]] && return
-  local src="$BUILD_DIR/src/xz-$XZ_VERSION.tar.gz"
-  download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  # xz 5.8.x's configure aborts if its `-Werror`-usability probe trips on
-  # the build's non-default CFLAGS (LTO etc.). SKIP_WERROR_CHECK=yes is
-  # the upstream-sanctioned escape hatch — it only affects xz's own
-  # configure-time feature detection, not the built liblzma.
-  # -Os appended so it wins over the global -O2 export (see build_zlib).
-  CFLAGS="$CFLAGS -Os" \
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
-    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
-    --disable-scripts --disable-doc \
-    SKIP_WERROR_CHECK=yes
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "xz ✓"
-}
-
-build_expat() {
-  [[ -f "$PREFIX/lib/libexpat.a" ]] && return
-  local src="$BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.gz"
-  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
-    --without-docbook --without-examples --without-tests
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "expat ✓"
-}
-
-build_libxml2() {
-  [[ -f "$PREFIX/lib/libxml2.a" ]] && return
-  local src="$BUILD_DIR/src/libxml2-$LIBXML2_VERSION.tar.xz"
-  download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  # -Os appended so it wins over the global -O2 export (see build_zlib).
-  CFLAGS="$CFLAGS -Os" \
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
-    --without-python --without-readline --without-history \
-    --without-http --without-ftp --without-html \
-    --without-legacy --without-docbook --without-catalog \
-    --without-schematron --without-modules --without-debug \
-    --without-iconv --without-lzma --without-zlib
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "libxml2 ✓"
-}
 
 build_libpng() {
   [[ -f "$PREFIX/lib/libpng.a" ]] && return
@@ -341,22 +260,6 @@ build_libass() {
   ok "libass ✓"
 }
 
-build_speexdsp() {
-  [[ -f "$PREFIX/lib/libspeexdsp.a" ]] && return
-  # Source tarball from GitHub mirror — downloads.xiph.org is intermittently
-  # unreachable. The GitHub archive has no configure shipped (it's the source
-  # repo, not a release tarball), so autogen.sh has to run first.
-  local src="$BUILD_DIR/src/speexdsp-SpeexDSP-$SPEEXDSP_VERSION.tar.gz"
-  download "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-${SPEEXDSP_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  ./autogen.sh
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "speexdsp ✓"
-}
-
 build_libunibreak() {
   [[ -f "$PREFIX/lib/libunibreak.a" ]] && return
   local src="$BUILD_DIR/src/libunibreak-$LIBUNIBREAK_VERSION.tar.gz"
@@ -367,41 +270,6 @@ build_libunibreak() {
   make -j"$JOBS"; make install
   popd > /dev/null
   ok "libunibreak ✓"
-}
-
-build_rubberband() {
-  [[ -f "$PREFIX/lib/librubberband.a" ]] && return
-  local src="$BUILD_DIR/src/rubberband-$RUBBERBAND_VERSION.tar.bz2"
-  download "https://breakfastquay.com/files/releases/rubberband-${RUBBERBAND_VERSION}.tar.bz2" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  # rubberband 4.0+ uses unqualified `size_t` in src/common/mathmisc.{h,cpp};
-  # modern gcc/clang under -std=c++20 rejects it. Inject <stddef.h>. Idempotent.
-  python3 "$LIBMPV_SCRIPTS_ROOT/patches/rubberband/patch_rubberband_size_t.py" "$dir"
-  local bdir="$BUILD_DIR/build/rubberband"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  meson setup "$dir" --cross-file "$CROSS_MESON_FILE" \
-    --prefix="$PREFIX" --libdir=lib --buildtype=release --default-library=static \
-    -Dfft=builtin -Dresampler=speex -Dladspa=disabled -Dvamp=disabled -Djni=disabled
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "rubberband ✓"
-}
-
-build_libplacebo() {
-  [[ -f "$PREFIX/lib/libplacebo.a" ]] && return
-  local gitdir="$BUILD_DIR/src/libplacebo-git"
-  download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
-  git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
-  local bdir="$BUILD_DIR/build/libplacebo"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  meson setup "$gitdir" --cross-file "$CROSS_MESON_FILE" \
-    --prefix="$PREFIX" --buildtype=release --default-library=static \
-    -Dvulkan=disabled -Dshaderc=disabled -Dglslang=disabled \
-    -Dopengl=disabled -Dd3d11=disabled -Ddemos=false -Dtests=false
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "libplacebo ✓"
 }
 
 # OpenSSL Configure honours the exported CC/AR/RANLIB (cross-toolchain
@@ -417,46 +285,8 @@ build_openssl_linux() {
   build_openssl "$PREFIX" "$BUILD_DIR" "$openssl_target"
 }
 
-build_libsmb2() {
-  [[ -f "$PREFIX/lib/libsmb2.a" ]] && return
-  log "Building libsmb2 $LIBSMB2_TAG..."
-  local dir="$BUILD_DIR/src/libsmb2"
-  download_git "https://github.com/sahlberg/libsmb2.git" "$dir" "$LIBSMB2_TAG"
-
-  local bdir="$BUILD_DIR/build/libsmb2"
-  rm -rf "$bdir"
-  mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  cmake "$dir" -DCMAKE_TOOLCHAIN_FILE="$CROSS_CMAKE_FILE" \
-    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_INSTALL_LIBDIR=lib \
-    -GNinja
-  ninja -j"$JOBS"
-  ninja install
-  apply_libsmb2_post_install_fixes "$PREFIX" "linux"
-  popd >/dev/null
-  ok "libsmb2 ✓"
-}
-
 build_ffmpeg() {
-  [[ -f "$PREFIX/lib/libavcodec.a" ]] && return
-  log "Building ffmpeg $FFMPEG_VERSION..."
-  local src="$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION.tar.gz"
-  download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
-  # A pristine tree on every build: src/ survives cleanup_build, and a
-  # reused tree would keep the result of older patches.
-  rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  patch_record_start ffmpeg "$PREFIX"
-  apply_ffmpeg_patches "$dir"
-
-  local bdir="$BUILD_DIR/build/ffmpeg"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  "$dir/configure" \
-    --prefix="$PREFIX" \
-    $(ffmpeg_common_args) \
+  cross_build_ffmpeg linux \
     $FFMPEG_CROSS_ARGS \
     --disable-libxcb \
     --disable-libxcb-shm \
@@ -464,10 +294,6 @@ build_ffmpeg() {
     --disable-libxcb-shape \
     --extra-cflags="$(eh_frame_cflags)" \
     --extra-libs="-lm -lpthread -ldl"
-  verify_ffmpeg_config "$bdir" "linux"
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "ffmpeg ✓"
 }
 
 # ── Audio client libraries as lazily loaded stubs ────────────────────────────
@@ -560,16 +386,8 @@ make_stub() {
 build_mpv() {
   [[ -f "$PREFIX/lib/libmpv.so" ]] && return
   log "Building mpv $MPV_VERSION..."
-  local src="$BUILD_DIR/src/mpv-$MPV_VERSION.tar.gz"
-  download "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz" "$src"
-  # A pristine tree on every build: src/ survives cleanup_build, and the mpv
-  # patches assume an unpatched tree (see build_libmpv_android.sh).
-  rm -rf "$BUILD_DIR/src/mpv-$MPV_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  local bdir="$BUILD_DIR/build/mpv"; mkdir -p "$bdir"
-  patch_record_start mpv "$PREFIX"
-  apply_mpv_patches_common "$dir"
-  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/linux/patch_optional_audio_libs.py" "$dir"
+  cross_mpv_source
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/linux/patch_optional_audio_libs.py" "$CROSS_MPV_DIR"
 
   # ELF dynsym hygiene + section dead-strip + transitive-static linkage:
   #   --gc-sections           drop unreferenced sections (audio-only build)
@@ -602,11 +420,10 @@ build_mpv() {
     link_extra+=("-Dcpp_link_args=$ld_args $extra_libs")
   fi
 
-  pushd "$bdir" >/dev/null
   # The stub .pc files come first, so libpipewire-0.3 and libpulse resolve to
   # the stubs (see build_audio_stubs).
   PKG_CONFIG_LIBDIR="$STUBS_DIR/pkgconfig:$PKG_CONFIG_LIBDIR" \
-  meson setup "$dir" --cross-file "$CROSS_MESON_FILE" \
+  cross_mpv_build linux --cross-file "$CROSS_MESON_FILE" \
     --prefix="$PREFIX" \
     --buildtype=release \
     --default-library=shared \
@@ -616,10 +433,6 @@ build_mpv() {
     -Dpipewire=enabled \
     -Dc_args="$(eh_frame_cflags)" \
     "${link_extra[@]}"
-  verify_mpv_config "$bdir" "linux"
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "mpv ✓"
 }
 
 # =============================================================================
@@ -704,9 +517,13 @@ main() {
   check_toolchain
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build" "$PREFIX/include" "$PREFIX/lib"
 
-  build_zlib
-  build_bzip2
-  build_xz
+  # The compression deps take -Os on top of the global flags (the last -O
+  # wins), keeping the LTO, visibility and section flags; bzip2 has no
+  # configure and takes its whole CFLAGS. DSP and crypto deps (openssl,
+  # rubberband in the GPL build) keep -O2.
+  CFLAGS="$CFLAGS -Os" cross_build_zlib
+  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="$CFLAGS -Os" cross_build_xz
   build_audio_stubs
 
   # Font stack — built ONLY when libass is kept (strip_libass disabled in
@@ -715,7 +532,7 @@ main() {
   # libass) is dead weight and skipped. mpv re-detects libass via pkg-config
   # when these are present; see libass_stripped() in _audio_only.sh.
   if ! libass_stripped; then
-    build_expat
+    cross_build_expat
     build_libpng
     build_freetype
     build_fribidi
@@ -726,17 +543,17 @@ main() {
     build_libass
   fi
 
-  build_speexdsp
+  cross_build_speexdsp
   # librubberband (GPL-2.0+) only in the GPL build (gpl_build in _audio_only.sh).
   if gpl_build; then
-    build_rubberband
+    cross_build_rubberband
   fi
 
-  build_libplacebo
+  cross_build_libplacebo
 
   build_openssl_linux
-  build_libsmb2
-  build_libxml2
+  cross_build_libsmb2
+  CFLAGS="$CFLAGS -Os" cross_build_libxml2
   build_ffmpeg
 
   build_mpv

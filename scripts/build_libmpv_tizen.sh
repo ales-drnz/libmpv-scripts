@@ -40,6 +40,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/shared/_helpers.sh"
 source "$SCRIPT_DIR/shared/_versions.sh"
 source "$SCRIPT_DIR/shared/_audio_only.sh"
+source "$SCRIPT_DIR/shared/_cross.sh"
 source "$SCRIPT_DIR/build_openssl.sh"
 
 # ── Parse args ────────────────────────────────────────────────────────────────
@@ -80,8 +81,7 @@ esac
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
-LIBPLACEBO_VERSION="7.349.0"
-LIBSMB2_TAG="v${LIBSMB2_VERSION}"
+export LIBPLACEBO_VERSION="7.349.0"
 
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Tizen/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
@@ -199,7 +199,12 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 EOF
 
-  CROSS_AUTOTOOLS_HOST="--host=$TRIPLE"
+  # What the cross_build_* of _cross.sh read: the configure host, the places
+  # and the triple.
+  export CROSS_AUTOTOOLS_HOST="--host=$TRIPLE"
+  export CROSS_BUILD_DIR="$BUILD_DIR"
+  export CROSS_PREFIX_DIR="$PREFIX"
+  export CROSS_TRIPLE="$TRIPLE"
   FFMPEG_CROSS_ARGS="--enable-cross-compile --cross-prefix=$TRIPLE- --cc=$CC --cxx=$CXX --target-os=linux $FFMPEG_ARCH_ARGS --pkg-config=$PKG_CONFIG"
 
   LTO_EXTRA="$(lto_deps_cflags)"
@@ -223,137 +228,15 @@ check_toolchain() {
 }
 
 # =============================================================================
-# Library builds, as in build_libmpv_linux.sh (only what the audio-only Tizen
-# libmpv links: libass is stripped and the audio client stubs are not built).
+# The dependencies are the shared cross_build_* of _cross.sh, on the toolchain
+# of setup_toolchain (only what the audio-only Tizen libmpv links: libass is
+# stripped and the audio client stubs are not built). FFmpeg and mpv take
+# the Tizen arguments here.
 # =============================================================================
 
-build_zlib() {
-  [[ -f "$PREFIX/lib/libz.a" ]] && return
-  local src="$BUILD_DIR/src/zlib-$ZLIB_VERSION.tar.gz"
-  download "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CHOST="$TRIPLE" CFLAGS="$CFLAGS -Os" ./configure --prefix="$PREFIX" --static
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "zlib ✓"
-}
-
-build_bzip2() {
-  [[ -f "$PREFIX/lib/libbz2.a" ]] && return
-  local src="$BUILD_DIR/src/bzip2-$BZIP2_VERSION.tar.gz"
-  download "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  make CC="$CC" AR="$AR" RANLIB="$RANLIB" \
-       -j"$JOBS" CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" libbz2.a
-  install -m 644 libbz2.a "$PREFIX/lib/"
-  install -m 644 bzlib.h  "$PREFIX/include/"
-  popd >/dev/null
-  ok "bzip2 ✓"
-}
-
-build_xz() {
-  [[ -f "$PREFIX/lib/liblzma.a" ]] && return
-  local src="$BUILD_DIR/src/xz-$XZ_VERSION.tar.gz"
-  download "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$CFLAGS -Os" \
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
-    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo \
-    --disable-scripts --disable-doc \
-    SKIP_WERROR_CHECK=yes
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "xz ✓"
-}
-
-build_libxml2() {
-  [[ -f "$PREFIX/lib/libxml2.a" ]] && return
-  local src="$BUILD_DIR/src/libxml2-$LIBXML2_VERSION.tar.xz"
-  download "https://download.gnome.org/sources/libxml2/${LIBXML2_VERSION%.*}/libxml2-${LIBXML2_VERSION}.tar.xz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  CFLAGS="$CFLAGS -Os" \
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared \
-    --without-python --without-readline --without-history \
-    --without-http --without-ftp --without-html \
-    --without-legacy --without-docbook --without-catalog \
-    --without-schematron --without-modules --without-debug \
-    --without-iconv --without-lzma --without-zlib
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "libxml2 ✓"
-}
-
-build_speexdsp() {
-  [[ -f "$PREFIX/lib/libspeexdsp.a" ]] && return
-  local src="$BUILD_DIR/src/speexdsp-SpeexDSP-$SPEEXDSP_VERSION.tar.gz"
-  download "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-${SPEEXDSP_VERSION}.tar.gz" "$src"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  pushd "$dir" >/dev/null
-  ./autogen.sh
-  # speexdsp's NEON code is for aarch64 and armv7 hard float only.
-  ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared --disable-neon
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "speexdsp ✓"
-}
-
-build_libplacebo() {
-  [[ -f "$PREFIX/lib/libplacebo.a" ]] && return
-  local gitdir="$BUILD_DIR/src/libplacebo-git"
-  download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
-  git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
-  local bdir="$BUILD_DIR/build/libplacebo"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  meson setup "$gitdir" --cross-file "$CROSS_MESON_FILE" \
-    --prefix="$PREFIX" --libdir=lib --buildtype=release --default-library=static \
-    -Dvulkan=disabled -Dshaderc=disabled -Dglslang=disabled \
-    -Dopengl=disabled -Dd3d11=disabled -Ddemos=false -Dtests=false
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "libplacebo ✓"
-}
-
-build_libsmb2() {
-  [[ -f "$PREFIX/lib/libsmb2.a" ]] && return
-  log "Building libsmb2 $LIBSMB2_TAG..."
-  local dir="$BUILD_DIR/src/libsmb2"
-  download_git "https://github.com/sahlberg/libsmb2.git" "$dir" "$LIBSMB2_TAG"
-  local bdir="$BUILD_DIR/build/libsmb2"
-  rm -rf "$bdir"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  cmake "$dir" -DCMAKE_TOOLCHAIN_FILE="$CROSS_CMAKE_FILE" \
-    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_INSTALL_LIBDIR=lib \
-    -GNinja
-  ninja -j"$JOBS"; ninja install
-  apply_libsmb2_post_install_fixes "$PREFIX" "linux"
-  popd >/dev/null
-  ok "libsmb2 ✓"
-}
-
 build_ffmpeg() {
-  [[ -f "$PREFIX/lib/libavcodec.a" ]] && return
-  log "Building ffmpeg $FFMPEG_VERSION..."
-  local src="$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION.tar.gz"
-  download "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$src"
-  rm -rf "$BUILD_DIR/src/ffmpeg-$FFMPEG_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  patch_record_start ffmpeg "$PREFIX"
-  apply_ffmpeg_patches "$dir"
-
-  local bdir="$BUILD_DIR/build/ffmpeg"; mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  # shellcheck disable=SC2046,SC2086
-  "$dir/configure" \
-    --prefix="$PREFIX" \
-    $(ffmpeg_common_args) \
+  # shellcheck disable=SC2086
+  cross_build_ffmpeg tizen \
     $FFMPEG_CROSS_ARGS \
     --disable-libxcb \
     --disable-libxcb-shm \
@@ -361,40 +244,26 @@ build_ffmpeg() {
     --disable-libxcb-shape \
     --extra-cflags="$(eh_frame_cflags)" \
     --extra-libs="-lm -lpthread -ldl"
-  verify_ffmpeg_config "$bdir" "tizen"
-  make -j"$JOBS"; make install
-  popd >/dev/null
-  ok "ffmpeg ✓"
 }
 
 build_mpv() {
   [[ -f "$PREFIX/lib/libmpv.so" ]] && return
   log "Building mpv $MPV_VERSION..."
-  local src="$BUILD_DIR/src/mpv-$MPV_VERSION.tar.gz"
-  download "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz" "$src"
-  rm -rf "$BUILD_DIR/src/mpv-$MPV_VERSION"
-  local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
-  local bdir="$BUILD_DIR/build/mpv"; mkdir -p "$bdir"
-  patch_record_start mpv "$PREFIX"
-  apply_mpv_patches_common "$dir"
-  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/tizen/patch_ao_tizen.py" "$dir"
+  cross_mpv_source
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/tizen/patch_ao_tizen.py" "$CROSS_MPV_DIR"
   record_patch ao_tizen
 
   # As on Linux (see build_libmpv_linux.sh), with libgcc and libstdc++
   # (libplacebo) linked in: the library needs only glibc and the two audio
   # APIs of the system.
-  local link_extra=()
   local ld_args
   ld_args="-static-libgcc -static-libstdc++ -Wl,--gc-sections,--exclude-libs=ALL,--no-undefined,--as-needed$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
   [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
     ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
   local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"
-  link_extra+=("-Dc_link_args=$ld_args $extra_libs")
-  link_extra+=("-Dcpp_link_args=$ld_args $extra_libs")
 
-  pushd "$bdir" >/dev/null
   # shellcheck disable=SC2046
-  meson setup "$dir" --cross-file "$CROSS_MESON_FILE" \
+  cross_mpv_build tizen --cross-file "$CROSS_MESON_FILE" \
     --prefix="$PREFIX" \
     --libdir=lib \
     --buildtype=release \
@@ -405,11 +274,8 @@ build_mpv() {
     -Dpulse=disabled \
     -Dpipewire=disabled \
     -Dc_args="$(eh_frame_cflags)" \
-    "${link_extra[@]}"
-  verify_mpv_config "$bdir" "tizen"
-  ninja -j"$JOBS"; ninja install
-  popd >/dev/null
-  ok "mpv ✓"
+    "-Dc_link_args=$ld_args $extra_libs" \
+    "-Dcpp_link_args=$ld_args $extra_libs"
 }
 
 # =============================================================================
@@ -461,14 +327,14 @@ main() {
   setup_toolchain
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
-  build_zlib
-  build_bzip2
-  build_xz
-  build_speexdsp
-  build_libplacebo
+  CFLAGS="$CFLAGS -Os" cross_build_zlib
+  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="$CFLAGS -Os" cross_build_xz
+  cross_build_speexdsp
+  cross_build_libplacebo
   build_openssl "$PREFIX" "$BUILD_DIR" "$OPENSSL_TARGET" "$OPENSSL_EXTRA"
-  build_libsmb2
-  build_libxml2
+  cross_build_libsmb2
+  CFLAGS="$CFLAGS -Os" cross_build_libxml2
   build_ffmpeg
   build_mpv
 
