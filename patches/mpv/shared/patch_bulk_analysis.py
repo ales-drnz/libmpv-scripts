@@ -185,6 +185,7 @@ Files patched
     player/mak_property_headers.inc   the includes the getters need
     player/mak_property_getters.inc   the getter/setter
     player/mak_property_table.inc     the property entries
+    player/command.c       duration-estimated notified with duration
     player/main.c          setup in mp_create, teardown in mp_destroy
     options/options.h/.c   the waveform-duration-hint option
     meson.build            new source files added to the build
@@ -210,8 +211,9 @@ The C sources are REAL files in `bulk_analysis/` next to this script:
     mak_feed.h/.c       cache-fed engine for a seekable network file
     mak_demux_feed.h/.c packet feed queue between demuxer and engine
     demux_feed_insert.c mak_demux_feed_attach, appended to demux/demux.c
-    waveform_command_insert.c  property getter/setter block added to
-                        player/mak_property_getters.inc
+    waveform_command_insert.c  property getters and setter added to
+                        player/mak_property_getters.inc (waveform-data,
+                        waveform-enabled, duration-estimated)
 
 This script is only the applier: it copies the sources into the tree
 and performs the anchored edits below. Tuning notes: BINS=2000 sizes
@@ -337,6 +339,7 @@ COMMAND_TABLE = (
     '    /* ' + MARKER + ' */\n'
     '    {"waveform-data", mp_property_waveform_data},\n'
     '    {"waveform-enabled", mp_property_waveform_enabled},\n'
+    '    {"duration-estimated", mp_property_duration_estimated},\n'
 )
 
 # The getter/setter, bulk_analysis/waveform_command_insert.c, goes in
@@ -347,6 +350,15 @@ COMMAND_INCLUDE = (
     '#include "audio/mak_scan.h"\n'
     '#include "audio/mak_waveform.h"\n'
     '#include "demux/demux.h"\n'
+)
+
+
+# duration-estimated changes with the duration: the same event notifies it.
+# Pristine line lifted from mpv 0.41.0.
+COMMAND_EVENT_PRISTINE = '    E(MP_EVENT_DURATION_UPDATE, "duration"),\n'
+COMMAND_EVENT_PATCHED = (
+    '    /* ' + MARKER + ' */\n'
+    '    E(MP_EVENT_DURATION_UPDATE, "duration", "duration-estimated"),\n'
 )
 
 
@@ -391,8 +403,9 @@ MAIN_CREATE_PATCHED = (
 # Whether lavf estimated the duration from the bitrate (an MP3 without a
 # Xing header, a body whose length a server guessed). The waveform of a
 # stream with a duration hint takes the hint over such a duration (see
-# mak_scan_start). Copied to the player's demuxer with the duration.
-# Pristine lines lifted from mpv 0.41.0.
+# mak_scan_start), and the property duration-estimated tells a client,
+# which may hold the real length. Copied to the player's demuxer with the
+# duration. Pristine lines lifted from mpv 0.41.0.
 DEMUX_H_EDITS = [
     ('demuxer field',
      '    double duration;  // -1 if unknown\n',
@@ -641,6 +654,9 @@ def apply(p):
     seam.headers(p, COMMAND_INCLUDE)
     seam.table(p, COMMAND_TABLE)
     seam.getters(p, p.asset('bulk_analysis/waveform_command_insert.c'))
+    p.edits('player/command.c', [
+        ('duration-estimated event', COMMAND_EVENT_PRISTINE, COMMAND_EVENT_PATCHED),
+    ])
     p.edits('options/options.h', [
         ('MPOpts field', OPTIONS_H_PRISTINE, OPTIONS_H_PATCHED),
     ])
