@@ -69,6 +69,25 @@ Fix
     and its device loses what it still held (keep-open, as the package
     sets it, waits for it).
 
+A pull output paused in that final latency lost it too. buffer.c resumed
+a pull output only while it was playing, which it no longer is once its
+callback read the last sample: set_pause() never started the device
+again, the rest stayed in it, and end_time_ns, left in the past, made it
+played out at once. While paused, ao_get_delay() counted end_time_ns
+down, and time-pos crept to the end. PipeWire, WASAPI and AAudio pause
+in hardware; an output without set_pause() resets its device on a pause,
+and what it held goes (upstream as well).
+
+  - audio/out/buffer.c ao_get_delay(): a pull output paused in hardware
+    returns the delay saved at the pause (queued_time_ns), and the pause
+    and the resume set it under the buffer lock, with hw_paused, so a
+    read in between never sees the old one. Until libmpv-r23 this was
+    fix 4 of patch_audiotrack.py, on Android only: there an AudioTrack
+    buffer, about 140 ms, on PipeWire a quantum.
+  - audio/out/buffer.c ao_set_paused(): the resume starts a pull output
+    paused in hardware also when its callback read the last sample, and
+    end_time_ns waits again for the rest.
+
 No new state: one locked read of the queue per pass while the output
 stands still at the end of a file.
 
@@ -129,22 +148,39 @@ BUFFER_C = [(
     f'// {MARKER}: whether the output played all it was given, in one\n'
     '// locked read: not playing, nothing queued, and for a pull output that\n'
     '// is not paused the device past the last sample its callback read.\n'
+    '// Paused, whether nothing is left for the resume: nothing queued, and\n'
+    '// the device holds nothing, by what its hardware pause kept (the delay\n'
+    '// of a push output at the pause, the rest of a pull output). Only while\n'
+    '// hw_paused: ao_reset() and the resume clear it, and prepause_state of\n'
+    '// an earlier pause outlives them. p->playing says nothing then:\n'
+    '// ao_start() after a seek in pause sets it, and the output thread that\n'
+    '// would clear it waits for the resume.\n'
     '// Otherwise *wait (if set) is the time still to wait for that, 0 if\n'
-    '// the output still plays or waits for data.\n'
+    '// the output still plays, waits for data or is paused.\n'
     'bool ao_played_out(struct ao *ao, double *wait)\n'
     '{\n'
     '    struct buffer_state *p = ao->buffer_state;\n'
     '    double left = 0;\n'
     '\n'
     '    mp_mutex_lock(&p->lock);\n'
-    '    bool done = !p->playing && mp_async_queue_get_samples(p->queue) <= 0 &&\n'
-    '                !(!ao->driver->write_frames && p->pending &&\n'
-    '                  mp_aframe_get_size(p->pending) > 0);\n'
-    '    if (done && !ao->driver->write && !p->paused) {\n'
-    '        int64_t now = mp_time_ns();\n'
-    '        if (p->end_time_ns > now) {\n'
-    '            left = MP_TIME_NS_TO_S(p->end_time_ns - now);\n'
-    '            done = false;\n'
+    '    bool queued = mp_async_queue_get_samples(p->queue) > 0 ||\n'
+    '                  (!ao->driver->write_frames && p->pending &&\n'
+    '                   mp_aframe_get_size(p->pending) > 0);\n'
+    '    bool done;\n'
+    '    if (p->paused) {\n'
+    '        double held = 0;\n'
+    '        if (p->hw_paused)\n'
+    '            held = ao->driver->write ? p->prepause_state.delay\n'
+    '                                     : MP_TIME_NS_TO_S(p->queued_time_ns);\n'
+    '        done = !queued && held <= 0;\n'
+    '    } else {\n'
+    '        done = !p->playing && !queued;\n'
+    '        if (done && !ao->driver->write) {\n'
+    '            int64_t now = mp_time_ns();\n'
+    '            if (p->end_time_ns > now) {\n'
+    '                left = MP_TIME_NS_TO_S(p->end_time_ns - now);\n'
+    '                done = false;\n'
+    '            }\n'
     '        }\n'
     '    }\n'
     '    mp_mutex_unlock(&p->lock);\n'
@@ -153,6 +189,46 @@ BUFFER_C = [(
     '        *wait = left;\n'
     '    return done;\n'
     '}\n',
+), (
+    '    } else {\n'
+    '        int64_t end = p->end_time_ns;\n',
+    f'    }} else if (p->hw_paused) {{\n'
+    f'        // {MARKER}: paused in hardware, the device plays\n'
+    '        // nothing: the delay is the one saved at the pause, not one\n'
+    '        // that runs down on the clock.\n'
+    '        driver_delay = MPMAX(0, MP_TIME_NS_TO_S(p->queued_time_ns));\n'
+    '    } else {\n'
+    '        int64_t end = p->end_time_ns;\n',
+), (
+    '                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n',
+    '                is_hw_paused = p->hw_paused = !!ao->driver->set_pause;\n'
+    f'                // {MARKER}: saved with hw_paused, under the lock\n'
+    '                // ao_get_delay takes.\n'
+    '                if (is_hw_paused)\n'
+    '                    p->queued_time_ns = p->end_time_ns - mp_time_ns();\n',
+), (
+    '    } else if (p->playing && p->paused && !paused) {\n',
+    f'    // {MARKER}: a pull output paused in hardware after its callback\n'
+    '    // read the last sample still holds the rest in its device.\n'
+    '    } else if ((p->playing || (!ao->driver->write && p->hw_paused)) &&\n'
+    '               p->paused && !paused) {\n',
+), (
+    '            is_hw_paused = p->hw_paused;\n'
+    '            p->hw_paused = false;\n',
+    '            is_hw_paused = p->hw_paused;\n'
+    '            p->hw_paused = false;\n'
+    f'            // {MARKER}\n'
+    '            if (is_hw_paused)\n'
+    '                p->end_time_ns = p->queued_time_ns + mp_time_ns();\n',
+), (
+    '                ao->driver->set_pause(ao, true);\n'
+    '                p->queued_time_ns = p->end_time_ns - mp_time_ns();\n'
+    '            } else {\n'
+    '                p->end_time_ns = p->queued_time_ns + mp_time_ns();\n'
+    '                ao->driver->set_pause(ao, false);\n',
+    f'                ao->driver->set_pause(ao, true); /* {MARKER} */\n'
+    '            } else {\n'
+    '                ao->driver->set_pause(ao, false);\n',
 )]
 
 AUDIO_C = [

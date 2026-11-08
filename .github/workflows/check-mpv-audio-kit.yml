@@ -585,20 +585,22 @@ jobs:
 
   # '[android emu]' runs only this job, '[full check]' adds it to the rest:
   # test_app's Android integration tests on emulators (API 24, 29 and 34,
-  # google_apis, x86_64) against the Android libraries of LIBS_RUN. It
+  # google_apis, and an Android TV of API 36, the first TV image in
+  # x86_64; all x86_64) against the Android libraries of LIBS_RUN. It
   # carries the audiotrack checks (F277 thread at rest during a pause or an
   # underrun, F276 no audio lost at pause, F278 output reopened after
   # audioserver dies), which no runner without an emulator can see, the
   # players of an isolate or an engine that goes away (F170), the media
-  # session through Media3 (media_session_test) and its service through a
-  # call (android_focus_foreground_test, F172). Each file ends pass, fail
+  # session through Media3 (media_session_test), the media keys of a remote
+  # through it (android_remote_keys_test), and its service through a call
+  # (android_focus_foreground_test, F172). Each file ends pass, fail
   # or infra (android_emulator.sh): only fail fails the job, infra is a
   # warning and a line of the summary, and a release needs zero fail and
   # its infra files run again.
   android-emu:
     needs: plan
     if: needs.plan.outputs.android == 'true'
-    name: Android emulator API ${{ matrix.api }}
+    name: Android emulator API ${{ matrix.api }}${{ matrix.target == 'android-tv' && ' TV' || '' }}
     runs-on: ubuntu-24.04
     # Six files of at most two 8 minute tries each, plus the boot: a job cut
     # by its timeout could not tell infra from fail.
@@ -606,7 +608,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [24, 29, 34]
+        include:
+          - {api: 24, target: google_apis}
+          - {api: 29, target: google_apis}
+          - {api: 34, target: google_apis}
+          # A TV profile: with the default phone screen the SystemUI of the
+          # TV image crashes in a loop and takes the tests down with it.
+          - {api: 36, target: android-tv, profile: tv_1080p}
     defaults:
       run:
         shell: bash
@@ -650,22 +658,77 @@ jobs:
           flutter pub get
           flutter build apk --debug
       - name: Integration tests on the emulator
+        if: matrix.target != 'android-tv'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api }}
-          target: google_apis
+          target: ${{ matrix.target }}
+          profile: ${{ matrix.profile }}
           arch: x86_64
           force-avd-creation: false
           # No -noaudio: the audiotrack checks need the emulated audio device,
           # which consumes frames at real time even with no host sound card.
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}
+          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           working-directory: kit/test_app
+      # The Android TV image without the emulator runner: right after the
+      # boot its adbd goes away for a moment, and the runner's own adb calls
+      # (keyevent 82) failed the step before any test. Same options, and a
+      # wait for an adb that answers twice in a row.
+      - name: Integration tests on the Android TV emulator
+        if: matrix.target == 'android-tv'
+        working-directory: kit/test_app
+        env:
+          API: ${{ matrix.api }}
+        run: |
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          image="system-images;android-$API;android-tv;x86_64"
+          # adb for this step and for android_emulator.sh, as the runner
+          # puts it on the path of its own steps.
+          export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+          yes | "$tools/sdkmanager" --licenses > /dev/null || true
+          # The runner's command-line tools read no SDK XML of version 4,
+          # which the image of API 36 has: newer ones first.
+          "$tools/sdkmanager" --install "cmdline-tools;latest" > /dev/null
+          for d in "$ANDROID_HOME"/cmdline-tools/latest-*/bin; do [ -x "$d/avdmanager" ] && tools=$d; done
+          "$tools/sdkmanager" --install emulator platform-tools "$image" > /dev/null
+          # One AVD home for avdmanager and the emulator: the newer tools
+          # put the AVD elsewhere by default.
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$tools/avdmanager" create avd --force -n tv --package "$image" --device tv_1080p \
+            -p "$ANDROID_AVD_HOME/tv.avd"
+          [ -f "$ANDROID_AVD_HOME/tv.avd/config.ini" ] || {
+            "$tools/avdmanager" list avd; echo "::error::avdmanager made no AVD"; exit 1; }
+          [ -f "$ANDROID_AVD_HOME/tv.ini" ] || printf 'path=%s\npath.rel=avd/tv.avd\ntarget=android-%s\n' \
+            "$ANDROID_AVD_HOME/tv.avd" "$API" > "$ANDROID_AVD_HOME/tv.ini"
+          printf 'hw.cpu.ncore=2\n' >> "$ANDROID_AVD_HOME/tv.avd/config.ini"
+          "$ANDROID_HOME/emulator/emulator" -avd tv -no-window -gpu swiftshader_indirect \
+            -no-boot-anim -no-snapshot -camera-back none > emu-boot.log 2>&1 &
+          adb wait-for-device
+          ok=0
+          for i in $(seq 1 300); do
+            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then
+              ok=$((ok + 1))
+              [ $ok -ge 2 ] && break
+            else
+              ok=0
+            fi
+            sleep 3
+          done
+          [ $ok -ge 2 ] || { tail -40 emu-boot.log; echo "::error::the TV emulator did not boot"; exit 1; }
+          adb shell settings put global window_animation_scale 0 || true
+          adb shell settings put global transition_animation_scale 0 || true
+          adb shell settings put global animator_duration_scale 0 || true
+          # The emulator's own log, for an emulator that goes away.
+          mkdir -p emu-logs
+          trap 'cp emu-boot.log emu-logs/' EXIT
+          bash ../../scripts/.github/diag/android_emulator.sh "$API-tv"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: android-emu-${{ matrix.api }}
+          name: android-emu-${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           path: kit/test_app/emu-logs
 
   # '[native]' runs only this job: the C tests of the
