@@ -15,6 +15,15 @@
 //   other   a.flac analyzed, then b.flac: a new scan (the control)
 //   loudon  a.flac analyzed with the waveform only, the loudness scan turned
 //           on, a.flac again: a new scan, as the loudness has no result
+//   track   two.mka with aid=1 analyzed, then with aid=2: a new scan
+//   ext     a.flac analyzed, then a.flac with b.flac as an external track
+//           (aid=2): not the main file's ready result
+//   fd      a.flac as fdclose://N analyzed, stopped, then b.flac opened on
+//           the same number N: a new scan
+//   rewrite a copy of a.flac analyzed, then b.flac (also 30 s) copied over
+//           it: a new scan
+#include <fcntl.h>
+#include <sys/stat.h>
 #include "analysis_test.h"
 
 static void analyze(mpv_handle *h, const char *file, int loud,
@@ -28,6 +37,38 @@ static void analyze(mpv_handle *h, const char *file, int loud,
     if (loud)
         mt_check(!strcmp(l->state, "ready"), "its loudness is ready (%s)",
                  l->state);
+}
+
+static void load_opts(mpv_handle *h, const char *file, const char *opts)
+{
+    const char *l[] = {"loadfile", file, "replace", "-1", opts, NULL};
+    if (mpv_command(h, l) < 0)
+        printf("     loadfile %s %s failed\n", file, opts);
+}
+
+static void copy_file(const char *from, const char *to)
+{
+    FILE *in = fopen(from, "rb"), *out = fopen(to, "wb");
+    char buf[65536];
+    size_t n;
+    while (in && out && (n = fread(buf, 1, sizeof buf, in)) > 0)
+        fwrite(buf, 1, n, out);
+    if (in) fclose(in);
+    if (out) fclose(out);
+}
+
+// A new scan right after FILE_LOADED: the waveform is not ready.
+static void expect_rescan(mpv_handle *h, const char *what)
+{
+    struct an_wave w;
+    struct an_loud l;
+    mt_check(an_wait_event(h, MPV_EVENT_FILE_LOADED, 40), "loaded again");
+    an_wave_read(h, &w);
+    an_loud_read(h, &l);
+    printf("     after FILE_LOADED: waveform %s, loudness %s\n", w.state, l.state);
+    mt_check(strcmp(w.state, "ready") != 0, "%s is scanned again (%s)", what,
+             w.state);
+    an_wave_free(&w);
 }
 
 // The states right after the next FILE_LOADED, before any poll.
@@ -55,7 +96,7 @@ static void same_result(const struct an_wave *a, const struct an_loud *la,
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s same|loop|other|loudon <fixtures> <tmpdir>\n",
+        fprintf(stderr, "usage: %s same|loop|other|loudon|track|ext|fd|rewrite <fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
@@ -111,6 +152,46 @@ int main(int argc, char **argv)
         mt_check(!strcmp(w2.state, "ready") && !strcmp(l2.state, "ready"),
                  "the loudness turned on gets its result (%s, %s)",
                  w2.state, l2.state);
+    } else if (!strcmp(mode, "track")) {
+        char mka[1024];
+        snprintf(mka, sizeof mka, "%s/two.mka", argv[2]);
+        an_flag(h, "loudness-scan-enabled", 1);
+        mpv_set_property_string(h, "pause", "yes");
+        load_opts(h, mka, "aid=1");
+        mt_check(an_wait_event(h, MPV_EVENT_FILE_LOADED, 15), "aid=1 loaded");
+        an_wait_final(h, 1, 1, 30, &w1, &l1);
+        load_opts(h, mka, "aid=2");
+        expect_rescan(h, "the other track");
+    } else if (!strcmp(mode, "ext")) {
+        char opts[1200];
+        snprintf(opts, sizeof opts, "audio-files-append=%s,aid=2", b);
+        an_flag(h, "loudness-scan-enabled", 1);
+        mpv_set_property_string(h, "pause", "yes");
+        analyze(h, a, 1, &w1, &l1);
+        load_opts(h, a, opts);
+        expect_rescan(h, "the external track");
+    } else if (!strcmp(mode, "fd")) {
+        mpv_set_property_string(h, "pause", "yes");
+        int fa = open(a, O_RDONLY);
+        char url[64];
+        snprintf(url, sizeof url, "fdclose://%d", fa);
+        analyze(h, url, 0, &w1, &l1);
+        mt_cmd(h, "stop", NULL, NULL, NULL);
+        an_pump(h, 1.0, MPV_EVENT_NONE);
+        int fb = open(b, O_RDONLY);
+        printf("     a.flac was descriptor %d, b.flac is %d\n", fa, fb);
+        mt_check(fb == fa, "b.flac got the same number");
+        mt_cmd(h, "loadfile", url, NULL, NULL);
+        expect_rescan(h, "another file on the same descriptor number");
+    } else if (!strcmp(mode, "rewrite")) {
+        char copy[1200];
+        snprintf(copy, sizeof copy, "%s/rewrite.flac", argv[3]);
+        copy_file(a, copy);
+        mpv_set_property_string(h, "pause", "yes");
+        analyze(h, copy, 0, &w1, &l1);
+        copy_file(b, copy);
+        mt_cmd(h, "loadfile", copy, NULL, NULL);
+        expect_rescan(h, "the file written again");
     } else {
         fprintf(stderr, "unknown mode %s\n", mode);
         return 2;
