@@ -778,6 +778,49 @@ static int scan_file_fd(const char *url, struct demuxer *demuxer,
 }
 #endif
 
+/* The last scan started, to keep its result when the same file is loaded
+ * again (F166): a playlist of one entry with loop-playlist wraps by
+ * loading it again, and each FILE_LOADED decoded the whole file once
+ * more (over SMB, a new download) for the result the client already
+ * holds. Each player's core thread calls mak_scan_start, hence the lock. */
+static char  *g_last_url;
+static double g_last_duration, g_last_hint;
+static int    g_last_gen;
+static mp_mutex g_last_lock = MP_STATIC_MUTEX_INITIALIZER;
+
+/* Whether [url] is the last scan's file, its analysis complete: the same
+ * URL and duration, its envelope READY in the generation it started (no
+ * scan or stop came since), and the loudness READY when it is on (one
+ * turned on since then has no result yet). A live, progressive or
+ * rolling source never turns READY in its own pass, so it starts again. */
+static bool scan_still_ready(const char *url, double duration_secs,
+                             double duration_hint)
+{
+    mp_mutex_lock(&g_last_lock);
+    bool same = g_last_url && !strcmp(g_last_url, url) &&
+                fabs(g_last_duration - duration_secs) < 0.5 &&
+                fabs(g_last_hint - duration_hint) < 0.5 &&
+                g_last_gen != 0 && mak_waveform_ready_gen() == g_last_gen;
+    mp_mutex_unlock(&g_last_lock);
+#if __has_include("audio/mak_loudness.h")
+    if (same && mak_loudness_is_enabled() && !mak_loudness_is_ready())
+        same = false;
+#endif
+    return same;
+}
+
+static void scan_remember(const char *url, double duration_secs,
+                          double duration_hint, int gen)
+{
+    mp_mutex_lock(&g_last_lock);
+    free(g_last_url);
+    g_last_url = strdup(url);
+    g_last_duration = duration_secs;
+    g_last_hint = duration_hint;
+    g_last_gen = g_last_url ? gen : 0;
+    mp_mutex_unlock(&g_last_lock);
+}
+
 void mak_scan_start(const char *url, double duration_secs,
                     double duration_hint,
                     const char *format_name, bool is_network,
@@ -792,10 +835,18 @@ void mak_scan_start(const char *url, double duration_secs,
 #endif
     if (!mak_waveform_is_enabled()) return;
 
+    /* The same file again, its analysis complete: the result stays. */
+    if (scan_still_ready(url, duration_secs, duration_hint)) {
+        if (log)
+            mp_verbose(log, "analysis: same file, the result stays\n");
+        return;
+    }
+
     /* Bump the generation up front so any in-flight coordinator/workers and
      * af-tap folds from the previous track self-cancel, and reset the visible
      * state to "decoding". */
     int new_gen = mak_waveform_begin_generation();
+    scan_remember(url, duration_secs, duration_hint, new_gen);
 
     /* ── LIVE PCM (mak-pcm://<id>): roll, never re-open ─────────────────
      * The source is read once, by the player: a second open is refused and

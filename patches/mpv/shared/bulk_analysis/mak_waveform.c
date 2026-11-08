@@ -172,6 +172,15 @@ int mak_waveform_begin_generation(void)
     return new_gen;
 }
 
+int mak_waveform_ready_gen(void)
+{
+    mp_mutex_lock(&g_wave_lock);
+    int gen = g_wave.state == MAK_WAVE_READY
+            ? atomic_load(&g_wave.current_gen) : 0;
+    mp_mutex_unlock(&g_wave_lock);
+    return gen;
+}
+
 void mak_waveform_mark_decoding(int gen) { set_state_if_current(gen, MAK_WAVE_DECODING); }
 void mak_waveform_mark_failed(int gen)   { set_state_if_current(gen, MAK_WAVE_FAILED); }
 

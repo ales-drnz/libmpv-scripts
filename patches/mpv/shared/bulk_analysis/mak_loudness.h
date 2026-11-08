@@ -126,6 +126,7 @@ bool mak_loudness_is_enabled(void);
 
 /* Whether the published state is "scanning" (a pass is in flight). */
 bool mak_loudness_is_scanning(void);
+bool mak_loudness_is_ready(void);
 
 /* Builds an MPV_FORMAT_NODE_MAP:
  *   { state, integrated_lufs, lra_lu, sample_peak, true_peak,
