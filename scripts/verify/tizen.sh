@@ -9,26 +9,6 @@
 # common.sh and linux.sh. Sourced by verify_binaries.sh. Do not run
 # directly.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Layer 12 — UND symbol resolvability
-# ─────────────────────────────────────────────────────────────────────────────
-# The dynamic linker, at runtime, resolves every UND (st_shndx=SHN_UNDEF)
-# symbol against the union of exports from all NEEDED libraries. If a UND
-# symbol has no provider, the load fails. Layer 12 simulates that lookup
-# offline by:
-#   1. Resolving each NEEDED library to a real .so on the container's
-#      filesystem (Linux: /lib/<triple>/, Android: NDK sysroot stubs at
-#      /ndk-sysroot/<arch>/, mounted from the host by the build orchestrator).
-#   2. Building a sorted union of exported symbol names across all those
-#      .so files using `readelf -W --dyn-syms`.
-#   3. Diff'ing the binary's UND set against that union via comm -23.
-#   4. Filtering the diff against a whitelist of well-known weak symbols
-#      and loader stubs that don't need a NEEDED provider (gmon, ITM,
-#      __cxa_finalize fallback, etc.).
-# Anything left is a runtime-load failure waiting to happen.
-#
-# Args: $1 = platform, $2 = arch (x86_64|aarch64|arm64-v8a|x86),
-#       $3 = artifact path, $4 = newline-separated NEEDED list
 # An llvm tool (nm, readelf, objdump, clang): llvm-mingw's in the verify
 # image, else the one on PATH. They read and target every arch.
 _llvm_tool() {
