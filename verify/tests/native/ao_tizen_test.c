@@ -21,12 +21,19 @@
 //   pause     pause 0.5 s and resume: no frame lost or repeated
 //   seek      pause, reset, resume: nothing from before the seek
 //   underrun  the source runs dry for 1 s: no spinning, audio comes back
-//   delay     the time ao_read_data is given is when the frame is heard
+//   delay     the time ao_read_data is given is when the read's last frame
+//             is heard, as buffer.c reads it
 //   race      100 pauses and resumes a few ms apart, some between the
 //             driver's check and its write: nothing lost or repeated
 //   seekrace  30 seeks, some in the middle of a read: nothing from before
 //             a seek plays after it
-//   refuse    the device refuses writes for 0.5 s: no spinning, nothing lost
+//   refuse    the device refuses writes for 0.5 s: no spinning, nothing
+//             lost, no reload
+//   fast      the device's clock runs 2% fast: the delay stays right
+//   slow      the device's clock runs 2% slow: the delay stays right
+//   dead      the device refuses every write: one reload is asked
+//   noresume  the device refuses a resume: one reload is asked
+//   short     a write takes at most 300 frames: nothing lost or repeated
 //   format    the formats and layouts the device is opened with
 #include <math.h>
 #include <stdarg.h>
@@ -91,6 +98,13 @@ static atomic_bool device_quit, device_refuses;
 // race: a write is held this long before it takes the handle's lock, as a
 // thread descheduled between its check of the state and its call would be.
 static atomic_int write_lag_ms;
+// short: a write takes at most this many frames, and says how many.
+static atomic_int write_max;
+// noresume: the next resume fails.
+static atomic_bool resume_fails;
+// fast, slow: the device's clock against the system's.
+static double device_speed = 1.0;
+static atomic_int reloads;
 // seekrace: a read takes this long, so a reset can come in the middle.
 static atomic_int read_lag_ms;
 static struct sound_stream_info_s { int unused; } sim_info;
@@ -102,7 +116,7 @@ static void *device_thread(void *arg)
     while (!atomic_load(&device_quit)) {
         sleep_ms(1);
         double t = now_s();
-        budget += (t - last) * RATE;
+        budget += (t - last) * RATE * device_speed;
         last = t;
         int n = (int)budget;
         budget -= n;
@@ -203,6 +217,8 @@ int audio_out_pause(audio_out_h s)
 }
 int audio_out_resume(audio_out_h s)
 {
+    if (atomic_exchange(&resume_fails, false))
+        return AUDIO_IO_ERROR_INVALID_OPERATION;
     return sim_state(s, SIM_PAUSED, SIM_RUNNING, AUDIO_IO_ERROR_INVALID_STATE, false);
 }
 int audio_out_flush(audio_out_h s)
@@ -219,6 +235,8 @@ int audio_out_write(audio_out_h s, void *buffer, unsigned int length)
     pthread_mutex_lock(&sim_lock);
     int frame = bytes_of(s->type) * s->channels;
     int frames = length / frame, done = 0, ret;
+    if (atomic_load(&write_max))
+        frames = MPMIN(frames, atomic_load(&write_max));
     if (s->state != SIM_RUNNING || atomic_load(&device_refuses)) {
         atomic_fetch_add(&refused_writes, 1);
         ret = AUDIO_IO_ERROR_INVALID_OPERATION;
@@ -243,7 +261,7 @@ int audio_out_write(audio_out_h s, void *buffer, unsigned int length)
             goto out;
         }
     }
-    ret = length;
+    ret = done * frame;
 out:
     pthread_mutex_unlock(&sim_lock);
     pthread_mutex_unlock(&s->handle);
@@ -283,6 +301,12 @@ void mp_msg(struct mp_log *log, int lev, const char *format, ...)
 }
 
 int mp_msg_level(struct mp_log *log) { (void)log; return MSGL_V; }
+
+void ao_request_reload(struct ao *ao)
+{
+    (void)ao;
+    atomic_fetch_add(&reloads, 1);
+}
 
 int64_t mp_time_ns(void)
 {
@@ -427,6 +451,28 @@ static int64_t heard_at(int64_t id)
     return ns;
 }
 
+// For each read whose out_time is from since_ns on, when its last frame
+// was heard against the out_time the driver gave (positive: heard later).
+static int delay_errors(int64_t since_ns, double *mean, double *worst)
+{
+    double sum = 0;
+    int n = 0, nr = MPMIN(atomic_load(&reads), READS_MAX);
+    *worst = 0;
+    for (int i = 10; i < nr - 10; i++) {
+        if (read_out_ns[i] < since_ns)
+            continue;
+        int64_t at = heard_at(read_first[i] + RATE * CHUNK_MS / 1000 - 1);
+        if (!at)
+            continue;
+        double err = (at - read_out_ns[i]) / 1e6;
+        *worst = MPMAX(*worst, fabs(err));
+        sum += err;
+        n++;
+    }
+    *mean = n ? sum / n : 0;
+    return n;
+}
+
 static int format_mode(void)
 {
     static const struct {
@@ -462,7 +508,7 @@ static int format_mode(void)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|refuse|format\n", argv[0]);
+        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|refuse|fast|slow|dead|noresume|short|format\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
@@ -473,6 +519,12 @@ int main(int argc, char **argv)
         goto done;
     }
 
+    if (!strcmp(mode, "fast"))
+        device_speed = 1.02;
+    else if (!strcmp(mode, "slow"))
+        device_speed = 0.98;
+    else if (!strcmp(mode, "short"))
+        atomic_store(&write_max, 300);
     struct ao *ao = open_ao(AF_FORMAT_FLOAT, 2, RATE);
     sleep_ms(200);
     check(played_count() == 0, "nothing plays before start (%d frames)", played_count());
@@ -533,22 +585,43 @@ int main(int argc, char **argv)
         check(first && took < 0.25, "audio comes back (%.0f ms)", took * 1000);
     } else if (!strcmp(mode, "delay")) {
         sleep_ms(1500);
-        // Each read after the stream filled: when the driver said its first
-        // frame would play, against when it played.
-        double worst = 0, sum = 0;
-        int n = 0, nr = MPMIN(atomic_load(&reads), READS_MAX);
-        for (int i = 10; i < nr - 10; i++) {
-            int64_t at = heard_at(read_first[i]);
-            if (!at)
-                continue;
-            double err = (at - read_out_ns[i]) / 1e6;
-            worst = MPMAX(worst, fabs(err));
-            sum += err;
-            n++;
-        }
-        printf("delay: %d reads, mean error %.1f ms, worst %.1f ms\n", n, n ? sum / n : 0, worst);
+        // Each read after the stream filled.
+        double mean, worst;
+        int n = delay_errors(0, &mean, &worst);
+        printf("delay: %d reads, mean error %.1f ms, worst %.1f ms\n", n, mean, worst);
         check(n > 40, "reads measured (%d)", n);
-        check(worst < 30, "out_time is when the frame is heard (worst %.1f ms)", worst);
+        check(fabs(mean) < 5 && worst < 15,
+              "out_time is when the read's last frame is heard (mean %.1f ms, worst %.1f ms)",
+              mean, worst);
+    } else if (!strcmp(mode, "fast") || !strcmp(mode, "slow")) {
+        // 3 s at 2% off is 60 ms: the reads of the last second.
+        sleep_ms(2500);
+        int64_t since = mp_time_ns();
+        sleep_ms(1000);
+        double mean, worst;
+        int n = delay_errors(since, &mean, &worst);
+        printf("%s: %d reads, mean error %.1f ms, worst %.1f ms\n", mode, n, mean, worst);
+        check(n > 20, "reads measured (%d)", n);
+        check(fabs(mean) < 10 && worst < 25,
+              "the delay follows the device's clock (mean %.1f ms, worst %.1f ms)",
+              mean, worst);
+        check_whole(0, mode);
+    } else if (!strcmp(mode, "dead") || !strcmp(mode, "noresume")) {
+        if (!strcmp(mode, "dead")) {
+            atomic_store(&device_refuses, true);
+        } else {
+            player_pause(ao, true);
+            atomic_store(&resume_fails, true);
+            player_pause(ao, false);
+        }
+        sleep_ms(2500);
+        check(atomic_load(&reloads) == 1, "one reload is asked (%d)",
+              atomic_load(&reloads));
+        atomic_store(&device_refuses, false);
+    } else if (!strcmp(mode, "short")) {
+        sleep_ms(1000);
+        check(played_count() > RATE, "the stream plays (%d frames)", played_count());
+        check_whole(0, "short writes");
     } else if (!strcmp(mode, "race")) {
         atomic_store(&write_lag_ms, 5);
         unsigned seed = 1;
@@ -603,6 +676,8 @@ int main(int argc, char **argv)
         check(played_count() > p0 + RATE / 4, "the stream plays again (%d frames)",
               played_count() - p0);
         check_whole(0, "across the refusal");
+        check(atomic_load(&reloads) == 0, "no reload for a short refusal (%d)",
+              atomic_load(&reloads));
     } else {
         fprintf(stderr, "unknown mode %s\n", mode);
         return 2;

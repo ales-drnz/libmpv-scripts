@@ -17,6 +17,13 @@
  *   clock from the last start or resume, so the queue is what was written
  *   past them, never below 0 (an underrun) nor above the frames written.
  *   The latency of the sink after the stream is not seen.
+ * - The device's clock is not the system's. A write that waited for room
+ *   returns with the stream full, so the queue then is the stream's size,
+ *   taken at the first such write: each later one moves the frames heard
+ *   an eighth of the way to it.
+ * - A write may take part of the chunk: the rest stays pending.
+ * - A device that refuses every write for a second (lost, or a resume that
+ *   failed) asks mpv once to open the output again.
  * - The device takes 8 to 192 kHz, mono or stereo, 16 or 32 bit: mpv
  *   converts the rest. The stream is of the media type, and the playback
  *   focus is the app's to take. */
@@ -41,6 +48,9 @@
 // The frames of one write, and how far ahead the stream is filled.
 #define CHUNK_MS 20
 #define BUFFER_MS 100
+// A write this long waited for room; failing this long, the device is gone.
+#define WAITED_NS MP_TIME_MS_TO_NS(CHUNK_MS / 2)
+#define DEAD_NS MP_TIME_S_TO_NS(1)
 
 enum tz_state { TZ_STOPPED, TZ_PLAYING, TZ_PAUSED };
 
@@ -62,6 +72,9 @@ struct priv {
     int64_t heard_base;         // frames heard at the clock's anchor
     int64_t anchor_ns;          // last start or resume, 0 when paused
     bool warned;                // a failed write was logged
+    int64_t full;               // the queue of a full stream, 0 until seen
+    int64_t failing_ns;         // first failed write in a row, 0 if none
+    bool reload_asked;
 
     void *chunk;
     int chunk_samples;
@@ -100,7 +113,8 @@ static MP_THREAD_VOID playthread(void *arg)
         if (heard_locked(ao, now) >= p->written)
             anchor_locked(ao, now, true);   // dry: the clock starts again
         if (!p->pending) {
-            int64_t queued = p->written - heard_locked(ao, now);
+            // When the chunk's last frame is heard, as buffer.c reads it.
+            int64_t queued = p->written - heard_locked(ao, now) + p->chunk_samples;
             int64_t out = now + MP_TIME_S_TO_NS(queued / (double)ao->samplerate);
             mp_mutex_unlock(&p->lock);
             ao_read_data(ao, &p->chunk, p->chunk_samples, out, NULL, true, false);
@@ -113,20 +127,43 @@ static MP_THREAD_VOID playthread(void *arg)
         }
         int samples = p->pending;
         mp_mutex_unlock(&p->lock);
+        int64_t t0 = mp_time_ns();
         int ret = audio_out_write(p->out, p->chunk, samples * ao->sstride);
+        now = mp_time_ns();
         mp_mutex_lock(&p->lock);
         if (gen != p->generation)
             continue;                   // flushed by a reset
-        if (ret >= 0) {
-            p->written += samples;
-            p->pending = 0;
+        int done = ret > 0 ? MPMIN(ret / ao->sstride, samples) : 0;
+        if (done) {
+            p->written += done;
+            p->pending -= done;
+            if (p->pending) {
+                memmove(p->chunk, (char *)p->chunk + done * ao->sstride,
+                        p->pending * ao->sstride);
+            }
             p->warned = false;
+            p->failing_ns = 0;
+            p->reload_asked = false;
+            if (!p->pending && now - t0 >= WAITED_NS && p->anchor_ns) {
+                int64_t queued = p->written - heard_locked(ao, now);
+                if (!p->full)
+                    p->full = queued;
+                else
+                    p->heard_base += (queued - p->full) / 8;
+            }
         } else if (p->state == TZ_PLAYING) {
             // Not a pause that came first: the device refused. The chunk
             // is tried again, without spinning.
             if (!p->warned)
                 MP_WARN(ao, "audio_out_write failed: %d\n", ret);
             p->warned = true;
+            if (!p->failing_ns)
+                p->failing_ns = now;
+            if (now - p->failing_ns >= DEAD_NS && !p->reload_asked) {
+                MP_ERR(ao, "the device refuses every write, reopening\n");
+                p->reload_asked = true;
+                ao_request_reload(ao);
+            }
             mp_cond_timedwait(&p->wakeup, &p->lock, MP_TIME_MS_TO_NS(100));
         }
     }
