@@ -10,6 +10,12 @@
 //          3 s of the second format (it covered 0.25 s, sized on the first)
 //   free   the taps turned off: the ring's buffer is freed (it was kept
 //          for the life of the process, up to 256 MB)
+//   flip   two players tapping one label at two formats, frame after frame:
+//          the ring keeps the buffer it grew to (it was freed and allocated
+//          again on every frame, up to 16 MB)
+//   rearm  a writer of label A while the taps go from A to X and back: the
+//          slot armed for X, which nobody writes, stays empty (a writer that
+//          found A's slot before the change wrote A's audio into it)
 //   race   a writer changing format, three readers of audio-tap-frames and
 //          the taps turned on and off, on five threads for 4 s: no use after
 //          free of a reallocated ring (AddressSanitizer)
@@ -82,11 +88,16 @@ static void drop(struct mp_aframe *f)
     free(f);
 }
 
-static void write_one(int rate, int channels, double pts)
+static void write_label(const char *label, int rate, int channels, double pts)
 {
     struct mp_aframe *f = frame(rate, channels, 1024, pts);
-    mak_tap_write("t", true, f);
+    mak_tap_write(label, true, f);
     drop(f);
+}
+
+static void write_one(int rate, int channels, double pts)
+{
+    write_label("t", rate, channels, pts);
 }
 
 static double covered_secs(const struct tap_ring *r)
@@ -124,6 +135,14 @@ static void *reader(void *arg)
     return NULL;
 }
 
+static void *writer_a(void *arg)
+{
+    (void)arg;
+    for (double pts = 0; !atomic_load(&stop); pts += 0.02)
+        write_label("A", 48000, 2, pts);
+    return NULL;
+}
+
 static void *toggler(void *arg)
 {
     (void)arg;
@@ -153,11 +172,11 @@ int main(int argc, char **argv)
         check(s >= TAP_BUFFER_SECONDS - 0.01,
               "the ring covers %.1f s of the format it holds (%.2f s)",
               TAP_BUFFER_SECONDS, s);
+        size_t grown = ring->alloc_bytes;
         write_one(8000, 1, 2);
         s = covered_secs(ring);
-        check(s >= TAP_BUFFER_SECONDS - 0.01 &&
-              ring->alloc_bytes <= 2 * TAP_BUFFER_SECONDS * 8000 * sizeof(float),
-              "back at 8 kHz mono it is sized for it again (%.2f s in %zu bytes)",
+        check(s >= TAP_BUFFER_SECONDS - 0.01 && ring->alloc_bytes == grown,
+              "back at 8 kHz mono it keeps the buffer it grew to (%.2f s in %zu bytes)",
               s, ring->alloc_bytes);
     } else if (!strcmp(mode, "free")) {
         mak_tap_set_active("t");
@@ -171,6 +190,43 @@ int main(int argc, char **argv)
         write_one(8000, 1, 1);
         check(ring->buf != NULL && covered_secs(ring) >= TAP_BUFFER_SECONDS - 0.01,
               "tapped again: a new ring for the format (%.2f s)", covered_secs(ring));
+    } else if (!strcmp(mode, "flip")) {
+        mak_tap_set_active("t");
+        write_one(48000, 2, 0);
+        write_one(8000, 1, 0);
+        uint8_t *buf = ring->buf;
+        int moved = 0;
+        for (int i = 0; i < 200; i++) {
+            write_one(i % 2 ? 8000 : 48000, i % 2 ? 1 : 2, i * 0.02);
+            moved += ring->buf != buf;
+        }
+        check(moved == 0, "200 frames at two formats keep one buffer "
+              "(%d allocated again)", moved);
+        check(covered_secs(ring) >= TAP_BUFFER_SECONDS - 0.01,
+              "and it covers 3 s of either (%.2f s)", covered_secs(ring));
+    } else if (!strcmp(mode, "rearm")) {
+        pthread_t w;
+        mak_tap_set_active("A");
+        pthread_create(&w, NULL, writer_a, NULL);
+        int dirty = 0, rounds = 0;
+        double t0 = (double)clock() / CLOCKS_PER_SEC;
+        while ((double)clock() / CLOCKS_PER_SEC - t0 < 3 && !dirty) {
+            mak_tap_set_active("A");
+            usleep(200);
+            mak_tap_set_active("X");
+            usleep(500);
+            mp_mutex_lock(&g_tap_write_lock);
+            for (int i = 0; i < MAK_TAP_MAX; i++)
+                if (!strcmp(g_tap.slots[i].name, "X") &&
+                    g_tap.slots[i].post.valid_bytes > 0)
+                    dirty++;
+            mp_mutex_unlock(&g_tap_write_lock);
+            rounds++;
+        }
+        atomic_store(&stop, true);
+        pthread_join(w, NULL);
+        check(!dirty, "the slot of X holds no audio of A (%d rounds)", rounds);
+        mak_tap_set_active("");
     } else if (!strcmp(mode, "race")) {
         mak_tap_set_active("t");
         pthread_t w, r[3], t;
