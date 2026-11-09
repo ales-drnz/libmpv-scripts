@@ -1029,6 +1029,13 @@ verify_mpv_config() {
       assert_define "$cfg" "HAVE_PULSE"       "0"
       assert_define "$cfg" "HAVE_PIPEWIRE"    "0"
       ;;
+    webos)
+      # ALSA, the one sound API of the NDK's sysroot: no PulseAudio nor
+      # PipeWire there.
+      assert_define "$cfg" "HAVE_ALSA"     "1"
+      assert_define "$cfg" "HAVE_PULSE"    "0"
+      assert_define "$cfg" "HAVE_PIPEWIRE" "0"
+      ;;
   esac
 
   ok "mpv config audit passed ($platform)"
@@ -1498,6 +1505,9 @@ LINUX_GLIBC_FLOOR="2.31"
 # On Tizen: a TV of 2021 runs Tizen 6.0, whose glibc 2.30 is the sysroot's
 # (scripts/tizen/tizen_sysroot.py).
 TIZEN_GLIBC_FLOOR="2.30"
+# On webOS: webOS 26 is the first the TVs run Flutter apps on, and its
+# glibc 2.39 is the NDK's sysroot (the webos Docker stage).
+WEBOS_GLIBC_FLOOR="2.39"
 
 # assert_glibc_floor <elf> <max> <readelf> — die if <elf> needs a GLIBC_x.y
 # symbol version newer than <max>.
