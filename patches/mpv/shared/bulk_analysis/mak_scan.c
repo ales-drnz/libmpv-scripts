@@ -12,6 +12,10 @@
  *
  * See patch_bulk_analysis.py for benchmark numbers and the design rationale. */
 #include "audio/mak_scan_internal.h"
+/* stat() of the file of a URL (scan_file_stamp); osdep/io.h makes it
+ * mpv's mp_stat on Windows, with UTF-8 paths. */
+#include <sys/stat.h>
+#include "osdep/io.h"
 
 /* ─── coordinator ─────────────────────────────────────────────────── */
 
