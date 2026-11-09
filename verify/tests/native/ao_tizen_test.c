@@ -14,8 +14,9 @@
 // each frame with the time it played it. Each source frame carries its
 // index in the left sample, silence is 0.
 // The test drives the driver as buffer.c drives a pull output: ao_read_data
-// returns nothing while the source underruns, a pause calls set_pause, a
-// seek calls reset and then start.
+// returns nothing while the source underruns, and nothing with the buffer
+// as it was when it does not block and the lock is held; a pause calls
+// set_pause, a seek calls reset and then start.
 // modes:
 //   play      a second of audio, whole and in order
 //   pause     pause 0.5 s and resume: no frame lost or repeated
@@ -34,6 +35,10 @@
 //   dead      the device refuses every write: one reload is asked
 //   noresume  the device refuses a resume: one reload is asked
 //   short     a write takes at most 300 frames: nothing lost or repeated
+//   busy      the core holds buffer.c's lock at every seventh read: no
+//             chunk is written twice
+//   clock     20 hours at 192 kHz without a pause: the frames heard are
+//             the clock's
 //   format    the formats and layouts the device is opened with
 #include <math.h>
 #include <stdarg.h>
@@ -344,14 +349,20 @@ bool ao_chmap_sel_adjust(struct ao *ao, const struct mp_chmap_sel *s,
 
 // The player side of buffer.c: dry, there is nothing to read.
 static atomic_bool src_dry;
+// busy: every read_busy_every-th read finds buffer.c's lock held.
+static atomic_int read_busy_every;
 static atomic_llong src_next = 1;
 static int64_t read_first[READS_MAX], read_out_ns[READS_MAX];
 
 int ao_read_data(struct ao *ao, void **data, int samples, int64_t out_time_ns,
                  bool *eof, bool pad_silence, bool blocking)
 {
-    (void)eof; (void)blocking;
+    (void)eof;
     int n = atomic_fetch_add(&reads, 1);
+    // buffer.c's trylock: nothing read, the buffer not touched.
+    int every = atomic_load(&read_busy_every);
+    if (!blocking && every && n % every == every - 1)
+        return 0;
     int32_t *f = data[0];
     int pos = 0;
     if (!atomic_load(&src_dry)) {
@@ -473,6 +484,25 @@ static int delay_errors(int64_t since_ns, double *mean, double *worst)
     return n;
 }
 
+// heard_locked on a clock that ran for hours from one anchor.
+static int clock_mode(void)
+{
+    struct ao *ao = talloc_zero(NULL, struct ao);
+    struct priv *p = talloc_zero_size(ao, sizeof(struct priv));
+    ao->priv = p;
+    ao->samplerate = 192000;
+    p->anchor_ns = 1;
+    p->written = INT64_MAX;
+    int64_t hours = 20;
+    int64_t want = hours * 3600 * ao->samplerate + ao->samplerate / 2;
+    int64_t got = heard_locked(ao, 1 + MP_TIME_S_TO_NS(hours * 3600) +
+                                   MP_TIME_MS_TO_NS(500));
+    check(got == want, "20 h at 192 kHz: %lld frames heard (%lld)",
+          (long long)want, (long long)got);
+    talloc_free(ao);
+    return 0;
+}
+
 static int format_mode(void)
 {
     static const struct {
@@ -508,7 +538,7 @@ static int format_mode(void)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|refuse|fast|slow|dead|noresume|short|format\n", argv[0]);
+        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|refuse|fast|slow|dead|noresume|short|busy|clock|format\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
@@ -516,6 +546,10 @@ int main(int argc, char **argv)
     pthread_create(&dev, NULL, device_thread, NULL);
     if (!strcmp(mode, "format")) {
         format_mode();
+        goto done;
+    }
+    if (!strcmp(mode, "clock")) {
+        clock_mode();
         goto done;
     }
 
@@ -622,6 +656,15 @@ int main(int argc, char **argv)
         sleep_ms(1000);
         check(played_count() > RATE, "the stream plays (%d frames)", played_count());
         check_whole(0, "short writes");
+    } else if (!strcmp(mode, "busy")) {
+        int r0 = atomic_load(&reads);
+        atomic_store(&read_busy_every, 7);
+        sleep_ms(1000);
+        atomic_store(&read_busy_every, 0);
+        check(atomic_load(&reads) - r0 > 21, "reads while the lock is held now and then (%d)",
+              atomic_load(&reads) - r0);
+        sleep_ms(200);
+        check_whole(0, "a busy lock");
     } else if (!strcmp(mode, "race")) {
         atomic_store(&write_lag_ms, 5);
         unsigned seed = 1;

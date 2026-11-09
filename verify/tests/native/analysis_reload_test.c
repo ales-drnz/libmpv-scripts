@@ -160,6 +160,8 @@ int main(int argc, char **argv)
         load_opts(h, mka, "aid=1");
         mt_check(an_wait_event(h, MPV_EVENT_FILE_LOADED, 15), "aid=1 loaded");
         an_wait_final(h, 1, 1, 30, &w1, &l1);
+        mt_check(!strcmp(w1.state, "ready"), "the waveform of aid=1 is ready (%s)",
+                 w1.state);
         load_opts(h, mka, "aid=2");
         expect_rescan(h, "the other track");
     } else if (!strcmp(mode, "ext")) {

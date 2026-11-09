@@ -117,7 +117,7 @@ static void *writer(void *arg)
     static const int formats[][2] = {{8000, 1}, {48000, 2}, {192000, 8}};
     double pts = 0;
     for (int i = 0; !atomic_load(&stop); i++) {
-        const int *fm = formats[i % 3];   // a new ring on every write
+        const int *fm = formats[i % 3];   // the ring grows, the toggler frees it
         write_one(fm[0], fm[1], pts);
         pts += 1024.0 / fm[0];
     }
@@ -156,7 +156,7 @@ static void *toggler(void *arg)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s grow|free|race\n", argv[0]);
+        fprintf(stderr, "usage: %s grow|free|flip|rearm|race\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
