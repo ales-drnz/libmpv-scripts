@@ -50,6 +50,7 @@ func dockerImages() []dockerImage {
 		{"windows", "Windows", "GNU MinGW-w64 (x86_64) + llvm-mingw (arm64)"},
 		{"android", "Android", "base toolchain; the NDK is fetched per build"},
 		{"tizen", "Tizen", "clang + lld, Tizen 6.0 sysroot unpacked per build"},
+		{"webos", "webOS", "LG's webOS NDK (GCC 13.3, glibc 2.39), x86_64 only"},
 		{"verify", "Verify", "all cross-compilers + qemu + Wine for the load tests"},
 	}
 }

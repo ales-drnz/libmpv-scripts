@@ -45,6 +45,12 @@ layer12_und_resolvable() {
         return 0
       }
       ;;
+    webos/armv7l)
+      sysroot="$(_webos_sysroot)" || {
+        fail "L12: the webOS sysroot could not be taken out of the NDK"
+        return 0
+      }
+      ;;
     windows/*)
       na "UND resolvability is nm/ELF-based; a PE's imports are bound by the Windows loader at runtime — covered by the L13 LoadLibrary load test instead."
       return 0
@@ -78,13 +84,13 @@ layer12_und_resolvable() {
         return 0
       fi
       ;;
-    tizen)
+    tizen|webos)
       search_dirs=("$sysroot/lib64" "$sysroot/usr/lib64" "$sysroot/lib" "$sysroot/usr/lib")
       ;;
   esac
   # The host's nm reads only its own arch: llvm-nm reads the Tizen ones.
   local nm=nm
-  [[ "$platform" == tizen ]] && nm="$(_llvm_tool nm)"
+  [[ "$platform" == tizen || "$platform" == webos ]] && nm="$(_llvm_tool nm)"
 
   # Build exports union. Each NEEDED entry is resolved to its first match
   # under search_dirs. Missing system libs → warning (means our allowlist
@@ -126,10 +132,10 @@ layer12_und_resolvable() {
   # Linux only: also fold in the dynamic linker's exports. ld-linux-*.so
   # provides __libc_start_main, __cxa_finalize, dl_iterate_phdr, etc.,
   # which are referenced by binaries but rarely appear in NEEDED.
-  if [[ "$platform" == "linux" || "$platform" == "tizen" ]]; then
+  if [[ "$platform" == "linux" || "$platform" == "tizen" || "$platform" == "webos" ]]; then
     # shellcheck disable=SC2206  # the globs expand here, on purpose
     local lds=(/lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*)
-    [[ "$platform" == tizen ]] && lds=("$sysroot"/lib/ld-linux*.so.* "$sysroot"/lib64/ld-linux*.so.*)
+    [[ "$platform" == tizen || "$platform" == webos ]] && lds=("$sysroot"/lib/ld-linux*.so.* "$sysroot"/lib64/ld-linux*.so.*)
     for ld in "${lds[@]}"; do
       [[ -f "$ld" ]] || continue
       "$nm" -D --defined-only --extern-only "$ld" 2>/dev/null \
@@ -267,11 +273,12 @@ layer16_elf_invariants() {
   local platform="$1" arch="$2" artifact="$3" readelf="${4:-readelf}"
   phase l16
   case "$platform" in
-    linux|android|tizen) ;;
+    linux|android|tizen|webos) ;;
     *) na "ELF loader invariants; $platform binaries are not ELF."; return 0 ;;
   esac
   local floor="$LINUX_GLIBC_FLOOR"
   [[ "$platform" == tizen ]] && floor="$TIZEN_GLIBC_FLOOR"
+  [[ "$platform" == webos ]] && floor="$WEBOS_GLIBC_FLOOR"
 
   local dyn
   dyn="$(LC_ALL=C "$readelf" -dW "$artifact" 2>/dev/null)"
