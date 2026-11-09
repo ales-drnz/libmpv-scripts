@@ -204,7 +204,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 
 # ══════════════════════════════════════════════════════════════════════════════
-# webos — LG's webOS NDK (GCC 13.3, glibc 2.39, ARM EABI softfp)
+# webos: LG's webOS NDK (GCC 13.3, glibc 2.39, ARM EABI softfp)
 # ══════════════════════════════════════════════════════════════════════════════
 # The NDK flutter-webos builds apps with, for webOS 26 TVs, installed from
 # LG's release at its checksum. Its licence (the installer's, accepted with

@@ -102,7 +102,7 @@ setup_sysroot() {
   local pc
   for pc in "$SYSROOT"/usr/lib/pkgconfig/*.pc "$SYSROOT"/usr/share/pkgconfig/*.pc; do
     [[ -f "$pc" ]] || continue
-    sed -E "s#^(prefix|exec_prefix|libdir|includedir)=/usr#\1=$SYSROOT/usr#" "$pc" > "$pcdir/$(basename "$pc")"
+    sed -E "s#^(prefix|exec_prefix|libdir|includedir)[[:space:]]*=[[:space:]]*/usr#\1=$SYSROOT/usr#" "$pc" > "$pcdir/$(basename "$pc")"
   done
   SYSROOT_PKGCONFIG="$pcdir"
 }

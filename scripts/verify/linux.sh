@@ -84,8 +84,13 @@ layer12_und_resolvable() {
         return 0
       fi
       ;;
-    tizen|webos)
+    tizen)
       search_dirs=("$sysroot/lib64" "$sysroot/usr/lib64" "$sysroot/lib" "$sysroot/usr/lib")
+      ;;
+    webos)
+      # A multilib tree: usr/lib64 is the TVs' 64-bit userland, and an
+      # app's armv7 libmpv binds the 32-bit one of usr/lib only.
+      search_dirs=("$sysroot/usr/lib")
       ;;
   esac
   # The host's nm reads only its own arch: llvm-nm reads the Tizen ones.
@@ -135,7 +140,8 @@ layer12_und_resolvable() {
   if [[ "$platform" == "linux" || "$platform" == "tizen" || "$platform" == "webos" ]]; then
     # shellcheck disable=SC2206  # the globs expand here, on purpose
     local lds=(/lib/ld-linux-${arch//-/_}.so.* /lib/ld-linux*.so.* /lib64/ld-linux*.so.*)
-    [[ "$platform" == tizen || "$platform" == webos ]] && lds=("$sysroot"/lib/ld-linux*.so.* "$sysroot"/lib64/ld-linux*.so.*)
+    [[ "$platform" == tizen ]] && lds=("$sysroot"/lib/ld-linux*.so.* "$sysroot"/lib64/ld-linux*.so.*)
+    [[ "$platform" == webos ]] && lds=("$sysroot"/usr/lib/ld-linux.so.3)
     for ld in "${lds[@]}"; do
       [[ -f "$ld" ]] || continue
       "$nm" -D --defined-only --extern-only "$ld" 2>/dev/null \

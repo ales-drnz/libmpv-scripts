@@ -590,6 +590,12 @@ jobs:
             -v "$PWD:/scripts" -w /scripts \
             -v "$sysroot:/ndk-sysroot:ro" \
             mpv-build-verify bash scripts/verify_binaries.sh
+      # L12 on webOS binds the 32-bit glibc of the NDK's multilib sysroot,
+      # which verify took out of the NDK above.
+      - name: webOS L12 on the 32-bit userland
+        run: |
+          docker run --rm -v "$PWD:/scripts" -w /scripts \
+            mpv-build-verify bash verify/tests/webos_l12_test.sh
 
   # The Linux x86_64 library on a system without PipeWire and PulseAudio:
   # debian:11 (glibc 2.31, the floor) with only libasound2 added. Initializes

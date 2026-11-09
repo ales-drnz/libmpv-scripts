@@ -10,13 +10,9 @@
 
 source "$LIBMPV_SCRIPTS_ROOT/scripts/webos/webos_ndk.sh"
 
-# The webOS sysroot: an installed NDK's that has the /lib qemu -L needs,
-# else the one taken out of the NDK's installer once (webos_ndk_sysroot).
+# The webOS sysroot, taken out of the NDK's installer once
+# (webos_ndk_sysroot): an installed NDK's has no /lib, which qemu -L needs.
 _webos_sysroot() {
-  local ndk="${WEBOS_NDK:-/opt/webos-ndk}/sysroots/$WEBOS_NDK_TARGET"
-  if [[ -f "$ndk/usr/lib/libc.so.6" && -e "$ndk/lib/ld-linux.so.3" ]]; then
-    echo "$ndk"; return 0
-  fi
   webos_ndk_sysroot "${WEBOS_SYSROOT_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/webOS/ndk}"
 }
 
