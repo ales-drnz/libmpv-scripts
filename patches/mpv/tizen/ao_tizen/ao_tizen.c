@@ -11,6 +11,8 @@
  *
  * - A chunk read while a pause arrives stays pending and is written first
  *   on the resume, so a pause loses nothing. A reset drops it.
+ * - The read blocks on buffer.c's lock: one that does not returns nothing
+ *   while the core holds it, and leaves the chunk as it was.
  * - Each reset bumps a generation: a write that was in flight across it
  *   counts for nothing, its frames were flushed.
  * - audio_out has no position or latency query. The frames heard follow the
@@ -84,8 +86,14 @@ static int64_t heard_locked(struct ao *ao, int64_t now)
 {
     struct priv *p = ao->priv;
     int64_t heard = p->heard_base;
-    if (p->anchor_ns)
-        heard += (now - p->anchor_ns) * ao->samplerate / INT64_C(1000000000);
+    if (p->anchor_ns) {
+        // Seconds and the rest apart: gapless play never moves the anchor,
+        // and the product of the whole time overflows after 13 hours at
+        // 192 kHz.
+        int64_t ns = now - p->anchor_ns;
+        heard += ns / INT64_C(1000000000) * ao->samplerate +
+                 ns % INT64_C(1000000000) * ao->samplerate / INT64_C(1000000000);
+    }
     return MPCLAMP(heard, 0, p->written);
 }
 
@@ -117,7 +125,12 @@ static MP_THREAD_VOID playthread(void *arg)
             int64_t queued = p->written - heard_locked(ao, now) + p->chunk_samples;
             int64_t out = now + MP_TIME_S_TO_NS(queued / (double)ao->samplerate);
             mp_mutex_unlock(&p->lock);
-            ao_read_data(ao, &p->chunk, p->chunk_samples, out, NULL, true, false);
+            // Blocking: a read that does not block returns nothing, the
+            // chunk as it was, while the core holds buffer.c's lock, and
+            // the last chunk would be written again. buffer.c calls start,
+            // reset and set_pause of a pull output outside that lock, and
+            // this thread holds neither lock here.
+            ao_read_data(ao, &p->chunk, p->chunk_samples, out, NULL, true, true);
             mp_mutex_lock(&p->lock);
             if (gen != p->generation)
                 continue;               // reset while reading: dropped
