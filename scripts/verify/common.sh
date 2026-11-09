@@ -32,6 +32,7 @@ EXPECTED_FORMATS=(
   "libmpv_tvos.xcframework.zip|Zip archive data"
   "libmpv_tizen-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
   "libmpv_tizen-x86_64.so|ELF 64-bit LSB shared object, x86-64"
+  "libmpv_webos-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
 )
 
 # Every observable property our mpv patch set registers. Validated by
@@ -122,7 +123,7 @@ expected_version_for() {
     libplacebo)
       # macOS / Linux desktop tracks 7.x; iOS / Android / Windows track 6.x.
       case "$platform" in
-        macos|linux|tizen) echo "7.349.0" ;;
+        macos|linux|tizen|webos) echo "7.349.0" ;;
         *)           echo "6.338.2" ;;
       esac ;;
     *) echo "" ;;
@@ -209,6 +210,7 @@ platform_from_artifact() {
     *ios*)     echo "ios" ;;
     *linux*)   echo "linux" ;;
     *tizen*)   echo "tizen" ;;
+    *webos*)   echo "webos" ;;
     *windows*) echo "windows" ;;
     *android*) echo "android" ;;
     *)         echo "unknown" ;;
@@ -279,6 +281,11 @@ layer11_needed_allowlist() {
       # with them). Anything else is missing on the TV: libgcc and
       # libstdc++ are linked in.
       allowed_re='^(libc|libm|libdl|libpthread|librt|ld-linux|libcapi-media-audio-io|libcapi-media-sound-manager|libcapi-base-common)\.so(\.[0-9]+)*$'
+      ;;
+    webos)
+      # glibc, ALSA (ao_alsa) and the system's libstdc++, all on the TV:
+      # libgcc is linked in, and the NDK has no static libstdc++.
+      allowed_re='^(libc|libm|libdl|libpthread|librt|ld-linux|libasound|libstdc\+\+)\.so(\.[0-9]+)*$'
       ;;
     android)
       # NDK API surface for libmpv: bionic libc + libm + libdl, the loader
@@ -395,6 +402,9 @@ layer13_load_test() {
       ;;
     tizen)
       _l13_tizen_dlopen "$arch" "$artifact"
+      ;;
+    webos)
+      _l13_webos_dlopen "$arch" "$artifact"
       ;;
     macos)
       # Runs the REAL dyld load when verify is invoked natively on a macOS host
@@ -738,7 +748,7 @@ check_binary() {
       ;;
     so)
       local NM READELF
-      if [[ "$platform" == tizen ]]; then
+      if [[ "$platform" == tizen || "$platform" == webos ]]; then
         NM="$(_llvm_tool nm)" READELF="$(_llvm_tool readelf)"
       elif echo "$name" | grep -qE 'aarch64|arm64-v8a'; then
         NM=aarch64-linux-gnu-nm READELF=aarch64-linux-gnu-readelf

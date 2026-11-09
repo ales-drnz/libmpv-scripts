@@ -204,6 +204,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 
 # ══════════════════════════════════════════════════════════════════════════════
+# webos: LG's webOS NDK (GCC 13.3, glibc 2.39, ARM EABI softfp)
+# ══════════════════════════════════════════════════════════════════════════════
+# The NDK flutter-webos builds apps with, for webOS 26 TVs, installed from
+# LG's release at its checksum. Its licence (the installer's, accepted with
+# -y) allows it on our machines only: the image is never pushed, and the
+# Build job builds it without a cache.
+FROM base AS webos
+
+ARG WEBOS_NDK_VERSION=11.2.0
+# sha256 of webos-ndk-flutter-starfish-x86_64-ca9v1-<version>.sh. Bump with
+# WEBOS_NDK_VERSION.
+ARG WEBOS_NDK_SHA256=3c93af87505a8771d5662cc4a15b596d46791e3c7d8a0cb9113fa8e846e15a42
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends file xz-utils; \
+    rm -rf /var/lib/apt/lists/*; \
+    ndk="webos-ndk-flutter-starfish-x86_64-ca9v1-${WEBOS_NDK_VERSION}.sh"; \
+    curl -fsSL -o "/tmp/$ndk" \
+      "https://github.com/lg-flutter-webos/ndk/releases/download/${WEBOS_NDK_VERSION}/$ndk"; \
+    echo "${WEBOS_NDK_SHA256}  /tmp/$ndk" | sha256sum -c -; \
+    sh "/tmp/$ndk" -y -d /opt/webos-ndk; \
+    rm -f "/tmp/$ndk"; \
+    test -f /opt/webos-ndk/environment-setup-ca9v1-webosmllib32-linux-gnueabi
+
+WORKDIR /src
+
+# ══════════════════════════════════════════════════════════════════════════════
 # windows — GNU MinGW-w64 (x86_64) + llvm-mingw (aarch64)
 # ══════════════════════════════════════════════════════════════════════════════
 FROM base AS windows
