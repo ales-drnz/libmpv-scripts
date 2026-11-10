@@ -8,6 +8,10 @@
 - The same file loaded again keeps its complete waveform and loudness scan instead of decoding it again: the same URL, duration, hint and track, and for a local file the same size and time.
 - The ring of a filter tap follows the format of its stream and goes when the tap turns off, and a writer left from an older tap writes nothing.
 - The libraries say `mpv v0.41.0+r24`.
+- The TUI cuts a colored line at the width of the terminal: in Verify the row of a binary with failures lost its end and showed half a color code.
+
+**Docs**
+- The README shows six screens of the TUI in place of the recording. `tools/screenshots/render.sh` draws them from the TUI's own previews.
 
 ### Tizen
 **Added**

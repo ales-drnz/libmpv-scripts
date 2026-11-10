@@ -2301,10 +2301,13 @@ func truncate(s string, w int) string {
 	if w < 1 {
 		return ""
 	}
-	if len(s) <= w {
+	// By columns, not bytes: a styled line holds color codes and symbols of
+	// several bytes, and a cut at w bytes fell short of w columns, or inside
+	// an escape.
+	if lipgloss.Width(s) <= w {
 		return s
 	}
-	return s[:w]
+	return lipgloss.NewStyle().MaxWidth(w).Render(s)
 }
 
 // anchorBottom pins `footer` to the bottom rows of the terminal by padding the
