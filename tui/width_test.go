@@ -32,3 +32,29 @@ func TestGridsFitEightyColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncateCountsColumns locks truncate on a styled line: it cut at w
+// bytes, so the row of a binary with failures in the verify view, 77
+// columns of text in 150 bytes of text and color codes, lost its end at
+// 120 and showed the head of a cut escape, "1 ✗[".
+func TestTruncateCountsColumns(t *testing.T) {
+	bold := "\x1b[1;96m"
+	reset := "\x1b[0m"
+	row := ""
+	for i := 0; i < 10; i++ {
+		row += bold + "✗ x86" + reset + "  "
+	}
+	if got := truncate(row, 120); got != row {
+		t.Errorf("a row %d columns wide is cut at 120: %q", lipgloss.Width(row), got)
+	}
+	got := truncate(row, 30)
+	if w := lipgloss.Width(got); w != 30 {
+		t.Errorf("cut at 30 columns, the row is %d wide: %q", w, got)
+	}
+	if strings.HasSuffix(got, "\x1b") || strings.HasSuffix(got, "\x1b[") {
+		t.Errorf("the cut leaves half an escape: %q", got)
+	}
+	if got := truncate("plain", 3); got != "pla" {
+		t.Errorf("a plain string cut at 3: %q", got)
+	}
+}

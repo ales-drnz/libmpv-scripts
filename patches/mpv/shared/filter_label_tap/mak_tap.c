@@ -12,26 +12,26 @@
  *
  * Consumer (reader): the core thread as well, in the
  *     audio-tap-frames property getter, at the wrapper's polling
- *     cadence (typically 30 Hz).
+ *     cadence (typically 30 Hz). It takes g_tap_write_lock too:
+ *     nothing it does runs in real time, and with one player it
+ *     shares the writer's thread, so the lock is only ever contended
+ *     between players. Holding it, the writer can size a ring for
+ *     each new format and set_active can free the rings of the taps
+ *     that end (F81), with no reader on a freed buffer.
  *
  * Coordinator: any thread setting / clearing the active-tap list
  *     via mak_tap_set_active(), guarded by a small mutex.
  *
- * With one player the writer and the reader share a thread and
- * never overlap. The reader still reads through a seqlock, with no
- * lock: it guards against the writers of other mpv instances (more
- * players in the process) and against reset_ring() from
- * set_active. A writer never blocks on a reader; the reader
- * retries on contention. Each tap_ring has its own atomic sequence
- * counter:
- *
- *     even = stable     (data may be read)
- *     odd  = writing    (reader must retry)
+ * Each tap_ring still counts its writes in an atomic sequence
+ * (odd while a write runs, even after): the reader returns the even
+ * value as the write generation, which the client compares across
+ * polls to skip unchanged rings.
  *
  * The slot table itself uses an _Atomic bool per slot for the
- * "used" flag, so find_slot() on the writer's path is also
- * lock-free. set_active still takes a tiny mutex to serialise
- * concurrent subscriber additions / removals. */
+ * "used" flag, so find_slot() on the writer's path is a lock-free
+ * early exit when nothing is tapped; the writer checks its slot again
+ * under g_tap_write_lock. set_active still takes a tiny mutex to
+ * serialise concurrent subscriber additions / removals. */
 #include <math.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -89,19 +89,15 @@
 /* must fit the largest frame the chain may produce. 8K floats =     */
 /* 4 K stereo samples or 2 K 4-ch samples, plenty for typical mpv.   */
 #define TAP_SCRATCH_FLOATS (8 * 1024)
-/* Cap reader spin retries on seqlock contention. With brief
- * writers (~10 µs) and a 30 Hz reader cadence, contention is
- * exceptional; the cap exists only to defend against a runaway
- * writer (e.g. a stalled scheduler) starving the reader
- * forever. On give-up we return whatever the last partial copy
- * read — visually a one-frame glitch, never a crash. */
+/* Bound of the reader's snapshot loop. The reader holds
+ * g_tap_write_lock, so the sequence is always even there and the loop
+ * runs once; the bound only keeps it finite. */
 #define TAP_SEQLOCK_MAX_RETRIES 1024
 
 struct tap_ring {
-    /* Seqlock: even = stable, odd = writer in progress.
-     * Writer increments to odd before any field write, increments
-     * back to even after all writes; reader spins until even,
-     * snapshots, and validates the seq is unchanged. */
+    /* Write count: odd while a write runs, even after. Every access
+     * holds g_tap_write_lock, so a reader sees it even; it returns it
+     * as the write generation the client compares across polls. */
     _Atomic uint_fast32_t seq;
 
     int     sample_rate;
@@ -114,25 +110,16 @@ struct tap_ring {
     size_t  write_pos;     /* next byte to write (wraps) */
     size_t  valid_bytes;   /* total valid bytes in ring */
     /* Allocated and effective capacity in bytes. The buf is
-     * orphan-talloc'd (parent NULL) ONCE on the first write that
-     * detects a valid format, sized to cover TAP_BUFFER_SECONDS at
-     * that format and capped at TAP_MAX_RING_BYTES. After that the
-     * buf pointer NEVER changes — set_active doesn't touch it,
-     * format changes don't reallocate it. This eliminates the
-     * use-after-free window a free / realloc inside the seqlock
-     * would otherwise open: the seqlock catches torn DATA but not
-     * a torn pointer (the reader's memcpy on the stale ptr would
-     * already be reading freed memory by the time the seq mismatch
-     * tells it to retry).
+     * orphan-talloc'd (parent NULL) on the first write, and again on a
+     * format that needs more, sized to cover TAP_BUFFER_SECONDS at that
+     * format and capped at TAP_MAX_RING_BYTES; set_active frees it. Every access holds g_tap_write_lock, so no reader
+     * sees a freed buffer.
      *
-     * alloc_bytes — immutable after first alloc, total bytes
-     *   actually allocated for buf.
+     * alloc_bytes — total bytes allocated for buf (0 without one).
      * capacity    — frame-aligned working size for the current
-     *   (sample_rate, channels). Recomputed on every format change
-     *   as `(alloc_bytes / frame_bytes) * frame_bytes`. The wrap
-     *   math (writer + reader) uses capacity, not alloc_bytes, so
-     *   the tail (alloc_bytes - capacity, < frame_bytes) is
-     *   harmlessly unused under that format. */
+     *   (sample_rate, channels): `(alloc_bytes / frame_bytes) *
+     *   frame_bytes`. The wrap math (writer + reader) uses capacity,
+     *   not alloc_bytes, so the tail (< frame_bytes) is unused. */
     size_t   alloc_bytes;
     size_t   capacity;
     uint8_t *buf;
@@ -170,11 +157,12 @@ static struct {
  * cost. (ELF/PE are immune: their static lock initializers are all
  * zero.) */
 static mp_mutex g_tap_activation_lock = MP_STATIC_MUTEX_INITIALIZER;
-/* Serialises the writers: each mpv instance runs its audio chain on
- * its own core thread, and two of them tapping the same label (or
- * folding the waveform) would share one ring and one scratch. Never
- * contended with a single player; the reader stays lock-free on the
- * seqlock. Lock order: g_tap_activation_lock before g_tap_write_lock. */
+/* Guards the rings and the scratch: the writers (each mpv instance runs
+ * its audio chain on its own core thread, and two of them tapping the
+ * same label, or folding the waveform, share one ring and one scratch),
+ * the reader and set_active. Never contended with a single player,
+ * whose reader and setter run on its core thread too. Lock order:
+ * g_tap_activation_lock before g_tap_write_lock. */
 static mp_mutex g_tap_write_lock = MP_STATIC_MUTEX_INITIALIZER;
 
 /* Lock-free probe — atomic_load on the slot.used flag (acquire
@@ -194,23 +182,20 @@ static int find_slot(const char *name)
     return -1;
 }
 
-/* Reset a ring's metadata. Called by the activation path
- * (set_active) to clear stale state when a slot is re-armed; the
- * writer resets inline on a format change. The buf pointer +
- * capacity are NOT touched here — those are owned by the writer
- * and set inside the writer's seqlock.
- * Leaving the buffer alive across activation cycles costs at most
- * 8 slots × 2 sides × 16 MB = 256 MB worst case (typical: a few
- * MB) but eliminates the use-after-free race that would arise if
- * set_active freed the buffer mid-write. */
+/* Reset a ring and free its buffer: the activation path (set_active)
+ * clears every slot, and the next write of a tapped label sizes a new
+ * buffer for its format. Without this a ring stayed for the life of the
+ * process, up to 8 slots x 2 sides x 16 MB = 256 MB (F81). The caller
+ * holds g_tap_write_lock, which the writer and the reader take as well,
+ * so nobody is inside the buffer. */
 static void reset_ring(struct tap_ring *r)
 {
-    /* Caller holds g_tap_write_lock, so no writer is inside its
-     * seqlock section: open and close the seqlock here too, so a
-     * concurrent reader retries instead of mixing old and new
-     * metadata. */
     uint_fast32_t s = atomic_load_explicit(&r->seq, memory_order_relaxed);
     atomic_store_explicit(&r->seq, s + 1, memory_order_release);
+    talloc_free(r->buf);
+    r->buf          = NULL;
+    r->alloc_bytes  = 0;
+    r->capacity     = 0;
     r->sample_rate  = 0;
     r->channels     = 0;
     r->end_pts_secs = NAN;
@@ -230,22 +215,18 @@ void mak_tap_set_active(const char *csv)
         atomic_store_explicit(&g_tap.slots[i].used, false,
                               memory_order_release);
     }
-    /* Phase 2: clear name + ring metadata. Buf pointers stay
-     * alive — only the writer touches them, and
-     * only inside its seqlock critical section. An in-flight
-     * writer that already passed find_slot continues safely
-     * against the still-valid buf; its write goes to the now-
-     * orphaned ring and the next reader for that slot won't see
-     * it (used == false). */
+    /* Phase 2: clear name and ring, its buffer freed. A writer that
+     * already passed find_slot waits on g_tap_write_lock and then finds
+     * its slot no longer armed for its label: it writes nothing. */
     mp_mutex_lock(&g_tap_write_lock);
     for (int i = 0; i < MAK_TAP_MAX; i++) {
         g_tap.slots[i].name[0] = 0;
         reset_ring(&g_tap.slots[i].pre);
         reset_ring(&g_tap.slots[i].post);
     }
-    mp_mutex_unlock(&g_tap_write_lock);
 
     if (!csv || !*csv) {
+        mp_mutex_unlock(&g_tap_write_lock);
         mp_mutex_unlock(&g_tap_activation_lock);
         return;
     }
@@ -253,7 +234,8 @@ void mak_tap_set_active(const char *csv)
     /* Phase 3: parse CSV, populate slots, publish via release-
      * store on `used = true`. Name is written before the publish
      * so a writer that sees used==true reads a consistent
-     * name. */
+     * name; under g_tap_write_lock, so a writer holding it reads a
+     * stable name when it checks its slot again. */
     int slot = 0;
     const char *p = csv;
     while (*p && slot < MAK_TAP_MAX) {
@@ -271,6 +253,7 @@ void mak_tap_set_active(const char *csv)
         if (!end) break;
         p = end + 1;
     }
+    mp_mutex_unlock(&g_tap_write_lock);
     mp_mutex_unlock(&g_tap_activation_lock);
 }
 
@@ -467,10 +450,20 @@ void mak_tap_write(const char *name, bool is_post,
 
     /* The rings and the scratch are process-wide, but every mpv
      * instance runs its own audio chain. Two players tapping the same
-     * label would otherwise write one ring from two threads, and the
-     * seqlock below supports a single writer only. One player never
-     * contends on this lock; readers never take it. */
+     * label would otherwise write one ring from two threads. One
+     * player never contends on this lock: its reader runs on the same
+     * thread. */
     mp_mutex_lock(&g_tap_write_lock);
+
+    /* The slot found above may have been torn down, or armed for
+     * another label, while this writer waited: set_active changes both
+     * under this lock. Writing would put this label's audio in another
+     * label's ring, or a buffer nothing frees in a slot nobody taps. */
+    if (!atomic_load_explicit(&g_tap.slots[idx].used, memory_order_relaxed) ||
+        strcmp(g_tap.slots[idx].name, name) != 0) {
+        mp_mutex_unlock(&g_tap_write_lock);
+        return;
+    }
 
     int channels = 0, rate = 0;
     size_t produced = convert_aframe(aframe, 0, g_tap.scratch,
@@ -485,35 +478,24 @@ void mak_tap_write(const char *name, bool is_post,
     int frame_size   = mp_aframe_get_size(aframe);
     double frame_pts = mp_aframe_get_pts(aframe);
 
-    /* SEQLOCK BEGIN — increment to odd, signalling readers to
-     * retry. Release ordering ensures all subsequent ring
-     * writes are observed AFTER this transition. */
+    /* Write count to odd: a write runs (see struct tap_ring). */
     uint_fast32_t s = atomic_load_explicit(&ring->seq,
                                             memory_order_relaxed);
     atomic_store_explicit(&ring->seq, s + 1, memory_order_release);
 
-    /* First-write allocation. The buf is sized once on the first
-     * format we see and STAYS that size for the slot's lifetime.
-     * Subsequent format changes (different file, different rate /
-     * channels) reuse the same buffer — only the metadata resets.
-     *
-     * This is the canonical real-time-safe pattern: allocate
-     * exactly once, never free during operation, never realloc
-     * after the seqlock could be observed by a reader. A free +
-     * realloc inside the seqlock would race the reader's memcpy:
-     * the reader's seq retry catches torn DATA but not a torn
-     * POINTER — by the time the reader's seq mismatch tells it to
-     * abort, its memcpy has already touched freed memory.
-     *
-     * Side effect: if the first format is, say, 48 kHz stereo
-     * (1.15 MB for 3 s) and the user later opens a 384 kHz file,
-     * coverage shrinks from 3 s to ~96 ms. The soft fallback in
-     * build_ring_node degrades to "latest available window"; the
-     * visualiser keeps refreshing, just without strict PTS
-     * alignment for the few-frame chain pre-buffer phase. Reverse
-     * case (high rate first, low rate later) gives extra headroom
-     * for free. */
-    if (ring->buf == NULL) {
+    /* Format change (or first frame): a buffer that covers
+     * TAP_BUFFER_SECONDS of this format, capped at TAP_MAX_RING_BYTES,
+     * and the frame-aligned wrap budget against it. The buffer was sized
+     * once, on the first format, and kept: an 8 kHz mono file first left
+     * 0.25 s for a 48 kHz stereo one, and build_ring_node fell back to
+     * the latest window, the overlay ahead of the sound (F81). It only
+     * grows: a smaller format keeps it, with more than TAP_BUFFER_SECONDS,
+     * so two players tapping one label at two formats do not allocate it
+     * again at every frame; set_active frees it. The reader holds
+     * g_tap_write_lock too, so a new buffer never pulls one from under
+     * its memcpy. */
+    if (ring->channels != channels || ring->sample_rate != rate ||
+        ring->buf == NULL) {
         size_t frame_bytes = (size_t)channels * sizeof(float);
         size_t needed =
             (size_t)((double)TAP_BUFFER_SECONDS *
@@ -521,17 +503,11 @@ void mak_tap_write(const char *name, bool is_post,
                      (double)frame_bytes);
         if (needed > TAP_MAX_RING_BYTES) needed = TAP_MAX_RING_BYTES;
         if (needed < frame_bytes) needed = frame_bytes;
-
-        ring->buf = talloc_size(NULL, needed);
-        ring->alloc_bytes = ring->buf ? needed : 0;
-    }
-
-    /* Format change (or first frame): reset metadata + recompute
-     * the frame-aligned wrap budget against the immutable
-     * alloc_bytes. The buf pointer is untouched — only metadata
-     * changes — so no UAF window opens for the reader. */
-    if (ring->channels != channels || ring->sample_rate != rate) {
-        size_t frame_bytes = (size_t)channels * sizeof(float);
+        if (needed > ring->alloc_bytes || ring->buf == NULL) {
+            talloc_free(ring->buf);
+            ring->buf = talloc_size(NULL, needed);
+            ring->alloc_bytes = ring->buf ? needed : 0;
+        }
         size_t cap = (ring->alloc_bytes / frame_bytes) * frame_bytes;
         if (cap == 0) cap = frame_bytes;
         ring->capacity     = cap;
@@ -582,11 +558,8 @@ void mak_tap_write(const char *name, bool is_post,
  * When `target_pts_secs` is NaN we fall back to the latest
  * window.
  *
- * Seqlock retry: snapshots the ring fields + memcpy-s the
- * slice in one atomic pass. If the writer interrupts (seq goes
- * odd), retries up to TAP_SEQLOCK_MAX_RETRIES. The byte_array's
- * data buffer is talloc'd once and overwritten on retries — no
- * leak (talloc reuses the slot). */
+ * The caller holds g_tap_write_lock: the snapshot of the ring
+ * fields and the memcpy of the slice see no writer. */
 static void build_ring_node(struct mpv_node *out, void *parent_list,
                             struct tap_ring *ring,
                             double target_pts_secs)
@@ -618,9 +591,8 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
      * is inherently consistent with the data — no extra tearing. */
     uint_fast32_t gen = 0;
 
-    /* Seqlock snapshot loop. Reader spins while writer holds the
-     * seqlock open (odd seq). Retries if the writer raced through
-     * the entire critical section while we were copying. */
+    /* Snapshot loop: runs once, the caller holding g_tap_write_lock
+     * (see TAP_SEQLOCK_MAX_RETRIES). */
     int retries = 0;
     while (retries++ < TAP_SEQLOCK_MAX_RETRIES) {
         uint_fast32_t s1 = atomic_load_explicit(&ring->seq,
@@ -628,13 +600,9 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
         if (s1 & 1u) continue;            /* writer in progress */
 
         /* Snapshot all metadata + compute slice geometry. The
-         * buf pointer is immutable after first allocation (only
-         * the writer ever sets it, and only once), so the
-         * snapshot can never see a torn buf. The capacity field
-         * IS mutated by the writer on format change and is
-         * therefore inside the seqlock-protected snapshot — the
-         * seq mismatch check below forces a retry if the writer
-         * ran a format change between our two seq reads. */
+         * caller holds g_tap_write_lock, so no writer and no
+         * set_active runs here: the seq check below now only
+         * returns the even write generation. */
         rate     = ring->sample_rate;
         channels = ring->channels;
         size_t write_pos   = ring->write_pos;
@@ -685,8 +653,7 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
         size_t start =
             (end_byte + capacity - window_bytes) % capacity;
 
-        /* Copy the slice. If the writer wraps in here, the seq
-         * check below catches it and we retry. */
+        /* Copy the slice. */
         if (start + window_bytes <= capacity) {
             memcpy(ba->data, &buf[start], window_bytes);
         } else {
@@ -696,8 +663,7 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
                    window_bytes - first);
         }
 
-        /* Validate the snapshot — if the writer touched the ring
-         * any time during the snapshot, retry. */
+        /* The generation of the snapshot. */
         uint_fast32_t s2 = atomic_load_explicit(&ring->seq,
                                                 memory_order_acquire);
         if (s1 == s2) {
@@ -712,7 +678,6 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
             gen = s1;
             break;
         }
-        /* else loop and retry — typical contention is ≤ 1 retry. */
     }
 
     map->keys[0] = talloc_strdup(map, "sample_rate");
@@ -745,9 +710,9 @@ int mak_tap_read_all(struct mpv_node *out, void *parent,
     if (!out) return -1;
 
     /* Brief activation_lock just to capture a stable snapshot of
-     * which slots are active + their names. Per-ring data is
-     * read lock-free below via the seqlock pattern, so a long
-     * memcpy of audio samples never blocks a writer. */
+     * which slots are active + their names. The rings are read below
+     * under g_tap_write_lock, which keeps their buffers in place
+     * (F81). */
     mp_mutex_lock(&g_tap_activation_lock);
     int      idx_buf[MAK_TAP_MAX];
     char    *name_buf[MAK_TAP_MAX];
@@ -768,6 +733,7 @@ int mak_tap_read_all(struct mpv_node *out, void *parent,
     root->keys   = talloc_array(root, char *, active_count);
     root->values = talloc_array(root, struct mpv_node, active_count);
 
+    mp_mutex_lock(&g_tap_write_lock);
     for (int j = 0; j < active_count; j++) {
         int i = idx_buf[j];
         root->keys[j] = talloc_strdup(root, name_buf[j]);
@@ -787,6 +753,7 @@ int mak_tap_read_all(struct mpv_node *out, void *parent,
         root->values[j] = (struct mpv_node){
             .format = MPV_FORMAT_NODE_MAP, .u.list = sides};
     }
+    mp_mutex_unlock(&g_tap_write_lock);
 
     *out = (struct mpv_node){
         .format = MPV_FORMAT_NODE_MAP, .u.list = root};

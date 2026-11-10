@@ -14,13 +14,14 @@
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
-#   3.  Patched mpv properties present (all 18: prefetch-state,
+#   3.  Patched mpv properties present (all 21: prefetch-state,
 #       -cache-duration, -open-filename and -playlist-entry-id,
-#       audio-output-state, embedded-cover-art-data/mime,
-#       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data/-enabled,
-#       waveform-duration-hint,
-#       loudness-scan-data/-enabled, af-command-saves-args,
-#       demuxer-read-error and demuxer-skipped-segments)
+#       audio-output-state, embedded-cover-art-data and -mime,
+#       pcm-tap-frame, audio-tap-frames, analyzer-taps, waveform-data and
+#       -enabled, waveform-duration-hint, duration-estimated,
+#       loudness-scan-data and -enabled, af-command-saves-args,
+#       demuxer-read-error, demuxer-skipped-segments, mak-end-file-fields
+#       and keep-open-parked)
 #   4.  FFmpeg patches present (libsmb2 protocol, mak_frag_editlist of mov,
 #       the segment count of HLS and DASH, filter bounds)
 #   5.  Required audio decoder whitelist sample present
@@ -161,7 +162,7 @@ FILTER="${1:-}"
 # The checks live in scripts/verify/: common.sh first (the tables, the
 # result helpers and check_binary), then one file per platform. A new
 # platform adds its file to this list.
-for part in common linux android windows apple web; do
+for part in common linux android windows apple web tizen webos; do
   # shellcheck source=/dev/null
   source "$SCRIPT_DIR/verify/$part.sh"
 done

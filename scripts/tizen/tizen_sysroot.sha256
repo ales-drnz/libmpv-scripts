@@ -1,0 +1,27 @@
+# SHA-256 of the Tizen 6.0 packages of the sysroot, by tizen_sysroot.py --update
+237b7b8d709a5a9b66263ef9570101f4edd28dd4bce3f57cb0f9e44a9b5cb6d7 armv7l:base/armv7l/gcc-9.2.0-1.13.armv7l.rpm
+2dd748a81ea6dfc603d8bbf9dd295fba678042c64fccbaaf8210ce2b0e376eaf armv7l:base/armv7l/glibc-2.30-1.15.armv7l.rpm
+446b6ca3928040d5dcd19255755a9ba66958be2389cfdd82f2286cdeb00a795e armv7l:base/armv7l/glibc-devel-2.30-1.15.armv7l.rpm
+b1ba8ca4cbe9673c15890cf3f2194c31c65f7d5e0701a394885951da1f888fe4 armv7l:base/armv7l/libgcc-9.2.0-1.13.armv7l.rpm
+6b2544d24c2a0ab0935831be4c2b76c254dac4d98fc588ef3a245d5d50eee31a armv7l:base/armv7l/libstdc++-9.2.0-1.13.armv7l.rpm
+0d04e35d875fe669544897d94c98a57b836b5cbb6b109c8bed975da4c81ea1af armv7l:base/armv7l/libstdc++-devel-9.2.0-1.13.armv7l.rpm
+278973ff5f26a0f89e85cf52dde669ba6ab8090867be9f66ff05300c93b49b61 armv7l:base/armv7l/linux-glibc-devel-3.10-1.14.armv7l.rpm
+8cf18971028d89fc1b6a0e9cc0024cb6961be196aec312024e5587fa5ca8a15d armv7l:unified/armv7l/capi-base-common-0.4.59-1.armv7l.rpm
+f8a64859540f2d260555942fd969ca3c7c19f2e81b559897544852f69e6ef015 armv7l:unified/armv7l/capi-base-common-devel-0.4.59-1.armv7l.rpm
+236ae1c868951195f8253bcc231e85347a0356e89d33156b902f1a237a4da961 armv7l:unified/armv7l/capi-media-audio-io-0.5.39-0.armv7l.rpm
+5ec03d2165758c1a339fcb995b69e5121d4153569ee113b700aa57884eedc1f4 armv7l:unified/armv7l/capi-media-audio-io-devel-0.5.39-0.armv7l.rpm
+58ce65f03ab16e42aee1c4c1d368332308a1a60665c68158433098b2c9ee9083 armv7l:unified/armv7l/capi-media-sound-manager-0.6.32-0.armv7l.rpm
+7cab0b4add65c5db45928f6a4fd137fe769eef4769b6ec71eca541589a0ae84f armv7l:unified/armv7l/capi-media-sound-manager-devel-0.6.32-0.armv7l.rpm
+8515ad5a17cde624f98173a8db730d13a51736d917321b70254dfc658ad64965 x86_64:base/x86_64/gcc-9.2.0-1.13.x86_64.rpm
+19fc430d065e9e1de5472ffa9d4b5f9463ee3677c93cd903233f8a4dc74e7b79 x86_64:base/x86_64/glibc-2.30-1.15.x86_64.rpm
+f369817b68ecfb4286666d55cdfd2dcdfd4c4c5c9975aaf0205a7437582c9ba5 x86_64:base/x86_64/glibc-devel-2.30-1.15.x86_64.rpm
+0031be5d6f152ad7e1074ab89da7393c22c8d71b9feb40ae448591232610036b x86_64:base/x86_64/libgcc-9.2.0-1.13.x86_64.rpm
+96330ddf5853bc1cb891c5e79ad413aa2f90a837d25d1d64775f58b84eb910e8 x86_64:base/x86_64/libstdc++-9.2.0-1.13.x86_64.rpm
+31822764ae4a4cc383284449b3b9ff4082072e055c6399c59d1a298ab58bc55c x86_64:base/x86_64/libstdc++-devel-9.2.0-1.13.x86_64.rpm
+b281dbe96d3b95fec2edec18e7d5a8ea485c6ef5d19eeadc7773e66911d14c9e x86_64:base/x86_64/linux-glibc-devel-3.10-1.14.x86_64.rpm
+88e55edb87042768473a4331df7eb832d80444e7d40c1ab6c1f6f0f2ec4ccc22 x86_64:unified/x86_64/capi-base-common-0.4.59-1.x86_64.rpm
+0c796696c4c5288ab63db535fd0bff20a1e8d3e610873ff12b3dfb6fb929cc23 x86_64:unified/x86_64/capi-base-common-devel-0.4.59-1.x86_64.rpm
+ac3e7cf7d03ce9b3ef905eb1797d7cb6f4526184465897002db9b84a9219edea x86_64:unified/x86_64/capi-media-audio-io-0.5.39-0.x86_64.rpm
+22855f57955bdb4cf219849e050e32d295ae04d6781fa3518381f85d6794a012 x86_64:unified/x86_64/capi-media-audio-io-devel-0.5.39-0.x86_64.rpm
+95bc1f65786638c76451dd9993b4d36a560ebaf62940d8693d5abe6e3c670886 x86_64:unified/x86_64/capi-media-sound-manager-0.6.32-0.x86_64.rpm
+5a7757481504f477a7b730c4ca2d07544fed01111f314d49ec004dea5e3dfb9a x86_64:unified/x86_64/capi-media-sound-manager-devel-0.6.32-0.x86_64.rpm

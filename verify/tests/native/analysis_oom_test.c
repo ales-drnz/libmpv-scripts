@@ -9,9 +9,11 @@
 // coordinator's arguments (32 bytes on r17, 48 with the track and the
 // descriptor fields).
 //   start  loudness on before the load (its scan runs and ends ready), then
-//          waveform-enabled=yes with the failure armed: both results must
-//          turn failed. r17 returns with the waveform on decoding and the
-//          loudness on scanning until the next file.
+//          off, which stops the pass, and on again with the failure armed:
+//          both results must turn failed. r17 returns with the waveform on
+//          decoding and the loudness on scanning until the next file. (The
+//          setter of waveform-enabled no longer starts a scan here: since
+//          r24 the complete analysis of the same file stays, F166.)
 #include <stdatomic.h>
 #include "analysis_test.h"
 
@@ -50,8 +52,9 @@ int main(int argc, char **argv)
     an_wave_free(&w);
     mt_check(!strcmp(lo.state, "ready"), "loudness ready first (%s)", lo.state);
 
+    an_flag(h, "loudness-scan-enabled", 0);
     atomic_store(&armed, 1);
-    an_flag(h, "waveform-enabled", 1);
+    an_flag(h, "loudness-scan-enabled", 1);
     atomic_store(&armed, 0);
     printf("     failed calloc of %zu bytes\n", atomic_load(&failed_size));
     an_pump(h, 2.0, MPV_EVENT_NONE);

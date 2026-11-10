@@ -1021,6 +1021,21 @@ verify_mpv_config() {
       # patch_ao_webaudio.py and -Dwebaudio=enabled: the only output there.
       assert_define "$cfg" "HAVE_WEBAUDIO" "1"
       ;;
+    tizen)
+      # patch_ao_tizen.py and -Dtizen-audio=enabled: an app has no other
+      # output there, and the Linux ones would only fail at runtime.
+      assert_define "$cfg" "HAVE_TIZEN_AUDIO" "1"
+      assert_define "$cfg" "HAVE_ALSA"        "0"
+      assert_define "$cfg" "HAVE_PULSE"       "0"
+      assert_define "$cfg" "HAVE_PIPEWIRE"    "0"
+      ;;
+    webos)
+      # ALSA, the one sound API of the NDK's sysroot: no PulseAudio nor
+      # PipeWire there.
+      assert_define "$cfg" "HAVE_ALSA"     "1"
+      assert_define "$cfg" "HAVE_PULSE"    "0"
+      assert_define "$cfg" "HAVE_PIPEWIRE" "0"
+      ;;
   esac
 
   ok "mpv config audit passed ($platform)"
@@ -1134,7 +1149,7 @@ _mpv_patch() {
 apply_mpv_patches_common() {
   local mpv_dir="$1"
   # Stamp the release into mpv's version (see LIBMPV_RELEASE). A tarball has no
-  # git history, so mpv's version.h falls back to this file: "v0.41.0+r23".
+  # git history, so mpv's version.h falls back to this file: "v0.41.0+r24".
   printf '%s+%s\n' "$MPV_VERSION" "$LIBMPV_RELEASE" > "$mpv_dir/MPV_VERSION"
   # Build infrastructure (libplacebo + libass made required:false) — never gated.
   # MUST run before strip_libass/strip_mpv_dead, which both assume this form.
@@ -1487,6 +1502,12 @@ assert_soname() {
 # stage builds on Ubuntu 20.04 for this: 2.31 covers Debian 11, RHEL 9 and
 # every Ubuntu since 20.04.
 LINUX_GLIBC_FLOOR="2.31"
+# On Tizen: a TV of 2021 runs Tizen 6.0, whose glibc 2.30 is the sysroot's
+# (scripts/tizen/tizen_sysroot.py).
+TIZEN_GLIBC_FLOOR="2.30"
+# On webOS: webOS 26 is the first the TVs run Flutter apps on, and its
+# glibc 2.39 is the NDK's sysroot (the webos Docker stage).
+WEBOS_GLIBC_FLOOR="2.39"
 
 # assert_glibc_floor <elf> <max> <readelf> — die if <elf> needs a GLIBC_x.y
 # symbol version newer than <max>.

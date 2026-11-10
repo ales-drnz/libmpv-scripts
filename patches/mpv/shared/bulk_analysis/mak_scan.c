@@ -12,6 +12,10 @@
  *
  * See patch_bulk_analysis.py for benchmark numbers and the design rationale. */
 #include "audio/mak_scan_internal.h"
+/* stat() of the file of a URL (scan_file_stamp); osdep/io.h makes it
+ * mpv's mp_stat on Windows, with UTF-8 paths. */
+#include <sys/stat.h>
+#include "osdep/io.h"
 
 /* ─── coordinator ─────────────────────────────────────────────────── */
 
@@ -778,6 +782,86 @@ static int scan_file_fd(const char *url, struct demuxer *demuxer,
 }
 #endif
 
+/* The last scan started, to keep its result when the same file is loaded
+ * again (F166): a playlist of one entry with loop-playlist wraps by
+ * loading it again, and each FILE_LOADED decoded the whole file once
+ * more (over SMB, a new download) for the result the client already
+ * holds. Each player's core thread calls mak_scan_start, hence the lock. */
+/* What tells the scanned source apart besides its URL: the track the
+ * player plays, and for a local file its size and modification time. */
+struct scan_key {
+    char  *url;
+    double duration, hint;
+    int    lavf_index, mkv_id, ordinal;
+    int64_t size, mtime_s, mtime_ns;
+};
+
+static struct scan_key g_last;
+static int    g_last_gen;
+static mp_mutex g_last_lock = MP_STATIC_MUTEX_INITIALIZER;
+
+/* Size and modification time of [url] when it is a local file, -1
+ * otherwise: a file written again under the same path is another file. */
+static void scan_file_stamp(const char *url, struct scan_key *k)
+{
+    k->size = k->mtime_s = k->mtime_ns = -1;
+    const char *path = url;
+    if (!strncmp(path, "file://", 7))
+        path += 7;
+    else if (strstr(path, "://"))
+        return;
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return;
+    k->size = (int64_t)st.st_size;
+    k->mtime_s = (int64_t)st.st_mtime;
+#if defined(__APPLE__)
+    k->mtime_ns = (int64_t)st.st_mtimespec.tv_nsec;
+#elif defined(__linux__) || defined(__ANDROID__)
+    k->mtime_ns = (int64_t)st.st_mtim.tv_nsec;
+#else
+    k->mtime_ns = 0;
+#endif
+}
+
+/* Whether [k] is the last scan's source, its analysis complete: the same
+ * URL, duration, hint, track and file stamp, its envelope READY in the
+ * generation it started (no scan or stop came since), and the loudness
+ * READY when it is on (one turned on since then has no result yet). A
+ * live, progressive or rolling source never turns READY in its own pass,
+ * so it starts again. */
+static bool scan_still_ready(const struct scan_key *k)
+{
+    mp_mutex_lock(&g_last_lock);
+    bool same = g_last.url && !strcmp(g_last.url, k->url) &&
+                fabs(g_last.duration - k->duration) < 0.5 &&
+                fabs(g_last.hint - k->hint) < 0.5 &&
+                g_last.lavf_index == k->lavf_index &&
+                g_last.mkv_id == k->mkv_id &&
+                g_last.ordinal == k->ordinal &&
+                g_last.size == k->size &&
+                g_last.mtime_s == k->mtime_s &&
+                g_last.mtime_ns == k->mtime_ns &&
+                g_last_gen != 0 && mak_waveform_ready_gen() == g_last_gen;
+    mp_mutex_unlock(&g_last_lock);
+#if __has_include("audio/mak_loudness.h")
+    if (same && mak_loudness_is_enabled() && !mak_loudness_is_ready())
+        same = false;
+#endif
+    return same;
+}
+
+/* Remembers [k] for generation [gen]; NULL forgets: the next start scans. */
+static void scan_remember(const struct scan_key *k, int gen)
+{
+    mp_mutex_lock(&g_last_lock);
+    free(g_last.url);
+    g_last = k ? *k : (struct scan_key){0};
+    g_last.url = k ? strdup(k->url) : NULL;
+    g_last_gen = g_last.url ? gen : 0;
+    mp_mutex_unlock(&g_last_lock);
+}
+
 void mak_scan_start(const char *url, double duration_secs,
                     double duration_hint,
                     const char *format_name, bool is_network,
@@ -792,10 +876,29 @@ void mak_scan_start(const char *url, double duration_secs,
 #endif
     if (!mak_waveform_is_enabled()) return;
 
+    /* The same file again, its analysis complete: the result stays. Never
+     * for an external track (the result of another source) nor a
+     * descriptor (its number names whatever file it holds now). */
+    struct mak_scan_track key_track;
+    bool reusable = scan_track_of(demuxer, audio, &key_track) &&
+                    !scan_fd_num(url);
+    struct scan_key key = {
+        .url = (char *)url, .duration = duration_secs, .hint = duration_hint,
+        .lavf_index = key_track.lavf_index, .mkv_id = key_track.mkv_id,
+        .ordinal = key_track.ordinal,
+    };
+    scan_file_stamp(url, &key);
+    if (reusable && scan_still_ready(&key)) {
+        if (log)
+            mp_verbose(log, "analysis: same file, the result stays\n");
+        return;
+    }
+
     /* Bump the generation up front so any in-flight coordinator/workers and
      * af-tap folds from the previous track self-cancel, and reset the visible
      * state to "decoding". */
     int new_gen = mak_waveform_begin_generation();
+    scan_remember(reusable ? &key : NULL, new_gen);
 
     /* ── LIVE PCM (mak-pcm://<id>): roll, never re-open ─────────────────
      * The source is read once, by the player: a second open is refused and

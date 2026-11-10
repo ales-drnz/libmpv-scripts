@@ -139,6 +139,8 @@ func allTargets() []Target {
 		sLinux   = "scripts/build_libmpv_linux.sh"
 		sWin     = "scripts/build_libmpv_windows.sh"
 		sWeb     = "scripts/build_libmpv_web.sh"
+		sTizen   = "scripts/build_libmpv_tizen.sh"
+		sWebos   = "scripts/build_libmpv_webos.sh"
 	)
 	const apple = "needs macOS + Xcode"
 	return []Target{
@@ -183,6 +185,17 @@ func allTargets() []Target {
 		//    meson and ninja on PATH). Not in "all", which needs no emsdk. ──
 		{Key: "web", Label: "wasm32", Group: "Web", InMenu: true, Note: "needs emsdk 6.0.12 and meson", kind: kNative, script: sWeb},
 
+		// ── Tizen (Docker — any host: clang cross-compiles both arches against
+		//    a sysroot of Tizen 6.0 packages). armv7l is the TVs, x86_64 the
+		//    TV emulator. ──
+		{Key: "tizen-armv7l", Label: "armv7l", Group: "Tizen", InMenu: true, kind: kDocker, script: sTizen, image: "tizen", args: []string{"--arch=armv7l"}},
+		{Key: "tizen-x86_64", Label: "x86_64", Group: "Tizen", InMenu: true, kind: kDocker, script: sTizen, image: "tizen", args: []string{"--arch=x86_64"}},
+		{Key: "tizen", Label: "all", Group: "Tizen", InMenu: true, kind: kAggregate, members: []string{"tizen-armv7l", "tizen-x86_64"}},
+
+		// ── webOS (Docker, linux/amd64: LG's webOS NDK runs on x86_64 hosts
+		//    only). armv7l is the TVs. ──
+		{Key: "webos-armv7l", Label: "armv7l", Group: "webOS", InMenu: true, kind: kDocker, script: sWebos, image: "webos", dockerPlatform: "linux/amd64"},
+
 		// ── Publish / validate ──
 		{Key: "manifest", Label: "Manifest", Group: "Tools", InMenu: true, kind: kNative, script: "scripts/write_manifest.sh",
 			Desc: "write builds/release/manifest.json (SHA-256 of every binary) for update_libmpv.sh"},
@@ -196,13 +209,15 @@ func allTargets() []Target {
 		// one(s) a requested build actually needs, and only when missing.
 		{Key: "docker-image-linux", Label: "Build the Linux build image", Group: "Docker", InMenu: false, kind: kImage, image: "linux"},
 		{Key: "docker-image-windows", Label: "Build the Windows build image", Group: "Docker", InMenu: false, kind: kImage, image: "windows"},
+		{Key: "docker-image-tizen", Label: "Build the Tizen build image", Group: "Docker", InMenu: false, kind: kImage, image: "tizen"},
+		{Key: "docker-image-webos", Label: "Build the webOS build image", Group: "Docker", InMenu: false, kind: kImage, image: "webos", dockerPlatform: "linux/amd64"},
 		{Key: "docker-image-android", Label: "Build the Android build image", Group: "Docker", InMenu: false, kind: kImage, image: "android", dockerPlatform: "linux/amd64"},
 		{Key: "docker-image-verify", Label: "Build the Verify image", Group: "Docker", InMenu: false, kind: kImage, image: "verify"},
 		{Key: "docker-start", Label: "Start the Docker daemon", Group: "Docker", InMenu: false, kind: kSelf, selfArg: "_dockerstart"},
 
 		// ── Aggregates (CLI convenience) ──
 		{Key: "desktop-all", Label: "All desktop targets", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"linux", "windows"}},
-		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "tvos", "android", "desktop-all", "manifest"}},
+		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "tvos", "android", "desktop-all", "tizen", "webos-armv7l", "manifest"}},
 	}
 }
 

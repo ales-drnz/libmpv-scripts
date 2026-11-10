@@ -104,6 +104,8 @@ int mak_waveform_read(struct mpv_node *out, void *parent);
 
 /* Bump the generation, reset the state, mark DECODING. Returns the new gen. */
 int  mak_waveform_begin_generation(void);
+/* The current generation when its envelope is READY, 0 otherwise. */
+int  mak_waveform_ready_gen(void);
 
 /* Set the visible state for [gen] iff it is still the current generation. */
 void mak_waveform_mark_decoding(int gen);

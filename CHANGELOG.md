@@ -1,3 +1,29 @@
+## [0.4.0] - 10-11-2026
+
+### All platforms
+**Added**
+- `duration-estimated`: yes when FFmpeg estimated the duration from the bitrate, an MP3 without a Xing header or ADTS AAC, so a client holding the real length can prefer it.
+
+**Fixed**
+- The same file loaded again keeps its complete waveform and loudness scan instead of decoding it again: the same URL, duration, hint and track, and for a local file the same size and time.
+- The ring of a filter tap follows the format of its stream and goes when the tap turns off, and a writer left from an older tap writes nothing.
+- The libraries say `mpv v0.41.0+r24`.
+- The TUI cuts a colored line at the width of the terminal: in Verify the row of a binary with failures lost its end and showed half a color code.
+
+**Docs**
+- The README shows six screens of the TUI in place of the recording. `tools/screenshots/render.sh` draws them from the TUI's own previews.
+
+### Tizen
+**Added**
+- `build_libmpv_tizen.sh` makes `libmpv_tizen-armv7l.so` for the TVs, Tizen 6.0 on with softfp floats, and `libmpv_tizen-x86_64.so` for the TV emulator, with clang on a sysroot of pinned Tizen 6.0 packages (`scripts/tizen/tizen_sysroot.py`).
+- `ao_tizen` (patch `ao_tizen`), an output on Tizen's `audio_out`: it follows the device's clock and asks mpv to reopen a device that refuses every write.
+- The Build, the TUI and `verify_binaries.sh` know both libraries.
+
+### webOS
+**Added**
+- `build_libmpv_webos.sh` makes `libmpv_webos-armv7l.so` for LG TVs with webOS 26 on, with LG's webOS NDK, playing through ALSA. The `webos` stage of the Dockerfile installs the NDK at its checksum and is never pushed, as its licence asks.
+- `verify_binaries.sh` takes the TVs' sysroot out of the NDK's installer, without running it, and checks the library on the 32-bit userland. The Build and the TUI know it.
+
 ## [0.3.3] - 8-11-2026
 
 ### All platforms

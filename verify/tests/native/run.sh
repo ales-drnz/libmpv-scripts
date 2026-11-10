@@ -12,7 +12,9 @@
 #     process with the files of fixtures.sh and, for the modes that read
 #     over HTTP, slow_http.py at the rate listed in CASES;
 #   - the white-box tests, which include one patched source file of the
-#     tree (unit) or pristine ao_audiotrack.c with its patch (audiotrack);
+#     tree (unit), pristine ao_audiotrack.c with its patch (audiotrack) or
+#     the ao_tizen.c that its patch adds (tizen, on the headers of
+#     tizen_sim/);
 #   - the tests of the patch scripts in verify/tests/patches, on pristine
 #     mpv and FFmpeg (downloaded and checked the same way).
 # A mode passes when its process exits 0: it printed RESULT PASS and
@@ -65,6 +67,7 @@ DISABLED_PATCHES="$WANT_DISABLED"
 # <kind> <test> <fixtures> <HTTP bytes per second[:cut[:option,...]]> <modes...>
 #   lib: linked with libmpv; unit: includes a patched source file;
 #   audiotrack: includes pristine ao_audiotrack.c with its patch.
+#   tizen: includes ao_tizen.c, added to pristine mpv by its patch.
 #   fixtures: a dir of fixtures.sh, "-" for none; HTTP "-": no server.
 #   The cut and the options go to slow_http.py, which lists them.
 CASES=(
@@ -81,6 +84,8 @@ CASES=(
   "lib fd_offset_test playback - two"
   "lib analysis_close_test analysis 600000 stop feedstop readystop loudoff loudkeep probe"
   "lib analysis_worker_test analysis - fail"
+  "lib analysis_reload_test analysis - same loop other loudon track ext fd rewrite"
+  "lib duration_estimated_test analysis - est aac exact none observe"
   "lib analysis_oom_test analysis - start"
   "lib analysis_start_test analysis - ts late ogg"
   "lib analysis_start_test analysis 2000000 http"
@@ -94,10 +99,12 @@ CASES=(
   "unit loudness_lock_test - - run"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
+  "tizen ao_tizen_test - - play pause seek underrun delay race seekrace refuse fast slow dead noresume short busy clock format"
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "lib keep_open_park_test playback - pause park nopause stop unload afterend seekend"
   "unit pcm_tap_idle_test - - idle slow pause quiet"
+  "unit tap_ring_test - - grow free flip rearm race"
   "unit pull_pause_tail_test - - hold mid reset"
   "lib pcm_loop_test playback - file late ab next abnext off afdrop"
   "lib chapter_list_test playback - meta index observe kit same"
@@ -136,6 +143,7 @@ PATCH_TESTS=(
   "anchor_corrupt_test {mpv} {ffmpeg}"
 )
 AUDIOTRACK_PATCH="$ROOT/patches/mpv/android/patch_audiotrack.py"
+TIZEN_PATCH="$ROOT/patches/mpv/tizen/patch_ao_tizen.py"
 
 # Test selection: test name -> its modes ("" for all).
 declare -A SEL=()
@@ -282,6 +290,18 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       python3 -B "$AUDIOTRACK_PATCH" "$o" > "$log" 2>&1 || return 1
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
         -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -idirafter "$o/jni" \
+        "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
+    tizen)
+      # The patch adds ao_tizen.c and edits ao.c and the meson files, so it
+      # runs on copies of those; tizen_sim/ stands in for the Tizen headers.
+      local o="$WORK/tizen"
+      rm -rf "$o"; mkdir -p "$o/audio/out"
+      cp "$SRC"/audio/out/*.h "$o/audio/out/"
+      cp "$WORK/mpv/audio/out/ao.c" "$o/audio/out/"
+      cp "$WORK/mpv/meson.build" "$WORK/mpv/meson.options" "$o/"
+      python3 -B "$TIZEN_PATCH" "$o" > "$log" 2>&1 || return 1
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
+        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -I"$HERE/tizen_sim" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
   esac
 }
