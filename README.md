@@ -2,7 +2,7 @@
 
 #### Audio-only libmpv, built for every platform.
 
-[![](https://img.shields.io/badge/libmpv--scripts-0.3.1-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
+[![](https://img.shields.io/badge/libmpv--scripts-0.4.0-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
 [![](https://img.shields.io/badge/mpv-v0.41.0-orange.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/FFmpeg-8.1.1-green.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg?style=for-the-badge)](LICENSE)
@@ -68,7 +68,27 @@ Rubber Band is left out. `LIBMPV_GPL=1` builds it in, and the library becomes GP
 ## Visuals
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui.gif" width="100%">
+  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui_targets.png" width="100%" alt="The targets of a build, by platform">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui_build.png" width="100%" alt="A build, each target with its state">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui_verify.png" width="100%" alt="Verify, check by check for each binary">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui_settings.png" width="100%" alt="The patches a build applies, one switch each">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui_dependencies.png" width="100%" alt="The pinned dependencies and their licenses">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ales-drnz/libmpv-scripts/main/imgs/tui_docker.png" width="100%" alt="The Docker images of the toolchains">
 </p>
 
 ---
