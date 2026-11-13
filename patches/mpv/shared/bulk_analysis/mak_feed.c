@@ -156,6 +156,11 @@ static void loud_begin(struct feed_dec *d, const AVFrame *f,
         p->format = f->format;
         p->sample_rate = f->sample_rate;
         d->loud = mak_loud_worker_create(p, f->sample_rate, 0, total, total);
+        /* A file longer than the scan measures: no accumulator, and no
+         * new try at every frame. */
+        if (!d->loud && mak_loud_slice_miss(f->sample_rate, 0, total, total) ==
+                        MAK_LOUD_MISS_UNAVAILABLE)
+            d->loud_broken = true;
     }
     avcodec_parameters_free(&p);
 }
@@ -459,8 +464,11 @@ bool mak_feed_start(int gen, struct demuxer *demuxer, struct sh_stream *audio,
                     const struct mak_scan_track *track,
                     struct mpv_global *global, struct mp_log *log)
 {
+    /* The start time is counted in samples too: bounded like the length,
+     * before it is multiplied by the rate. */
     if (!demuxer || !audio || !audio->codec || !url ||
-        !(duration_secs > 0 && duration_secs <= MAK_WAVEFORM_FED_MAX_SECS))
+        !(duration_secs > 0 && duration_secs <= MAK_WAVEFORM_FED_MAX_SECS) ||
+        !(fabs(track->start_secs) <= MAK_WAVEFORM_FED_MAX_SECS))
         return false;
     AVCodecParameters *par = mp_codec_params_to_av(audio->codec);
     if (!par || par->sample_rate <= 0 ||

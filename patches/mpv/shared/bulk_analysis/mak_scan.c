@@ -253,7 +253,15 @@ static MP_THREAD_VOID coordinator_main(void *p)
 
     AVStream *st = probe_fmt->streams[audio_idx];
     int sample_rate = st->codecpar->sample_rate;
-    if (sample_rate <= 0) goto fail;
+    /* The bounds of the cache-fed engine (mak_feed_start) hold here too:
+     * the rate and the duration are the file's word, and their product,
+     * the axis in samples, must stay inside an int64. A rate past
+     * MAK_WAVEFORM_FED_MAX_RATE is no audio this decodes. */
+    if (sample_rate <= 0 || sample_rate > MAK_WAVEFORM_FED_MAX_RATE)
+        goto fail;
+    /* Checked in double, before any conversion to an integer. */
+    bool too_long = dur_secs > MAK_WAVEFORM_FED_MAX_SECS;
+    const int64_t max_us = (int64_t)MAK_WAVEFORM_FED_MAX_SECS * 1000000;
 
     /* Track duration in microseconds. Prefer the caller's (mpv's), the one
      * the cache-fed engine builds its axis from (mak_feed.c), so both paths
@@ -261,13 +269,16 @@ static MP_THREAD_VOID coordinator_main(void *p)
      * which can differ. Fall back to the format-level duration, then to the
      * audio stream's own. */
     int64_t duration_us = 0;
-    if (dur_secs > 0) duration_us = llround(dur_secs * 1e6);
-    if (duration_us <= 0 && probe_fmt->duration > 0)
+    if (dur_secs > 0 && !too_long) duration_us = llround(dur_secs * 1e6);
+    if (duration_us <= 0 && !too_long && probe_fmt->duration > 0)
         duration_us = probe_fmt->duration;
-    if (duration_us <= 0 && st->duration > 0) {
+    if (duration_us <= 0 && !too_long && st->duration > 0) {
         duration_us = av_rescale_q(st->duration,
                                    st->time_base, AV_TIME_BASE_Q);
     }
+    /* av_rescale_q answers INT64_MIN for what does not fit. */
+    if (duration_us < 0) duration_us = 0;
+    if (duration_us > max_us) too_long = true;
 
     /* ── Classify the source (fully automatic, no caller hint) ──────────
      * Bulk parallel decode needs a complete, randomly seekable file. An
@@ -304,15 +315,21 @@ static MP_THREAD_VOID coordinator_main(void *p)
                        mak_url_scheme_is(url, scheme_sep, "file");
 
     if (is_adaptive || unseekable) {
-        double eff_dur = dur_secs > 0 ? dur_secs : duration_us / 1e6;
+        /* A length past the bound has no axis: arm_progressive fails it. */
+        double eff_dur = dur_secs > 0 ? dur_secs
+                       : too_long ? 2.0 * MAK_WAVEFORM_FED_MAX_SECS
+                       : duration_us / 1e6;
         if (eff_dur > 0)
             mak_waveform_arm_progressive(my_gen, eff_dur);
         else
             mak_waveform_arm_rolling(my_gen);   /* true live: cache-aligned roll */
         goto cleanup;
     }
-    if (duration_us <= 0) goto fail;
+    if (duration_us <= 0 || too_long) goto fail;
+    /* The start time becomes samples as well. */
+    if (!(fabs(track.start_secs) <= MAK_WAVEFORM_FED_MAX_SECS)) goto fail;
 
+    /* At most 5e12 us times 1e6 Hz, inside an int64. */
     int64_t total_samples = (int64_t)duration_us * sample_rate / 1000000;
     if (total_samples <= 0) goto fail;
     /* A source whose timestamps start later (an MPEG-TS at 1.4 s or hours

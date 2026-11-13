@@ -49,6 +49,13 @@ struct AVFrame;
  * (rate + 5) / 10 so non-multiple-of-10 rates stay consistent. */
 #define MAK_LOUD_SUBBLOCK_HOPS_PER_SEC 10
 
+/* The longest file the scan measures, 48 hours: its accumulators hold 16
+ * bytes per 100 ms of the length the file declares, allocated before a
+ * sample is decoded, and the merge four times as much. A file that
+ * declares more (58 days fit the waveform's axis) reports "unavailable"
+ * instead of taking hundreds of megabytes for its header's word. */
+#define MAK_LOUD_MAX_SECS (48 * 3600)
+
 /* Per-worker accumulator (opaque — owned by one bulk worker thread). */
 struct mak_loud_worker;
 
@@ -74,8 +81,9 @@ struct mak_loud_slice {
 /* Create the accumulator for a bulk worker covering source samples
  * [slice_sample_start, slice_sample_end). [par] supplies the channel
  * layout and sample format for the internal converter. Returns NULL when
- * the slice owns no sub-block (a file shorter than the workers' hops)
- * and on an allocation or converter failure: mak_loud_slice_miss() tells which, and the merge
+ * the slice owns no sub-block (a file shorter than the workers' hops),
+ * when the file is longer than MAK_LOUD_MAX_SECS, and on an allocation or
+ * converter failure: mak_loud_slice_miss() tells which, and the merge
  * publishes nothing when a slice that should exist is missing. */
 struct mak_loud_worker *mak_loud_worker_create(
     const struct AVCodecParameters *par, int sample_rate,
@@ -84,7 +92,8 @@ struct mak_loud_worker *mak_loud_worker_create(
 
 /* What it means that mak_loud_worker_create() returned NULL for this
  * slice: NONE when the slice owns no sub-block, so nothing of the measure
- * is missing, FAILED otherwise. */
+ * is missing, UNAVAILABLE for a file longer than MAK_LOUD_MAX_SECS,
+ * FAILED otherwise. */
 enum mak_loud_miss mak_loud_slice_miss(int sample_rate,
                                        int64_t slice_sample_start,
                                        int64_t slice_sample_end,

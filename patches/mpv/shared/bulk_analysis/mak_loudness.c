@@ -231,11 +231,21 @@ static int64_t slice_grid(int sample_rate, int64_t slice_sample_start,
     return hop;
 }
 
+/* Whether a file of [total_samples] is longer than the scan measures. */
+static bool too_long(int sample_rate, int64_t total_samples)
+{
+    return sample_rate > 0 &&
+           total_samples / sample_rate > MAK_LOUD_MAX_SECS;
+}
+
 enum mak_loud_miss mak_loud_slice_miss(int sample_rate,
                                        int64_t slice_sample_start,
                                        int64_t slice_sample_end,
                                        int64_t total_samples)
 {
+    if (too_long(sample_rate, total_samples) ||
+        too_long(sample_rate, slice_sample_end))
+        return MAK_LOUD_MISS_UNAVAILABLE;
     int64_t first_k, end_k;
     if (slice_grid(sample_rate, slice_sample_start, slice_sample_end,
                    total_samples, &first_k, &end_k) > 0 && end_k <= first_k)
@@ -259,6 +269,10 @@ struct mak_loud_worker *mak_loud_worker_create(
     if (!par || sample_rate <= 0 || par->ch_layout.nb_channels <= 0 ||
         par->ch_layout.nb_channels > MAK_LOUD_MAX_CH ||
         slice_sample_start < 0 || slice_sample_end <= slice_sample_start)
+        return NULL;
+    /* Before any allocation: the arrays below follow the declared length. */
+    if (too_long(sample_rate, total_samples) ||
+        too_long(sample_rate, slice_sample_end))
         return NULL;
 
     struct mak_loud_worker *w = av_mallocz(sizeof(*w));
@@ -563,7 +577,11 @@ void mak_loudness_publish(struct mak_loud_slice *slices, int n,
 
     bool want = atomic_load(&g_loud_enabled) &&
                 gen == mak_waveform_current_gen();
-    if (!want || first == INT64_MAX || last <= first) {
+    /* The slices of one file span MAK_LOUD_MAX_SECS at most (their
+     * accumulators refuse more); anything wider is not a grid to merge. */
+    if (!want || first == INT64_MAX || last <= first ||
+        last - first > (int64_t)MAK_LOUD_MAX_SECS *
+                       MAK_LOUD_SUBBLOCK_HOPS_PER_SEC + 1) {
         for (int i = 0; i < n; i++) mak_loud_slice_free(&slices[i]);
         if (want) loud_set_state(gen, MAK_LOUD_FAILED);
         return;
