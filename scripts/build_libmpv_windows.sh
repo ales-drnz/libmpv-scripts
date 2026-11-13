@@ -582,6 +582,9 @@ fi
 # ── mpv ───────────────────────────────────────────────────────────────────────
 log "Building mpv $MPV_VERSION..."
 MPV_ARCHIVE=$(fetch mpv "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz")
+# A pristine tree on every build, as for FFmpeg above: the mpv patches are
+# not idempotent, and tar over a patched tree keeps the files they added.
+rm -rf "$SRC/mpv-$MPV_VERSION"
 tar -xf "$MPV_ARCHIVE" -C "$SRC"
 
 pushd "$SRC/mpv-$MPV_VERSION"

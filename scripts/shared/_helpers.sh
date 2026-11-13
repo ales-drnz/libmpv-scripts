@@ -240,7 +240,10 @@ download_git() {
 }
 
 # ── Build dir cleanup ────────────────────────────────────────────────────────
-# Default: wipe `build/` and `prefix/` but KEEP `src/` (the download cache).
+# Default: wipe `build/`, `prefix/` and `dist/` (the prefix of the Windows
+# script, which used to survive: its next build then found every library
+# already there and skipped FFmpeg and the dependencies whatever had changed
+# in patches, filters or versions) but KEEP `src/` (the download cache).
 # Next invocation reuses the tarballs/git clones — saves a full re-download
 # even when you don't pass KEEP_BUILD=1.
 #
@@ -259,7 +262,7 @@ cleanup_build() {
     rm -rf "$build_dir"
     ok "BUILD_DIR removed (incl. download cache)"
   else
-    rm -rf "$build_dir/build" "$build_dir/prefix"
+    rm -rf "$build_dir/build" "$build_dir/prefix" "$build_dir/dist"
     ok "BUILD_DIR cleaned — src/ download cache kept"
   fi
 }
