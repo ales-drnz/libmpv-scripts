@@ -76,6 +76,7 @@
 #include "avformat.h"
 #include "url.h"
 #include "urldecode.h"
+#include "webio_log.h"
 
 /* Flags of mak_webio_js_start. */
 #define WEBIO_F_ICY      1   /* ask for ICY metadata */
@@ -510,7 +511,9 @@ static void log_note(URLContext *h, WebioContext *c, WebioStream *s)
 {
     if (s->note && !c->note_logged) {
         c->note_logged = 1;
-        av_log(h, AV_LOG_WARNING, "%s\n", s->note);
+        char line[1024];
+        webio_redact(line, sizeof(line), s->note);
+        av_log(h, AV_LOG_WARNING, "%s\n", line);
     }
 }
 
@@ -518,7 +521,9 @@ static void log_error(URLContext *h, WebioContext *c, WebioStream *s)
 {
     if (s->errmsg && !c->error_logged) {
         c->error_logged = 1;
-        av_log(h, AV_LOG_ERROR, "%s\n", s->errmsg);
+        char line[1024];
+        webio_redact(line, sizeof(line), s->errmsg);
+        av_log(h, AV_LOG_ERROR, "%s\n", line);
     }
 }
 
@@ -694,8 +699,13 @@ static int webio_open(URLContext *h, const char *uri, int flags)
     export_string(&c->mime_type, s->mime);
     export_string(&c->location, s->location ? s->location : uri);
     export_string(&c->icy_metadata_headers, s->icy_headers);
+    /* The URL as a log may hold it: without its userinfo, which is still
+     * there when it could not be turned into a header, and without its
+     * query (see webio_log.h). */
+    char shown[512];
+    webio_redact(shown, sizeof(shown), s->location ? s->location : s->url);
     av_log(h, AV_LOG_INFO, "webio: %s: HTTP %d in %.1f ms, size %"PRId64"%s\n",
-           s->location ? s->location : s->url, s->status, s->ms_headers,
+           shown, s->status, s->ms_headers,
            s->size, h->is_streamed ? ", not seekable" : "");
     pthread_mutex_unlock(&s->lock);
     return 0;
@@ -826,9 +836,13 @@ static int webio_read(URLContext *h, unsigned char *buf, int size)
         n = AVERROR(EAGAIN);
     }
     log_note(h, c, s);
-    if (again)
+    if (again) {
+        char line[1024];
+        webio_redact(line, sizeof(line),
+                     s->errmsg ? s->errmsg : "webio: the connection broke");
         av_log(h, AV_LOG_WARNING, "%s; asked again from byte %"PRId64"\n",
-               s->errmsg ? s->errmsg : "webio: the connection broke", c->pos);
+               line, c->pos);
+    }
     else if (n < 0 && s->state == WEBIO_ERROR)
         log_error(h, c, s);
     pthread_mutex_unlock(&s->lock);
