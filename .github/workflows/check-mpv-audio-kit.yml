@@ -491,8 +491,6 @@ jobs:
   # '[cpu diag]' runs only this job: CPU per thread of a profile build on
   # Linux in a few player states, with a pulse null sink as the audio output and perf on the paused
   # phases. KIT_REF with the published libmpv: no run artifacts needed.
-  # Patches in .github/diag/cpu/*.patch are applied to the kit first, so the
-  # same job measures a fix before it lands.
   cpu-diag:
     needs: plan
     if: needs.plan.outputs.cpu == 'true'
@@ -530,12 +528,6 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Patches under test
-        working-directory: kit
-        run: |
-          shopt -s nullglob
-          for p in ../scripts/.github/diag/cpu/*.patch; do echo "applying $p"; git apply "$p"; done
-          git diff --stat
       - name: Diagnostic
         working-directory: kit/test_app
         run: |
