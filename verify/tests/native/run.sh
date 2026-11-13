@@ -145,6 +145,7 @@ PATCH_TESTS=(
   "property_seam_patch_test {mpv}"
   "scan_before_loaded_patch_test {mpv}"
   "end_file_layout_test {src}"
+  "read_error_guard_test {src}"
   "ios_audio_stubs_patch_test {mpv}"
   "audiotrack_patch_test {mpv} {src} {build}"
   "apply_order_test {mpv}"
