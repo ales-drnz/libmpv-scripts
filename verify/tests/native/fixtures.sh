@@ -51,6 +51,17 @@
 #             rate/4 at 45 degrees at 1.41 (samples at 0.997)
 #   l1.flac to l4.flac  20 s a level (3342 cases 1 to 4): -20 then -30,
 #             -20 then -15, -40 then -20, and -50, -35, -20, -35, -50
+# hostile/ (analysis_declared_test): headers that say something else than
+# the data, written by hostile_files.py
+#   chg.flac  one FLAC stream, 48 kHz 16-bit: 10.24 s of a stereo sine at
+#             0.25, then 20.48 s of a mono sine at 0.5, the frames numbered
+#             on and both parts declared (30.72 s). FFmpeg seeks it by
+#             sample, so the bulk scan gives it four workers
+#   long.wav  3 s of a 1 kHz sine at -20 dBFS, 48 kHz stereo, in an RF64
+#             that declares 40 hours (a RIFF size past the file is cut to
+#             the file by FFmpeg, a ds64 one is not)
+#   short.flac  the same 3 s in a FLAC that declares 600 s; long.flac
+#             declares 30 hours, huge.flac 2^36 - 1 samples, 16 days
 # playback/ (pcm_*, chapter_list_test, af_command_args_test): constant (DC)
 # files, so a sample tells which file it came from, 3 s each unless said
 #   p_st48.flac   +0.25, stereo, 48 kHz     p_mono48.flac +0.25, mono, 48 kHz
@@ -181,6 +192,23 @@ ebu l1.flac 48000 40 stereo "$(both "$(steps -20 20 -30)")"
 ebu l2.flac 48000 40 stereo "$(both "$(steps -20 20 -15)")"
 ebu l3.flac 48000 40 stereo "$(both "$(steps -40 20 -20)")"
 ebu l4.flac 48000 100 stereo "$(both "$(steps -50 20 -35 20 -20 20 -35 20 -50)")"
+
+d="$D/hostile"; mkdir -p "$d"
+HOSTILE="$(dirname "${BASH_SOURCE[0]}")/hostile_files.py"
+if [[ ! -f "$d/chg.flac" ]]; then
+  ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*440*t)|0.25*sin(2*PI*440*t):s=48000:d=10.24" \
+     -c:a flac -sample_fmt s16 -frame_size 4096 "$d/stereo.flac"
+  ff -f lavfi -i "aevalsrc=0.5*sin(2*PI*660*t):s=48000:d=20.48" \
+     -c:a flac -sample_fmt s16 -frame_size 4096 "$d/mono.flac"
+  python3 -B "$HOSTILE" join "$d/stereo.flac" "$d/mono.flac" "$d/chg.flac"
+fi
+[[ -f "$d/long.wav" ]] || python3 -B "$HOSTILE" wav 144000 "$d/long.wav"
+if [[ ! -f "$d/huge.flac" ]]; then
+  ff -f lavfi -i "aevalsrc=$(amp -20)*$SIN|$(amp -20)*$SIN:s=48000:d=3" -c:a flac -sample_fmt s16 "$d/tone3.flac"
+  python3 -B "$HOSTILE" declare "$d/tone3.flac" $((600 * 48000)) "$d/short.flac"
+  python3 -B "$HOSTILE" declare "$d/tone3.flac" $((30 * 3600 * 48000)) "$d/long.flac"
+  python3 -B "$HOSTILE" declare "$d/tone3.flac" $(((1 << 36) - 1)) "$d/huge.flac"
+fi
 
 d="$D/playback"; mkdir -p "$d"
 dc() { [[ -f "$d/$1" ]] || ff -f lavfi -i "aevalsrc=$2:s=$3:d=$4" -c:a flac "$d/$1"; }
