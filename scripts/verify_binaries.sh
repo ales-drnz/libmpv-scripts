@@ -71,7 +71,10 @@
 #       every other layer missed (only a physical-device install enforces it).
 #  16.  ELF invariants (Linux + Android): SONAME is libmpv_audio_kit.so, no
 #       DT_RELR, LOAD segments aligned for 16 KB pages on 64-bit Android, and
-#       on Linux no GLIBC symbol version above LINUX_GLIBC_FLOOR.
+#       on Linux no GLIBC symbol version above LINUX_GLIBC_FLOOR. Hardening
+#       of every ELF library: non-executable stack, RELRO, BIND_NOW, a
+#       stack canary, no TEXTREL. On Windows: DYNAMIC_BASE, HIGH_ENTROPY_VA
+#       and NX_COMPAT in the DLL characteristics.
 #
 # The web module (libmpv_web.zip) gets its own static checks, check_web_binary:
 # the four files of the zip and the record's release and versions, a shared
@@ -126,7 +129,7 @@
 # 13  Runtime load test          ✓†   N/A    ✓     ✓    N/A   needs the platform's real loader (Apple dyld; no emulator-less Android path)
 # 14  Stub detection             N/A  N/A   N/A   N/A    ✓    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
 # 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A   Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
-# 16  ELF invariants             N/A  N/A    ✓    N/A    ✓    SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns
+# 16  ELF invariants, hardening  N/A  N/A    ✓     ✓     ✓    SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns; Windows gets the DLL characteristics alone
 #
 #  tvOS gets the iOS column: the same build with the tvOS SDKs.
 #
