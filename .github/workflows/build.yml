@@ -276,14 +276,21 @@ jobs:
           if-no-files-found: ignore
 
   # The image is pinned, so a new macos-latest does not change the
-  # toolchain of a release without a commit. Xcode and the brew tools still
-  # follow the updates within the label: the Toolchain versions step logs
-  # what each build used, and cannot fail the job.
+  # toolchain of a release without a commit. Xcode is selected by version
+  # (the one libmpv-r24 was built with: a runner image that drops it fails
+  # the job, and the pin moves with a commit) and meson comes from pip at
+  # the version and wheel hash of docker/Dockerfile. The other brew tools
+  # still follow the updates within the label: the Toolchain versions step
+  # logs what each build used, and cannot fail the job.
   apple:
     name: ${{ matrix.name }}
     needs: release-branch
     runs-on: macos-26
     timeout-minutes: 90
+    env:
+      XCODE_VERSION: '26.6'
+      MESON_VERSION: 1.12.1
+      MESON_SHA256: 930bc7542cbd9f57009e182fd014eba48cf1a0180a7b9006d2d32d8f168d8b02
     strategy:
       fail-fast: false
       matrix:
@@ -305,7 +312,15 @@ jobs:
             licenses: builds/release/licenses_tvos/
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: brew install meson ninja nasm cmake pkg-config autoconf automake libtool
+      - name: Select Xcode
+        run: sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+      - run: brew install ninja nasm cmake pkg-config autoconf automake libtool
+      - name: Install meson
+        run: |
+          python3 -m venv "$RUNNER_TEMP/meson-venv"
+          echo "meson==${MESON_VERSION} --hash=sha256:${MESON_SHA256}" > "$RUNNER_TEMP/meson.txt"
+          "$RUNNER_TEMP/meson-venv/bin/pip" install --quiet --require-hashes -r "$RUNNER_TEMP/meson.txt"
+          echo "$RUNNER_TEMP/meson-venv/bin" >> "$GITHUB_PATH"
       - name: Toolchain versions
         continue-on-error: true
         run: |
