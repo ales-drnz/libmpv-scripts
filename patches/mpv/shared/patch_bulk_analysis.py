@@ -241,7 +241,7 @@ import property_seam as seam  # noqa: E402
 # Provenance tag stamped into every patched region and generated file so a
 # patched mpv tree is easy to grep. A file that already carries it is left
 # alone, so a second run changes nothing; the generated files are refreshed.
-MARKER = 'MAK_WAVEFORM_PATCH'
+MARKER = 'MAK_WAVEFORM_PATCH_V2'
 
 
 # ─── player/loadfile.c ────────────────────────────────────────────────
@@ -586,13 +586,13 @@ DEMUX_EDITS = [
 # in any order.
 MESON_AFTER_PCM_TAP = (
     "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
+    "    # MAK_PCM_TAP_PATCH_V2\n"
     "    'audio/out/mak_pcm_tap.c',"
 )
 
 MESON_AFTER_PCM_TAP_PATCHED = (
     "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
+    "    # MAK_PCM_TAP_PATCH_V2\n"
     "    'audio/out/mak_pcm_tap.c',\n"
     "    # " + MARKER + "\n"
     "    'audio/mak_waveform.c',\n"

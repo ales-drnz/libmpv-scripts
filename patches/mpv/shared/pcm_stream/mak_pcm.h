@@ -1,4 +1,4 @@
-/* MAK_PCM_STREAM_PATCH ─── live PCM input: the mak-pcm://<id> stream.
+/* MAK_PCM_STREAM_PATCH_V2 ─── live PCM input: the mak-pcm://<id> stream.
  *
  * An app feeds raw PCM bytes as they arrive (a network TTS, a synth, a
  * capture) and mpv plays them through its rawaudio demuxer, with no temp

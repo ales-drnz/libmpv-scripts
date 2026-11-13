@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── waveform product (min/max amplitude envelope).
+/* MAK_WAVEFORM_PATCH_V2 ─── waveform product (min/max amplitude envelope).
  *
  * Owns the visible waveform STATE (`g_wave`) and everything that mutates or
  * reads it: the generation/lifecycle, the three bin arrays, the reader, the

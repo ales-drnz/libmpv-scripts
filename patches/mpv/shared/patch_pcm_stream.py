@@ -105,7 +105,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
 
 # Idempotency marker; also present in the copied sources.
-MARKER = 'MAK_PCM_STREAM_PATCH'
+MARKER = 'MAK_PCM_STREAM_PATCH_V2'
 
 
 # ─── stream/stream.c ─────────────────────────────────────────────────

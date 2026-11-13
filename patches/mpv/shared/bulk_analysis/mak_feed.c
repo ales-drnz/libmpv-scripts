@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── cache-fed analysis of an HTTP file.
+/* MAK_WAVEFORM_PATCH_V2 ─── cache-fed analysis of an HTTP file.
  * See mak_feed.h. One detached thread per generation: it pops the demuxer
  * feed, decodes with libavcodec the way mpv's own audio decoder does, folds
  * the mono downmix into the waveform and, with the loudness patch in, feeds

@@ -1,4 +1,4 @@
-/* MAK_TAP_PATCH_V4 ─── per-filter pre / post audio tap.
+/* MAK_TAP_PATCH_V5 ─── per-filter pre / post audio tap.
  *
  * Concurrency model
  * -----------------
@@ -406,7 +406,7 @@ static size_t convert_aframe(struct mp_aframe *aframe, int offset,
 #undef MAK_TAP_CONV
 }
 
-/* MAK_TAP_PATCH_V4 ─── pre-DSP waveform fold from the af chain
+/* MAK_TAP_PATCH_V5 ─── pre-DSP waveform fold from the af chain
  * "in" filter (PRE side). Converts + mono-downmixes the SOURCE frame
  * (pre volume / ReplayGain / EQ — those run later on the AO thread)
  * and folds it into the progressive waveform envelope, per-bin by PTS.

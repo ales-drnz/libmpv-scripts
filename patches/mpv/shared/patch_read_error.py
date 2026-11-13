@@ -112,7 +112,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
 import property_seam as seam  # noqa: E402
 
-MARKER = 'MAK_READ_ERROR_PATCH_V1'
+MARKER = 'MAK_READ_ERROR_PATCH_V2'
 
 STREAM_H = 'stream/stream.h'
 STREAM_C = 'stream/stream.c'

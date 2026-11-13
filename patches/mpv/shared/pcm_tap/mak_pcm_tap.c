@@ -1,4 +1,4 @@
-/* MAK_PCM_TAP_PATCH_V1 ─── PCM tap: ring buffer for post-DSP audio
+/* MAK_PCM_TAP_PATCH_V2 ─── PCM tap: ring buffer for post-DSP audio
  * samples, polled via the pcm-tap-frame property. See
  * patches/mpv/shared/patch_pcm_tap.py in libmpv-scripts for
  * the rationale. */

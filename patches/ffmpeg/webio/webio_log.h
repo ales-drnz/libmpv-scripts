@@ -1,4 +1,4 @@
-/* MAK_WEBIO_PATCH_V1: what webio.c writes of a URL to the log.
+/* MAK_WEBIO_PATCH_V2: what webio.c writes of a URL to the log.
  *
  * A log line is kept, shown and sent around: it must not carry what a URL
  * holds of a secret. That is its userinfo ("user:password@") and its query,

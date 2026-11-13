@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── shared min/max/energy-per-bin kernel.
+/* MAK_WAVEFORM_PATCH_V2 ─── shared min/max/energy-per-bin kernel.
  *
  * Used by the bulk parallel decode AND the progressive pre-DSP fold, so
  * the two envelopes are produced by identical math (same downmix, same

@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── bulk-analysis scan engine: the sources.
+/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine: the sources.
  *
  * Opens a source for the coordinator's probe and for each worker: a URL with
  * mpv's network options, or the duplicate of an fd://N descriptor read with

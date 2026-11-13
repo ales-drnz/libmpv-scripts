@@ -1,4 +1,4 @@
-/* MAK_LOUDNESS_PATCH ─── offline loudness scan (EBU R128 / BS.1770).
+/* MAK_LOUDNESS_PATCH_V2 ─── offline loudness scan (EBU R128 / BS.1770).
  *
  * Rides the bulk waveform analyzer's decode pass: each bulk worker owns
  * a mak_loud_worker that K-weights the PER-CHANNEL signal (before the

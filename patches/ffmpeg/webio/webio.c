@@ -1,6 +1,6 @@
 /*
  * webio: http, https and makblob read through fetch in the browser.
- * MAK_WEBIO_PATCH_V1
+ * MAK_WEBIO_PATCH_V2
  *
  * Copyright © 2026 & onwards, Alessandro Di Ronza <ales.drnz@gmail.com>.
  * All rights reserved.

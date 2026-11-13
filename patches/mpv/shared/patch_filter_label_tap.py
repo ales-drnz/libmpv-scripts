@@ -95,7 +95,7 @@ import property_seam as seam  # noqa: E402
 # V4 keys the taps on chain labels (V3 keyed them on filter names). A tree
 # patched by an older version fails in check_stale_marker instead of being
 # skipped as already patched.
-MARKER = 'MAK_TAP_PATCH_V4'
+MARKER = 'MAK_TAP_PATCH_V5'
 MARKER_RE = re.compile(r'MAK_TAP_PATCH_V\d+')
 
 # Wire-protocol limits. Keep in sync with the Dart parser.
@@ -282,13 +282,13 @@ COMMAND_INCLUDE = (
 
 MESON_AFTER_PCM_TAP = (
     "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
+    "    # MAK_PCM_TAP_PATCH_V2\n"
     "    'audio/out/mak_pcm_tap.c',"
 )
 
 MESON_AFTER_PCM_TAP_PATCHED = (
     "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
+    "    # MAK_PCM_TAP_PATCH_V2\n"
     "    'audio/out/mak_pcm_tap.c',\n"
     "    # " + MARKER + "\n"
     "    'audio/mak_tap.c',"

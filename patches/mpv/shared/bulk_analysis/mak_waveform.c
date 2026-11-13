@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── waveform product (min/max/RMS amplitude envelope).
+/* MAK_WAVEFORM_PATCH_V2 ─── waveform product (min/max/RMS amplitude envelope).
  *
  * Owns the visible waveform state `g_wave` and everything that touches it: the
  * generation/lifecycle, the reader, the decode-progress fraction, the

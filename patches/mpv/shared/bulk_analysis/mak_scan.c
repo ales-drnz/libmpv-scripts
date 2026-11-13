@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── bulk-analysis scan engine.
+/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine.
  *
  * The decode engine: on mak_scan_start() it spawns a detached coordinator that
  * probes + classifies the source and either BULK-decodes a complete seekable

@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── demuxer packet feed for the bulk analysis.
+/* MAK_WAVEFORM_PATCH_V2 ─── demuxer packet feed for the bulk analysis.
  * See mak_demux_feed.h. The queue is a singly linked list of items under the
  * feed's own mutex; the demuxer pushes while holding its lock and only ever
  * takes this mutex inside it, the consumer never takes the demuxer's lock,

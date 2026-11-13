@@ -1,4 +1,4 @@
-/* MAK_LOUDNESS_PATCH ─── offline loudness scan (EBU R128 / BS.1770).
+/* MAK_LOUDNESS_PATCH_V2 ─── offline loudness scan (EBU R128 / BS.1770).
  * See mak_loudness.h for the architecture and the merge math. */
 #include <math.h>
 #include <stdatomic.h>
