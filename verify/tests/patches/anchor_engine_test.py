@@ -130,6 +130,68 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(p.edits('a.c', [('int bb;\n', 'int c;\n')],
                                 marker='MAK_OTHER'))
 
+    def test_edits_fail_on_another_version_of_the_marker(self):
+        edits = [('int a;\n', f'int a; // {MARKER}\n')]
+        for old in ('MAK_TEST_PATCH_V2', 'MAK_TEST_PATCH'):
+            before = f'int a; // {old}\nint b;\n'
+            (self.root / 'a.c').write_text(before)
+            p = self.patch()
+            self.assertFalse(p.edits('a.c', edits))
+            self.assertEqual(len(p.errors), 1)
+            self.assertIn(old, p.errors[0])
+            self.assertIn('another version', p.errors[0])
+            self.assertEqual(p.commit(), 1)
+            self.assertEqual(self.read('a.c'), before)
+        # Not this marker's family: a longer name, another patch, a word
+        # that only starts like a version.
+        for other in ('MAK_TEST_PATCH_VERIFY', 'MAK_TEST_PATCH_V2X',
+                      'XMAK_TEST_PATCH_V2', 'MAK_OTHER_PATCH_V2'):
+            (self.root / 'a.c').write_text(f'int a;\n// {other}\n')
+            p = self.patch()
+            self.assertTrue(p.edits('a.c', edits), other)
+            self.assertEqual(p.errors, [], other)
+        # A marker without a version has no other version.
+        self.assertEqual(self.patch().other_versions('a.c', 'MAK_OTHER_PATCH'),
+                         [])
+
+    def test_a_write_cut_short_leaves_the_file_whole(self):
+        p = self.patch()
+        p.edit('a.c', 'int a;\n', 'int z;\n')
+        p.edit('sub/b.c', 'void f(void);\n', 'void g(void);\n')
+        real = os.replace
+        calls = []
+
+        def cut(src, dst):
+            # The first file is written; the second fails at its rename,
+            # as when the build is stopped there.
+            calls.append(dst)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            real(src, dst)
+
+        anchor.os.replace = cut
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                p.commit()
+        finally:
+            anchor.os.replace = real
+        texts = {self.read('a.c'), self.read('sub/b.c')}
+        self.assertEqual(texts & {'int z;\nint b;\n', 'void g(void);\n'},
+                         {self.read(str(Path(calls[0]).relative_to(self.root)))})
+        self.assertIn(self.read(str(Path(calls[1]).relative_to(self.root))),
+                      ('int a;\nint b;\n', 'void f(void);\n'))
+        left = [f.name for f in self.root.rglob('*.mak-tmp')]
+        self.assertEqual(left, [])
+
+    def test_a_file_is_replaced_not_written_in_place(self):
+        # A reader that has the file open keeps the old text whole.
+        with open(self.root / 'a.c') as old:
+            p = self.patch()
+            p.edit('a.c', 'int a;\n', 'int z;\n')
+            self.assertEqual(p.commit(), 0)
+            self.assertEqual(old.read(), 'int a;\nint b;\n')
+        self.assertEqual(self.read('a.c'), 'int z;\nint b;\n')
+
     def test_regex(self):
         p = self.patch()
         self.assertTrue(p.regex('a.c', r'int (\w);', r'long \1;', times=2))
