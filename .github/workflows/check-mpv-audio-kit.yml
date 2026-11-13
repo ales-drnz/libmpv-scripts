@@ -10,29 +10,46 @@ name: Check mpv_audio_kit
 # the runner.
 #
 # Started by hand with the run, the kit's branch and the tags, or by a push
-# to a ci/ branch whose commit sets LIBS_RUN and KIT_REF below and names the
-# tags in its message. With no tag it runs the tests on macOS, the Windows
-# run (each file on its own, then the whole suite), the app builds and the
-# iOS simulator; '[full check]' adds the Android
-# emulators, and '[android emu]', '[native]', '[cpu diag]', '[underrun diag]',
-# '[ios only]' and '[macos test only]' run just their part.
+# to a ci/ branch that names the tags in its commit message. With no tag it
+# runs the tests on macOS, the Windows run (each file on its own, then the
+# whole suite), the app builds and the iOS simulator; '[full check]' adds
+# the Android emulators, and '[android emu]', '[native]', '[cpu diag]',
+# '[underrun diag]', '[ios only]' and '[macos test only]' run just their
+# part. Only '[full check]' with none of the others is a complete check,
+# the one a libmpv release needs: the Summary job says which jobs a run
+# left out and why, and whether it counts for a release.
+#
+# The Build run is the libs_run input, or '[libs_run <id>]' in the commit
+# message of a ci/ branch. Without either the Plan job takes the latest
+# successful Build of release/rN started by a push, rN being LIBMPV_RELEASE
+# at this commit, and fails when there is none: no run id is written here
+# as a default (.github/ci/resolve_build_run.sh).
+#
+# The runners and Flutter are named by version, so a new macos-latest,
+# windows-latest or Flutter stable cannot change what a check means between
+# two runs: the flutter input tries another one without a commit.
 #
 # The jobs that run the kit's tests set MAK_LIBMPV_RELEASE to the release
 # of the run's manifest (--dart-define on the devices): a test of a fix up
 # to that release then fails on a binary without it instead of skipping.
+run-name: ${{ github.event_name == 'push' && github.event.head_commit.message || format('Check {0} {1}', inputs.libs_run && format('Build {0}', inputs.libs_run) || 'the latest Build', inputs.tags) }}
+
 on:
   push:
     branches: ['ci/**']
   workflow_dispatch:
     inputs:
       libs_run:
-        description: Build run whose libmpv-release artifact is checked
-        required: true
+        description: Build run whose libmpv-release artifact is checked (empty for the latest successful Build of release/rN)
+        default: ''
       kit_ref:
         description: mpv_audio_kit branch, tag or commit
         default: main
       tags:
         description: Tags as in a commit message, e.g. [full check]
+        default: ''
+      flutter:
+        description: Flutter version (empty for the one pinned in the workflow)
         default: ''
 
 permissions:
@@ -40,18 +57,23 @@ permissions:
   contents: read
 
 env:
-  LIBS_RUN: ${{ inputs.libs_run || '41422329285' }}
   KIT_REPO: ales-drnz/mpv_audio_kit
   KIT_REF: ${{ inputs.kit_ref || 'main' }}
+  # The Flutter of every job. 3.50.0 refuses the Android Gradle Plugin 9.1.0
+  # of the kit's test_app (it asks for 9.1.1): the Android emulator jobs
+  # failed at their build while this followed the stable channel.
+  FLUTTER_VERSION: ${{ inputs.flutter || '3.47.5' }}
   # A missing libmpv or fixture fails the suite instead of skipping it.
   CI: 'true'
 
 jobs:
-  # Reads the tags once, from the commit message and the tags input, and
-  # tells the other jobs whether they run.
+  # Reads the tags once, from the commit message and the tags input, tells
+  # the other jobs whether they run and why not, and names the Build run
+  # they all download, after checking that it has the libraries.
   plan:
     name: Plan
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       tests: ${{ steps.tags.outputs.tests }}
       apps: ${{ steps.tags.outputs.apps }}
@@ -60,7 +82,21 @@ jobs:
       cpu: ${{ steps.tags.outputs.cpu }}
       android: ${{ steps.tags.outputs.android }}
       native: ${{ steps.tags.outputs.native }}
+      complete: ${{ steps.tags.outputs.complete }}
+      why_tests: ${{ steps.tags.outputs.why_tests }}
+      why_apps: ${{ steps.tags.outputs.why_apps }}
+      why_ios: ${{ steps.tags.outputs.why_ios }}
+      libs_run: ${{ steps.build.outputs.run }}
+      libs_branch: ${{ steps.build.outputs.branch }}
+      libs_sha: ${{ steps.build.outputs.sha }}
+      release_build: ${{ steps.build.outputs.release_build }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: |
+            .github/ci
+            scripts/shared/_versions.sh
+          sparse-checkout-cone-mode: false
       - id: tags
         env:
           TEXT: ${{ format('{0} {1}', github.event.head_commit.message, inputs.tags) }}
@@ -72,29 +108,58 @@ jobs:
           underrun=$(has 'underrun diag'); cpu=$(has 'cpu diag')
           emu=$(has 'android emu'); native=$(has native); full=$(has 'full check')
           # A tag that runs just its part leaves out the default jobs.
-          alone=false
-          for t in "$underrun" "$cpu" "$emu" "$native"; do [[ $t == true ]] && alone=true; done
+          alone=false; only=''
+          for t in "underrun diag:$underrun" "cpu diag:$cpu" "android emu:$emu" "native:$native"; do
+            if [[ ${t##*:} == true ]]; then alone=true; only+=" [${t%%:*}]"; fi
+          done
           tests=true; [[ $alone == true || $ios_only == true ]] && tests=false
           apps=$tests; [[ $mac_only == true ]] && apps=false
           ios=true; [[ $alone == true || $mac_only == true ]] && ios=false
           android=false; [[ $emu == true || $full == true ]] && android=true
+          # Why a default job does not run, for the Summary job.
+          why_alone=''; [[ $alone == true ]] && why_alone="left out by a tag that runs only its part:${only}"
+          why_tests=$why_alone; [[ -z $why_tests && $ios_only == true ]] && why_tests='left out by [ios only]'
+          why_apps=$why_tests; [[ -z $why_apps && $mac_only == true ]] && why_apps='left out by [macos test only]'
+          why_ios=$why_alone; [[ -z $why_ios && $mac_only == true ]] && why_ios='left out by [macos test only]'
+          # The check a libmpv release needs: every default job and the
+          # Android emulators.
+          complete=false
+          [[ $tests == true && $apps == true && $ios == true && $android == true ]] && complete=true
           {
             echo "tests=$tests"; echo "apps=$apps"; echo "ios=$ios"
             echo "underrun=$underrun"; echo "cpu=$cpu"; echo "android=$android"
-            echo "native=$native"
+            echo "native=$native"; echo "complete=$complete"
+            echo "why_tests=$why_tests"; echo "why_apps=$why_apps"; echo "why_ios=$why_ios"
           } | tee -a "$GITHUB_OUTPUT"
+      # The libs_run input, else [libs_run <id>] of the commit message, else
+      # the latest successful Build of release/rN: found and checked once,
+      # here, so a run that has no libraries stops before the long jobs.
+      - id: build
+        name: Build run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RUN: ${{ inputs.libs_run }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          run="$INPUT_RUN"
+          shopt -s nocasematch
+          if [[ -z "$run" && "$MESSAGE" =~ \[libs_run\ +([0-9]+)\] ]]; then run="${BASH_REMATCH[1]}"; fi
+          bash .github/ci/resolve_build_run.sh "$run" | tee -a "$GITHUB_OUTPUT"
 
   test:
     needs: plan
     if: needs.plan.outputs.tests == 'true'
     name: Test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      LIBS_RUN: ${{ needs.plan.outputs.libs_run }}
     strategy:
       fail-fast: false
       matrix:
         # '[macos test only]' in the commit message runs just this job.
         # Windows runs the whole suite in windows-per-file.
-        os: [macos-latest]
+        os: [macos-26]
     defaults:
       run:
         shell: bash
@@ -128,6 +193,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: flutter test
         working-directory: kit
@@ -154,7 +220,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.apps == 'true'
     name: Windows per file
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 120
+    env:
+      LIBS_RUN: ${{ needs.plan.outputs.libs_run }}
     defaults:
       run:
         shell: bash
@@ -170,7 +239,7 @@ jobs:
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
-          # The check of Test windows-latest, which this job replaced.
+          # The check of the Test job on Windows, which this job replaced.
           python - bin <<'EOF'
           import hashlib, json, os, sys
           d = sys.argv[1]
@@ -184,6 +253,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Every test file on its own
         working-directory: kit
@@ -234,31 +304,34 @@ jobs:
     if: needs.plan.outputs.apps == 'true'
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      LIBS_RUN: ${{ needs.plan.outputs.libs_run }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Windows
-            os: windows-latest
+            os: windows-2025
             command: flutter build windows --debug
           - name: macOS (SwiftPM)
-            os: macos-latest
+            os: macos-26
             command: >-
               flutter build macos --debug &&
               ../kit/scripts/ci/check_apple_frameworks.sh build/macos/Build/Products/Debug/freshapp.app/Contents/Frameworks
           - name: macOS (CocoaPods)
-            os: macos-latest
+            os: macos-26
             swiftpm: 'off'
             command: >-
               flutter build macos --debug &&
               ../kit/scripts/ci/check_apple_frameworks.sh --expect-plugin build/macos/Build/Products/Debug/freshapp.app/Contents/Frameworks
           - name: iOS (SwiftPM)
-            os: macos-latest
+            os: macos-26
             command: >-
               flutter build ios --simulator --debug &&
               ../kit/scripts/ci/check_apple_frameworks.sh build/ios/iphonesimulator/Runner.app/Frameworks
           - name: iOS (CocoaPods)
-            os: macos-latest
+            os: macos-26
             swiftpm: 'off'
             command: >-
               flutter build ios --simulator --debug &&
@@ -279,6 +352,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Disable Swift Package Manager
         if: matrix.swiftpm == 'off'
@@ -319,8 +393,10 @@ jobs:
     name: iOS simulator integration tests
     needs: plan
     if: needs.plan.outputs.ios == 'true'
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 150
+    env:
+      LIBS_RUN: ${{ needs.plan.outputs.libs_run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -336,6 +412,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Disable Swift Package Manager
         run: flutter config --no-enable-swift-package-manager
@@ -446,7 +523,10 @@ jobs:
     needs: plan
     if: needs.plan.outputs.underrun == 'true'
     name: Underrun diagnostic macOS
-    runs-on: macos-latest
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      LIBS_RUN: ${{ needs.plan.outputs.libs_run }}
     defaults:
       run:
         shell: bash
@@ -471,6 +551,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Diagnostic
         working-directory: kit
@@ -491,8 +572,6 @@ jobs:
   # '[cpu diag]' runs only this job: CPU per thread of a profile build on
   # Linux in a few player states, with a pulse null sink as the audio output and perf on the paused
   # phases. KIT_REF with the published libmpv: no run artifacts needed.
-  # Patches in .github/diag/cpu/*.patch are applied to the kit first, so the
-  # same job measures a fix before it lands.
   cpu-diag:
     needs: plan
     if: needs.plan.outputs.cpu == 'true'
@@ -529,13 +608,8 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
-      - name: Patches under test
-        working-directory: kit
-        run: |
-          shopt -s nullglob
-          for p in ../scripts/.github/diag/cpu/*.patch; do echo "applying $p"; git apply "$p"; done
-          git diff --stat
       - name: Diagnostic
         working-directory: kit/test_app
         run: |
@@ -605,6 +679,8 @@ jobs:
     # Six files of at most two 8 minute tries each, plus the boot: a job cut
     # by its timeout could not tell infra from fail.
     timeout-minutes: 130
+    env:
+      LIBS_RUN: ${{ needs.plan.outputs.libs_run }}
     strategy:
       fail-fast: false
       matrix:
@@ -651,6 +727,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Build the test app once
         working-directory: kit/test_app
@@ -731,34 +808,100 @@ jobs:
           name: android-emu-${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           path: kit/test_app/emu-logs
 
-  # '[native]' runs only this job: the C tests of the
-  # mpv patches with AddressSanitizer, as the Build workflow's native job
-  # does, without building the release binaries again.
+  # '[native]' runs only this job: the native job of checks.yml, the same
+  # one Build needs for its release, without building the release binaries
+  # again.
   native-check:
     needs: plan
     if: needs.plan.outputs.native == 'true'
-    name: Native tests (ASan)
+    name: Native
+    uses: ./.github/workflows/checks.yml
+    with:
+      only: native
+
+  # What this run checked and what it left out, on the run's page and in
+  # the check-result artifact. A job that did not run shows as skipped next
+  # to the green ones, and a run of '[native]' alone is green with nothing
+  # of the kit tested: libmpv-r24 was published after nine such runs and no
+  # complete one. The verdict says whether this run counts for a release,
+  # and .github/ci/release_gate.sh reads it from the artifact.
+  summary:
+    name: Summary
+    needs: [plan, test, windows-per-file, build, ios-integration, android-emu, native-check, underrun-diag, cpu-diag]
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # mpv includes the libplacebo headers (video/csputils.h) even with
-      # libplacebo optional: the release builds have them from source.
-      - name: Install meson, ninja, FFmpeg and libplacebo
+      - name: Summary
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TAGS: ${{ format('{0} {1}', github.event.head_commit.message, inputs.tags) }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
-            libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev
-      - name: Fewer mmap random bits for ASan
-        run: sudo sysctl -w vm.mmap_rnd_bits=28
-      - name: mpv patches
-        run: JOBS=4 bash verify/tests/native/run.sh builds/native-tests
-      - if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          python3 - <<'EOF'
+          import json, os, re
+          needs = json.loads(os.environ['NEEDS'])
+          plan = needs['plan'].get('outputs') or {}
+          out = open(os.environ['GITHUB_STEP_SUMMARY'], 'a')
+          if needs['plan']['result'] != 'success' or not plan.get('libs_run'):
+              out.write('### No check\n\nThe Plan job found no Build run to check: nothing ran.\n')
+              raise SystemExit(0)
+          # job, what it is, the plan output that starts it, why it is off
+          # when no tag asked for it, whether a release needs it
+          jobs = [
+              ('test', 'Kit tests on macOS', 'tests', plan.get('why_tests'), True),
+              ('windows-per-file', 'Kit tests on Windows, per file and whole', 'apps', plan.get('why_apps'), True),
+              ('build', 'App builds for Windows, macOS and iOS', 'apps', plan.get('why_apps'), True),
+              ('ios-integration', 'iOS simulator integration tests', 'ios', plan.get('why_ios'), True),
+              ('android-emu', 'Android emulators', 'android', 'needs [full check] or [android emu]', True),
+              ('native-check', 'Native tests (ASan)', 'native', 'needs [native]', False),
+              ('underrun-diag', 'Underrun diagnostic', 'underrun', 'needs [underrun diag]', False),
+              ('cpu-diag', 'CPU diagnostic', 'cpu', 'needs [cpu diag]', False),
+          ]
+          results, rows, green = {}, [], True
+          for job, what, key, why, release in jobs:
+              result = needs[job]['result']
+              results[job] = result
+              planned = plan.get(key) == 'true'
+              if planned:
+                  note = '' if result != 'skipped' else 'planned, but a job it needs did not succeed'
+              else:
+                  note = why or 'not planned'
+              if release and result != 'success':
+                  green = False
+              rows.append(f"| {what} | {'yes' if release else 'no'} | {result} | {note} |")
+          complete = plan.get('complete') == 'true'
+          release_build = plan.get('release_build') == 'true'
+          build = f"Build run {plan['libs_run']} ({plan.get('libs_branch')} at {(plan.get('libs_sha') or '')[:7]})"
+          if complete and green and release_build:
+              verdict = f'Complete check, green: it counts for the release of {build}.'
+          elif complete and green:
+              verdict = (f'Complete check, green, but {build} was not started by a push to a '
+                         'release/rN branch: it does not count for a release.')
+          elif complete:
+              verdict = f'Complete check of {build}, not green: it does not count for a release.'
+          else:
+              verdict = (f'Partial check of {build}: it does not count for a release. A release '
+                         'needs a run with [full check] and no tag that runs only its part.')
+          tags = ' '.join(re.findall(r'\[[^\]\n]+\]', os.environ.get('TAGS', '')))
+          out.write(f"### {verdict}\n\n")
+          out.write(f"Kit: `{os.environ['KIT_REF']}`. Flutter {os.environ['FLUTTER_VERSION']}. Tags: {tags or 'none'}.\n\n")
+          out.write('| job | a release needs it | result | why it did not run |\n|---|---|---|---|\n')
+          out.write('\n'.join(rows) + '\n\n')
+          out.write('A file of the iOS simulator or of an emulator that never started is a warning of '
+                    'its job, not a failure: a release needs those files run again.\n')
+          if not (complete and green and release_build):
+              print(f'::warning title=Not a release check::{verdict}')
+          json.dump({
+              'build_run': plan['libs_run'], 'build_branch': plan.get('libs_branch'),
+              'build_sha': plan.get('libs_sha'), 'release_build': release_build,
+              'kit_ref': os.environ['KIT_REF'], 'flutter': os.environ['FLUTTER_VERSION'],
+              'tags': tags, 'complete': complete, 'green': complete and green,
+              'counts_for_release': complete and green and release_build, 'jobs': results,
+          }, open('check-result.json', 'w'), indent=2)
+          EOF
+          cat check-result.json 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-check-logs
-          path: |
-            builds/native-tests/logs/
-            builds/native-tests/runs/*.log
+          name: check-result
+          path: check-result.json
           if-no-files-found: ignore

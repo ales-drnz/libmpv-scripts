@@ -1,0 +1,173 @@
+name: Checks
+
+# The checks that need no release binary: lint, the TUI with the tests of
+# verify/tests, and the native tests with AddressSanitizer. They run on a
+# push to any branch but release/ and ci/, on every pull request, and from
+# the workflows that call them: Build on a release branch, and Check
+# mpv_audio_kit for its '[native]' tag. A commit that changes only the
+# documents starts nothing.
+#
+# A pull request from a fork runs them too: they read the repository alone
+# and use no secret.
+on:
+  push:
+    # Build calls these on release/, and a ci/ branch only starts Check
+    # mpv_audio_kit. A filter on branches also leaves the tags out.
+    branches-ignore: ['release/**', 'ci/**']
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'imgs/**'
+      - 'LICENSE*'
+      - 'NOTICE'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'doc/**'
+      - 'imgs/**'
+      - 'LICENSE*'
+      - 'NOTICE'
+  workflow_call:
+    inputs:
+      only:
+        description: >-
+          'static' for lint and tui, 'native' for the native tests, empty
+          for all three
+        type: string
+        default: ''
+
+# A push or a pull request cancels the run of the commit before it. A call
+# from another workflow never does: Build cancels its own runs, and two
+# checks of mpv_audio_kit on one branch run side by side.
+concurrency:
+  group: checks-${{ inputs.only && github.run_id || github.ref }}-${{ inputs.only }}
+  cancel-in-progress: ${{ !inputs.only }}
+
+# The jobs only read the repository, and every action is pinned by the
+# commit of its release, named in the comment, as in build.yml.
+permissions:
+  contents: read
+
+jobs:
+  # ruff on the Python (ruff.toml) and shellcheck on the shell scripts, as
+  # warnings beside the run: neither fails it nor holds back the release.
+  lint:
+    name: Lint (warnings)
+    if: ${{ !inputs.only || inputs.only == 'static' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: ruff
+        run: |
+          pipx run ruff==0.14.3 check --output-format concise . \
+            | sed -nE 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3,title=ruff::\4/p' || true
+      - name: shellcheck
+        run: |
+          git ls-files -z '*.sh' build | xargs -0 shellcheck -S warning -f gcc \
+            | sed -nE 's/^([^:]+):([0-9]+):([0-9]+): (.*)$/::warning file=\1,line=\2,col=\3,title=shellcheck::\4/p' || true
+
+  # The TUI's go vet and go test, and the checks of the L13 exit code
+  # classification, of the FFmpeg component markers, of the manifest written
+  # from the build records, of the release branch, of the struct layout, of
+  # the anchor engine of the patches and of the Tizen sysroot. Not in
+  # the needs of Build's release: a red test here does not hold back the
+  # binaries, it only shows next to them.
+  tui:
+    name: TUI and verify tests
+    if: ${{ !inputs.only || inputs.only == 'static' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The toolchain line of go.mod names the Go installed here.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tui/go.mod
+          cache-dependency-path: tui/go.sum
+      - name: go vet
+        working-directory: tui
+        run: go vet ./...
+      - name: go test
+        working-directory: tui
+        run: go test ./...
+      - name: L13 exit code classification
+        run: bash verify/tests/l13_windows_test.sh
+      - name: xcframework slices
+        run: bash verify/tests/xcf_slices_test.sh
+      - name: FFmpeg muxer and protocol markers
+        run: bash verify/tests/components_test.sh
+      - name: Manifest and build records
+        run: bash verify/tests/manifest_test.sh
+      - name: Release branch check
+        run: bash verify/tests/release_branch_test.sh
+      - name: Struct layout
+        run: bash verify/tests/struct_layout_test.sh
+      - name: Anchor engine of the patches
+        run: python3 -B verify/tests/patches/anchor_engine_test.py
+      - name: Tizen sysroot
+        run: python3 -B verify/tests/tizen_sysroot_test.py
+      - name: webOS NDK
+        run: bash verify/tests/webos_ndk_test.sh
+
+  # The native tests of the patches, with AddressSanitizer: a debug libmpv
+  # with every mpv patch, built against Ubuntu's FFmpeg 6.1, runs the C and
+  # white-box tests of verify/tests/native and the patch script tests of
+  # verify/tests/patches (run.sh); then, each on a minimal FFmpeg 8.1.1, the
+  # filter bounds check, and the SMB and TLS checks against impacket's server
+  # with the read errors of http, HLS and DASH (network_test.sh). In the
+  # needs of Build's release, unlike tui. A failure uploads the logs as
+  # native-test-logs.
+  native:
+    name: Native tests (ASan)
+    if: ${{ !inputs.only || inputs.only == 'native' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # mpv includes the libplacebo headers (video/csputils.h) even with
+      # libplacebo optional: the release builds have them from source.
+      - name: Install meson, ninja, cmake, FFmpeg, libplacebo and OpenSSL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
+            libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
+            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev libssl-dev libxml2-dev openssl python3-venv
+      # The ASan runtime of gcc 13 can crash at start with the 32 bits of
+      # mmap randomness of newer kernels.
+      - name: Fewer mmap random bits for ASan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      - name: mpv patches
+        run: JOBS=4 bash verify/tests/native/run.sh builds/native-tests
+      # The layout of the client API structs a binding reads, from the
+      # patched client.h of that tree, per data model of the release: Build's
+      # release job puts it in manifest.json.
+      - name: Struct layout
+        run: python3 verify/struct_layout.py builds/native-tests/src/include builds/struct_layout.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: struct-layout
+          path: builds/struct_layout.json
+          if-no-files-found: error
+      - name: FFmpeg filter bounds
+        if: ${{ !cancelled() }}
+        run: CC=gcc FFMPEG_TOOLCHAIN=gcc-asan JOBS=4 bash verify/tests/filter_bounds_test.sh builds/filter-bounds
+      # impacket is the SMB server of the test, pinned, in a venv of its own.
+      - name: FFmpeg SMB, TLS and read errors
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m venv builds/impacket
+          builds/impacket/bin/pip install --quiet impacket==0.13.1
+          SMB_PYTHON="$PWD/builds/impacket/bin/python" JOBS=4 bash verify/tests/network_test.sh builds/network
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-test-logs
+          path: |
+            builds/native-tests/logs/
+            builds/native-tests/runs/*.log
+            builds/filter-bounds/*.log
+            builds/filter-bounds/*.err
+            builds/network/logs/
+            builds/network/runs/*.log*
+          if-no-files-found: ignore
