@@ -201,16 +201,22 @@ static bool push_owned(struct mak_demux_feed *f, struct demux_packet *dp,
         mp_mutex_unlock(&f->lock);
         return true;
     }
+    /* An item that cannot be queued (out of memory) leaves a hole the
+     * consumer must not decode across: the gap stays pending, as for a
+     * packet over the budget above. */
+    bool lost = false;
     if (queue_id != f->last_queue || f->gap_pending) {
         if (f->any_packet)
-            append_locked(f, MAK_FEED_GAP, NULL);
+            lost |= !append_locked(f, MAK_FEED_GAP, NULL);
         if (bof)
-            append_locked(f, MAK_FEED_BOF, NULL);
+            lost |= !append_locked(f, MAK_FEED_BOF, NULL);
         f->last_queue = queue_id;
         f->gap_pending = false;
     }
     f->any_packet = true;
-    append_locked(f, MAK_FEED_PACKET, dp);
+    lost |= !append_locked(f, MAK_FEED_PACKET, dp);
+    if (lost)
+        f->gap_pending = true;
     mp_mutex_unlock(&f->lock);
     return true;
 }
