@@ -506,8 +506,8 @@ android_iconv() {
 android_libpng() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libpng.a" ]] && return
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make clean 2>/dev/null || true
@@ -523,8 +523,8 @@ android_libpng() {
 android_freetype() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libfreetype.a" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/freetype-r1-android-$abi"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -545,7 +545,7 @@ android_freetype() {
 android_fribidi() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libfribidi.a" ]] && return
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi-android-$abi"; mkdir -p "$bdir"
@@ -561,8 +561,10 @@ android_fribidi() {
 android_harfbuzz() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libharfbuzz.a" ]] && return
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz-android-$abi"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -579,7 +581,7 @@ android_freetype2() {
   local abi="$1" prefix="$2"
   local sentinel="$prefix/.ft_r2_$abi"
   [[ -f "$sentinel" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   rm -rf "$BUILD_DIR/build/freetype-r1-android-$abi"
   local bdir="$BUILD_DIR/build/freetype-r2-android-$abi"; mkdir -p "$bdir"

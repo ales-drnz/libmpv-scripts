@@ -209,8 +209,8 @@ build_libpng() {
   local prefix="$1"
   [[ -f "$prefix/lib/libpng.a" ]] && { ok "libpng already compiled"; return; }
   log "Build libpng $LIBPNG_VERSION..."
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   CFLAGS="$(arch_flags) -O2" \
@@ -228,8 +228,8 @@ build_freetype() {
   local prefix="$1"
   [[ -f "$prefix/lib/libfreetype.a" ]] && { ok "freetype already compiled"; return; }
   log "Build freetype $FREETYPE_VERSION [round 1 — without harfbuzz]..."
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/freetype-r1"
   mkdir -p "$bdir"
@@ -258,7 +258,7 @@ build_fribidi() {
   local prefix="$1"
   [[ -f "$prefix/lib/libfribidi.a" ]] && { ok "fribidi already compiled"; return; }
   log "Build fribidi $FRIBIDI_VERSION..."
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi"
@@ -281,8 +281,10 @@ build_harfbuzz() {
   local prefix="$1"
   [[ -f "$prefix/lib/libharfbuzz.a" ]] && { ok "harfbuzz already compiled"; return; }
   log "Build harfbuzz $HARFBUZZ_VERSION..."
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz"
   mkdir -p "$bdir"
@@ -309,7 +311,7 @@ build_freetype_round2() {
   local sentinel="$prefix/lib/freetype_harfbuzz_done"
   [[ -f "$sentinel" ]] && { ok "freetype round2 already compiled"; return; }
   log "Build freetype $FREETYPE_VERSION [round 2 — with harfbuzz]..."
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   rm -rf "$BUILD_DIR/build/freetype-r1"
   local bdir="$BUILD_DIR/build/freetype-r2"
