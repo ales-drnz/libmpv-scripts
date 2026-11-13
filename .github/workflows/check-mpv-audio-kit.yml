@@ -723,34 +723,13 @@ jobs:
           name: android-emu-${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
           path: kit/test_app/emu-logs
 
-  # '[native]' runs only this job: the C tests of the
-  # mpv patches with AddressSanitizer, as the Build workflow's native job
-  # does, without building the release binaries again.
+  # '[native]' runs only this job: the native job of checks.yml, the same
+  # one Build needs for its release, without building the release binaries
+  # again.
   native-check:
     needs: plan
     if: needs.plan.outputs.native == 'true'
-    name: Native tests (ASan)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # mpv includes the libplacebo headers (video/csputils.h) even with
-      # libplacebo optional: the release builds have them from source.
-      - name: Install meson, ninja, FFmpeg and libplacebo
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
-            libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev
-      - name: Fewer mmap random bits for ASan
-        run: sudo sysctl -w vm.mmap_rnd_bits=28
-      - name: mpv patches
-        run: JOBS=4 bash verify/tests/native/run.sh builds/native-tests
-      - if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: native-check-logs
-          path: |
-            builds/native-tests/logs/
-            builds/native-tests/runs/*.log
-          if-no-files-found: ignore
+    name: Native
+    uses: ./.github/workflows/checks.yml
+    with:
+      only: native
