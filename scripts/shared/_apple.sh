@@ -31,9 +31,7 @@ apple_start_log() {
   mkdir -p "$LOG_DIR"
   ls -t "$LOG_DIR"/build_"$1"_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
   LOG_FILE="$LOG_DIR/build_$1_$(date +%Y%m%d_%H%M%S).log"
-  exec > >(tee >(while IFS= read -r line; do
-    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-  done >> "$LOG_FILE")) 2>&1
+  mirror_build_log "$LOG_FILE"
   echo "════════════════════════════════════════════════════════════"
   echo "Build started: $(date)"
   echo "Log file:      $LOG_FILE"

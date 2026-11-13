@@ -93,9 +93,7 @@ LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR"
 ls -t "$LOG_DIR"/build_linux-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 LOG_FILE="$LOG_DIR/build_linux-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
+mirror_build_log "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo "Build started: $(date)"
 echo "Log file:      $LOG_FILE"
