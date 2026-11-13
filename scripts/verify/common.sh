@@ -1052,6 +1052,11 @@ check_binary() {
   # Layer 16: ELF loader invariants — Linux + Android.
   layer16_elf_invariants "$platform" "$arch" "$artifact" "${READELF:-}" || fail "L16: layer aborted (exit $?)"
 
+  # Layer 17: the timer functions a Windows DLL imports.
+  if [[ "$platform" == windows ]]; then
+    layer17_pe_timer_imports "$artifact" || fail "L17: layer aborted (exit $?)"
+  fi
+
   [[ -n "$xcf_tmp" ]] && rm -rf "$xcf_tmp"
   emit bindone "$name"
 }
