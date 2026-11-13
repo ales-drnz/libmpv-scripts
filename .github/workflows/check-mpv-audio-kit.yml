@@ -17,6 +17,10 @@ name: Check mpv_audio_kit
 # emulators, and '[android emu]', '[native]', '[cpu diag]', '[underrun diag]',
 # '[ios only]' and '[macos test only]' run just their part.
 #
+# The runners and Flutter are named by version, so a new macos-latest,
+# windows-latest or Flutter stable cannot change what a check means between
+# two runs: the flutter input tries another one without a commit.
+#
 # The jobs that run the kit's tests set MAK_LIBMPV_RELEASE to the release
 # of the run's manifest (--dart-define on the devices): a test of a fix up
 # to that release then fails on a binary without it instead of skipping.
@@ -34,6 +38,9 @@ on:
       tags:
         description: Tags as in a commit message, e.g. [full check]
         default: ''
+      flutter:
+        description: Flutter version (empty for the one pinned in the workflow)
+        default: ''
 
 permissions:
   actions: read
@@ -43,6 +50,10 @@ env:
   LIBS_RUN: ${{ inputs.libs_run || '41422329285' }}
   KIT_REPO: ales-drnz/mpv_audio_kit
   KIT_REF: ${{ inputs.kit_ref || 'main' }}
+  # The Flutter of every job. 3.50.0 refuses the Android Gradle Plugin 9.1.0
+  # of the kit's test_app (it asks for 9.1.1): the Android emulator jobs
+  # failed at their build while this followed the stable channel.
+  FLUTTER_VERSION: ${{ inputs.flutter || '3.47.5' }}
   # A missing libmpv or fixture fails the suite instead of skipping it.
   CI: 'true'
 
@@ -52,6 +63,7 @@ jobs:
   plan:
     name: Plan
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       tests: ${{ steps.tags.outputs.tests }}
       apps: ${{ steps.tags.outputs.apps }}
@@ -89,12 +101,13 @@ jobs:
     if: needs.plan.outputs.tests == 'true'
     name: Test ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         # '[macos test only]' in the commit message runs just this job.
         # Windows runs the whole suite in windows-per-file.
-        os: [macos-latest]
+        os: [macos-26]
     defaults:
       run:
         shell: bash
@@ -128,6 +141,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: flutter test
         working-directory: kit
@@ -154,7 +168,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.apps == 'true'
     name: Windows per file
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 120
     defaults:
       run:
         shell: bash
@@ -170,7 +185,7 @@ jobs:
         run: |
           gh run download "$LIBS_RUN" -R "$GITHUB_REPOSITORY" -n libmpv-release -D bin
           echo "MAK_LIBMPV_RELEASE=$(jq -r .release bin/manifest.json | tr -d '\r')" >> "$GITHUB_ENV"
-          # The check of Test windows-latest, which this job replaced.
+          # The check of the Test job on Windows, which this job replaced.
           python - bin <<'EOF'
           import hashlib, json, os, sys
           d = sys.argv[1]
@@ -184,6 +199,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Every test file on its own
         working-directory: kit
@@ -234,31 +250,32 @@ jobs:
     if: needs.plan.outputs.apps == 'true'
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Windows
-            os: windows-latest
+            os: windows-2025
             command: flutter build windows --debug
           - name: macOS (SwiftPM)
-            os: macos-latest
+            os: macos-26
             command: >-
               flutter build macos --debug &&
               ../kit/scripts/ci/check_apple_frameworks.sh build/macos/Build/Products/Debug/freshapp.app/Contents/Frameworks
           - name: macOS (CocoaPods)
-            os: macos-latest
+            os: macos-26
             swiftpm: 'off'
             command: >-
               flutter build macos --debug &&
               ../kit/scripts/ci/check_apple_frameworks.sh --expect-plugin build/macos/Build/Products/Debug/freshapp.app/Contents/Frameworks
           - name: iOS (SwiftPM)
-            os: macos-latest
+            os: macos-26
             command: >-
               flutter build ios --simulator --debug &&
               ../kit/scripts/ci/check_apple_frameworks.sh build/ios/iphonesimulator/Runner.app/Frameworks
           - name: iOS (CocoaPods)
-            os: macos-latest
+            os: macos-26
             swiftpm: 'off'
             command: >-
               flutter build ios --simulator --debug &&
@@ -279,6 +296,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Disable Swift Package Manager
         if: matrix.swiftpm == 'off'
@@ -319,7 +337,7 @@ jobs:
     name: iOS simulator integration tests
     needs: plan
     if: needs.plan.outputs.ios == 'true'
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -336,6 +354,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Disable Swift Package Manager
         run: flutter config --no-enable-swift-package-manager
@@ -446,7 +465,8 @@ jobs:
     needs: plan
     if: needs.plan.outputs.underrun == 'true'
     name: Underrun diagnostic macOS
-    runs-on: macos-latest
+    runs-on: macos-26
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -471,6 +491,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Diagnostic
         working-directory: kit
@@ -527,6 +548,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Diagnostic
         working-directory: kit/test_app
@@ -643,6 +665,7 @@ jobs:
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Build the test app once
         working-directory: kit/test_app
