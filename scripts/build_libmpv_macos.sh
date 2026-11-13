@@ -591,8 +591,9 @@ verify_dylib() {
   # expect ~60 exported symbols — essentially just the public mpv_* C API.
   # Without it, expect ~8000.
   local total_syms mpv_syms
-  total_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T ' || echo 0)"
-  mpv_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T _mpv_' || echo 0)"
+  # || true, not || echo 0: grep -c already prints its 0 when it fails.
+  total_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T ' || true)"
+  mpv_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T _mpv_' || true)"
   ok "Symbols: $total_syms total, $mpv_syms mpv_*"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
     die "Export-filter regression: expected ~60 exported symbols with" \
@@ -652,7 +653,8 @@ assemble_xcframework() {
   apple_sign "$ver/libmpv" || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
   # Headers: pick from any arch's prefix — identical across arches.
   local first_arch="${ARCHS%% *}"
-  cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/" 2>/dev/null || true
+  # Not masked: a framework without its headers is not one to publish.
+  cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/"
   apple_write_modulemap "$ver/Modules/module.modulemap"
   apple_write_info_plist "$ver/Resources/Info.plist" LSMinimumSystemVersion "$MACOS_MIN"
   apple_write_privacy_manifest "$ver/Resources/PrivacyInfo.xcprivacy"

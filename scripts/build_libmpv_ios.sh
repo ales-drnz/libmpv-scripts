@@ -638,7 +638,8 @@ assemble_xcframework() {
     # clash with other Flutter plugins linking the same symbols.
     if [[ "${VIS_HIDDEN:-1}" != "0" ]]; then
       local _total_syms
-      _total_syms="$(nm -gU "$fw/libmpv" 2>/dev/null | grep -c ' T ' || echo 0)"
+      # || true, not || echo 0: grep -c already prints its 0 when it fails.
+      _total_syms="$(nm -gU "$fw/libmpv" 2>/dev/null | grep -c ' T ' || true)"
       ok "$OS_LABEL slice symbols: $_total_syms total ($(basename "$fw"))"
       if [[ "$_total_syms" -gt 200 ]]; then
         die "Export-filter regression: expected ~60 exported symbols but" \
@@ -647,7 +648,9 @@ assemble_xcframework() {
       fi
     fi
 
-    cp -r "$headers_src"/* "$fw/Headers/" 2>/dev/null || true
+    # Not masked: a framework without its headers is not one to publish
+    # (the tvOS package compiles against them).
+    cp -r "$headers_src"/* "$fw/Headers/"
     apple_write_modulemap "$fw/Modules/module.modulemap"
     apple_write_info_plist "$fw/Info.plist" MinimumOSVersion "$IOS_MIN"
     apple_write_privacy_manifest "$fw/PrivacyInfo.xcprivacy"
