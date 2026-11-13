@@ -10,6 +10,8 @@ af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9  https://breakf
 36bc4f1cc413335368ee656c42afca65c5a3987e8768cc28cf11ba775e785a5f  https://downloads.sourceforge.net/freetype/freetype-2.14.3.tar.xz
 28eb403f51f0f7405249132cecfe82ea5c0ef97f1b32c5a65828814ae0d34775  https://downloads.sourceforge.net/libpng/libpng-1.6.58.tar.xz
 8c777343e4a6399569c72abc38a95b24db56882c83dbdb6c6424a5f4aeb54d3d  https://downloads.xiph.org/releases/speex/speexdsp-1.2.1.tar.gz
+0d4599e8bbf1a1668a0d51a541729b2246360f350018a2081d0b302dbb594f2a  https://dl.google.com/android/repository/android-ndk-r28c-darwin.zip
+dfb20d396df28ca02a8c708314b814a4d961dc9074f9a161932746f815aa552f  https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
 1b856f26a07082b6879f3e5300d81e8c7ce3b410ade5898b14382d90c2904634  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz
 b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz
 3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8  https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz

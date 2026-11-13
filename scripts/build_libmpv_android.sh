@@ -102,9 +102,33 @@ echo "════════════════════════�
 # Logging helpers (log / ok / warn / err / die / fail) come from _helpers.sh
 
 # ── NDK setup ─────────────────────────────────────────────────────────────────
+# ndk_revision <dir>: Pkg.Revision of the NDK in <dir> (source.properties),
+# or nothing when it is not an NDK.
+ndk_revision() {
+  sed -n 's/^Pkg\.Revision *= *//p' "$1/source.properties" 2>/dev/null | tr -d '\r' | head -1
+}
+
+# ndk_pinned <dir>: true when <dir> holds the NDK this script pins
+# (NDK_SEMVER). ALLOW_ANY_NDK=1 takes any NDK, with a warning: the library
+# is then built by another toolchain, which the build record names.
+ndk_pinned() {
+  local got; got="$(ndk_revision "$1")"
+  [[ "$got" == "$NDK_SEMVER" ]] && return 0
+  if [[ "${ALLOW_ANY_NDK:-0}" == "1" && -n "$got" ]]; then
+    warn "NDK $got in $1 is not the pinned $NDK_SEMVER (ALLOW_ANY_NDK=1)"
+    return 0
+  fi
+  return 1
+}
+
 find_or_download_ndk() {
-  # 1. Environment variable
+  # 1. Environment variable: the NDK asked for, so another version stops the
+  # build instead of being passed over.
   if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "$ANDROID_NDK_ROOT" ]]; then
+    ndk_pinned "$ANDROID_NDK_ROOT" ||
+      fail "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT is NDK $(ndk_revision "$ANDROID_NDK_ROOT")," \
+           "this build pins $NDK_SEMVER ($NDK_VERSION). Unset it to download the" \
+           "pinned one, or set ALLOW_ANY_NDK=1"
     ok "NDK found: $ANDROID_NDK_ROOT"
     return
   fi
@@ -119,26 +143,31 @@ find_or_download_ndk() {
     "$HOME/Library/Android/sdk/ndk-bundle"
     "${TMPDIR:-/tmp}/mpv_android_build/ndk/android-ndk-${NDK_VERSION}"
   )
+  # An NDK found on the machine is used only when it is the pinned one: a
+  # directory of the right name with another NDK in it is passed over.
   for c in "${candidates[@]}"; do
-    if [[ -d "$c" ]]; then
+    if [[ -d "$c" ]] && ndk_pinned "$c"; then
       export ANDROID_NDK_ROOT="$c"
       ok "NDK found: $ANDROID_NDK_ROOT"
       return
     fi
   done
-  
-  # 2.5 Dynamic search in common bases
-  for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "/usr/local/lib/android/sdk/ndk"; do
-    if [[ -d "$base" ]]; then
-      local latest_ndk
-      latest_ndk="$(ls -d "$base"/* 2>/dev/null | grep -Ev 'ndk-bundle' | sort -V | tail -1)"
-      if [[ -n "$latest_ndk" && -d "$latest_ndk" ]]; then
-        export ANDROID_NDK_ROOT="$latest_ndk"
-        ok "NDK found: $ANDROID_NDK_ROOT"
-        return
+
+  # 2.5 Dynamic search in common bases: the newest NDK of the SDK, which is
+  # another version by definition, so only with ALLOW_ANY_NDK=1.
+  if [[ "${ALLOW_ANY_NDK:-0}" == "1" ]]; then
+    for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "/usr/local/lib/android/sdk/ndk"; do
+      if [[ -d "$base" ]]; then
+        local latest_ndk
+        latest_ndk="$(ls -d "$base"/* 2>/dev/null | grep -Ev 'ndk-bundle' | sort -V | tail -1)"
+        if [[ -n "$latest_ndk" && -d "$latest_ndk" ]] && ndk_pinned "$latest_ndk"; then
+          export ANDROID_NDK_ROOT="$latest_ndk"
+          ok "NDK found: $ANDROID_NDK_ROOT"
+          return
+        fi
       fi
-    fi
-  done
+    done
+  fi
   # 3. Download NDK
   warn "Android NDK not found. Downloading NDK ${NDK_VERSION}..."
   local ndk_dir="$BUILD_DIR/ndk"
@@ -152,24 +181,15 @@ find_or_download_ndk() {
   # Note: Google ships a single Darwin zip — the contained toolchain has both
   # arm64 and x86_64 binaries, with arm64 picked automatically on Apple Silicon.
   local url="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-${host_tag}.zip"
-  curl -fsSL --retry 3 -o "$ndk_dir/ndk.zip" "$url" || fail "NDK download failed"
   # Google publishes only a SHA-1 for the NDK zips (repository2-3.xml and the
-  # NDK downloads page), so the check is against that. Bump with NDK_VERSION.
-  local want_sha1 got_sha1
-  case "${NDK_VERSION}-${host_tag}" in
-    r28c-linux)  want_sha1="a7b54a5de87fecd125a17d54f73c446199e72a64" ;;
-    r28c-darwin) want_sha1="fc20a6bf15a30fb3428c9b60a7308793a362dc6d" ;;
-    *) fail "No pinned SHA-1 for NDK ${NDK_VERSION} (${host_tag})" ;;
-  esac
-  if command -v sha1sum >/dev/null 2>&1; then
-    got_sha1="$(sha1sum "$ndk_dir/ndk.zip" | cut -d' ' -f1)"
-  else
-    got_sha1="$(shasum -a 1 "$ndk_dir/ndk.zip" | cut -d' ' -f1)"
-  fi
-  if [[ "$got_sha1" != "$want_sha1" ]]; then
-    rm -f "$ndk_dir/ndk.zip"
-    fail "NDK SHA-1 mismatch: got $got_sha1, expected $want_sha1"
-  fi
+  # NDK downloads page). _sources.sha256 pins the SHA-256 of the zips whose
+  # SHA-1 was Google's (r28c: a7b54a5d… linux, fc20a6bf… darwin), and the
+  # check is against that, as for every other source. A zip with no pin stops
+  # the build here even without STRICT_SOURCES: bump with NDK_VERSION.
+  [[ -n "$(pinned_source "$url")" ]] ||
+    fail "No SHA-256 for $url in scripts/shared/_sources.sha256"
+  curl -fsSL --retry 3 -o "$ndk_dir/ndk.zip" "$url" || fail "NDK download failed"
+  verify_source "$url" "$ndk_dir/ndk.zip"
   # Clean any partial/previous extract first, then extract non-interactively
   # (-o). A leftover tree makes plain `unzip` prompt "replace? [y]es,[n]o,…",
   # and with no TTY in the container it reads EOF and aborts mid-extract,
@@ -179,6 +199,8 @@ find_or_download_ndk() {
   rm -f "$ndk_dir/ndk.zip"  # ~1 GB archive — not needed once extracted
   export ANDROID_NDK_ROOT="$(ls -d "$ndk_dir/android-ndk-${NDK_VERSION}" 2>/dev/null | head -1)"
   [[ -d "$ANDROID_NDK_ROOT" ]] || fail "NDK not found after extraction"
+  [[ "$(ndk_revision "$ANDROID_NDK_ROOT")" == "$NDK_SEMVER" ]] ||
+    fail "The NDK of $url is $(ndk_revision "$ANDROID_NDK_ROOT"), not NDK_SEMVER=$NDK_SEMVER"
   ok "NDK installed: $ANDROID_NDK_ROOT"
 }
 
@@ -833,6 +855,8 @@ main() {
   done
 
   find_or_download_ndk
+  # The NDK that compiles, in the record of the build (write_build_record).
+  toolchain_note ndk "$(ndk_revision "$ANDROID_NDK_ROOT")"
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
   for abi in $ABIS; do
