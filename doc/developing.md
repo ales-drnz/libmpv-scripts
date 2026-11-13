@@ -77,6 +77,32 @@ of HTTP, SMB, HLS and DASH.
 **After a refactor of the scripts**: `patch_identity_test.sh` checks that
 two revisions of `patches/` make the same trees, so no rebuild is needed.
 
+## Hardening flags
+
+The ELF builds of Linux, Tizen and webOS take their hardening from two
+functions of `scripts/shared/_audio_only.sh`:
+
+- `hardening_cflags`: `-fstack-protector-strong` and `-D_FORTIFY_SOURCE=2`.
+  It is in the `CFLAGS` and `CXXFLAGS` every dependency reads, in FFmpeg's
+  `--extra-cflags` and in mpv's `-Dc_args`. A dependency built with a
+  `CFLAGS` of its own (bzip2) adds it by hand.
+- `hardening_ldflags`: `-Wl,-z,relro,-z,now,-z,noexecstack`, in mpv's link
+  arguments: full RELRO, so the GOT is read-only once the library is loaded.
+
+meson drops the `CFLAGS` and `LDFLAGS` of the environment for a language
+whose `-Dc_args` or `-Dc_link_args` is given, which is why mpv takes both
+explicitly.
+
+Android and Windows add nothing: the NDK already gives the canary, fortify,
+full RELRO and `BIND_NOW`, and binutils and llvm-mingw set `DYNAMIC_BASE`,
+`HIGH_ENTROPY_VA` and `NX_COMPAT`. The Windows DLLs have no stack canary.
+
+Each build asserts its result (`assert_hardening`), and L16 of
+`verify_binaries.sh` checks the shipped files again: a non-executable
+`GNU_STACK`, `GNU_RELRO`, `BIND_NOW`, `__stack_chk_fail` among the undefined
+symbols and no `TEXTREL` on ELF, the three DllCharacteristics on Windows.
+`verify/tests/hardening_test.sh` runs those checks on good and bad samples.
+
 ## In CI
 
 - `build.yml` builds everything on a push to `release/rN`, or by hand
