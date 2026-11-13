@@ -57,6 +57,21 @@ apple_check_tools() {
   ok "Tools OK"
 }
 
+# apple_toolchain_notes <sdk>...: Xcode and the version of each SDK the build
+# compiles against, for the "toolchain" of the build record (toolchain_note
+# of _audio_only.sh). The compiler line comes from $CC. Nothing here stops a
+# build: a tool that does not answer leaves its entry out.
+apple_toolchain_notes() {
+  local xcode sdk version
+  xcode="$(xcodebuild -version 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')" || true
+  [[ -n "$xcode" ]] && toolchain_note xcode "$xcode"
+  for sdk in "$@"; do
+    version="$(xcrun --sdk "$sdk" --show-sdk-version 2>/dev/null)" || true
+    [[ -n "$version" ]] && toolchain_note "sdk-$sdk" "$version"
+  done
+  return 0
+}
+
 # apple_host <arch>: the autoconf host triple. autoconf picks arch-specific
 # asm from $host; without --host it defaults to the build machine's arch,
 # wrong for a cross-compiled x86_64 slice on an Apple-Silicon host.

@@ -727,6 +727,7 @@ main() {
   echo "║   build_libmpv_ios.sh — mpv $MPV_VERSION (dynamic xcframework) ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
   apple_check_tools meson ninja nasm cmake pkg-config python3 autoconf automake libtool git xcodebuild
+  apple_toolchain_notes "$DEVICE_SDK" "$SIM_SDK"
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
   for slice in "${SLICES[@]}"; do

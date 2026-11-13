@@ -560,13 +560,18 @@ main() {
     link_web
     # The record of the patches and filters the archives were built with,
     # next to the module (write_build_record in shared/_audio_only.sh).
-    RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
+    # The compiler of the record's "toolchain" is emcc (no $CC here); emsdk
+    # itself is in "module" (record_web_module).
+    BUILD_TOOLCHAIN_CC=emcc RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
     # The license texts go next to libmpv_web.zip, not into it.
     # The module also holds Emscripten's JS glue and system libraries, its
     # musl libc and the LLVM libc++ and compiler-rt (write_licenses).
     local licenses=(mpv ffmpeg libplacebo libxml2 zlib emscripten musl llvm-runtimes)
     gpl_build && licenses+=(rubberband)
-    RELEASE_DIR="$PACKAGE_DIR" write_licenses web "$BUILD_DIR/src" "${licenses[@]}"
+    # BUILD_RECORD: the "components" go into the record above, which is not
+    # in the directory the texts go to.
+    BUILD_RECORD="$RELEASE_DIR/build_web.json" \
+      RELEASE_DIR="$PACKAGE_DIR" write_licenses web "$BUILD_DIR/src" "${licenses[@]}"
     record_web_module
     package_web
     report_sizes

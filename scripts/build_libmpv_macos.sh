@@ -716,6 +716,7 @@ main() {
   echo ""
 
   apple_check_tools meson ninja nasm cmake pkg-config python3 autoconf automake libtool git
+  apple_toolchain_notes macosx
 
   # Build each requested arch into its own fully separate tree
   # (BUILD_ROOT/<arch>: src extract + build dirs + prefix) so a
