@@ -110,6 +110,7 @@ CASES=(
   "lib analysis_hint_test analysis 600000 range"
   "lib analysis_hint_test analysis 600000::norange known estimate"
   "unit loudness_lock_test - - run"
+  "unit wave_fold_test - - tail far roll"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
   "tizen ao_tizen_test - - play pause seek underrun delay race seekrace refuse fast slow dead noresume short busy clock format"

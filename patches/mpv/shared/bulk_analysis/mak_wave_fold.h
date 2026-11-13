@@ -59,7 +59,9 @@ static inline float mak_bin_rms(double sq, uint32_t n)
 
 /* Canonical absolute-sample -> bin mapping. Identical denominator for both
  * paths (total_samples derived once from the container), so a given sample
- * lands in the same bin regardless of who folds it. Clamped to [0,bins). */
+ * lands in the same bin regardless of who folds it. Clamped to [0,bins):
+ * the caller drops the samples at or past total_samples, which have no bin
+ * (and whose product with [bins] is not bounded). */
 static inline int64_t mak_sample_to_bin(int64_t abs_sample, int bins,
                                         int64_t total_samples)
 {
