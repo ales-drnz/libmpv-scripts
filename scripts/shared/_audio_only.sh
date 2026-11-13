@@ -1559,6 +1559,82 @@ assert_load_align() {
   ok "LOAD alignment >= $min"
 }
 
+# ── Hardening of the ELF builds (linux, tizen, webos) ────────────────────────
+# libmpv parses untrusted network input (FFmpeg's demuxers, HLS and DASH,
+# libxml2, libsmb2, TLS), so the code of every dependency gets a stack canary
+# and the fortified libc calls, and the library is linked with full RELRO:
+#   -fstack-protector-strong   a canary in every function with an array or an
+#                              address-taken local
+#   -D_FORTIFY_SOURCE=2        the __*_chk variants of memcpy, sprintf and the
+#                              like. It needs optimization, which every CFLAGS
+#                              here has. -U first: Ubuntu's gcc predefines it.
+#                              The __*_chk symbols are in every sysroot:
+#                              Tizen's glibc 2.30 has them too.
+#   -z relro -z now            the GOT is resolved at load and then read-only
+#   -z noexecstack             a non-executable stack whatever an assembly
+#                              object says
+# The callers add hardening_cflags to the CFLAGS and CXXFLAGS every dependency
+# reads, and again to FFmpeg's --extra-cflags and mpv's -Dc_args: an explicit
+# -Dc_args makes meson drop the CFLAGS of the environment, and -Dc_link_args
+# the LDFLAGS, so mpv takes hardening_ldflags in its link arguments too.
+#
+# -z now and the Linux audio stubs: PipeWire and PulseAudio are loaded on
+# first use by Implib.so trampolines (build_audio_stubs), which jump through
+# a table of their own in .data that their resolver fills with dlsym. They
+# are not PLT entries and libmpv has no dynamic relocation against either
+# library, so binding at load changes nothing for them.
+#
+# Android and Windows do not call these: the NDK's clang and linker already
+# give canary, fortify, full RELRO and BIND_NOW, and binutils and llvm-mingw
+# already set the three DllCharacteristics. scripts/verify asserts both
+# (layer16_elf_invariants, layer16_pe_hardening).
+hardening_cflags() {
+  echo "-fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2"
+}
+hardening_ldflags() {
+  echo "-Wl,-z,relro,-z,now,-z,noexecstack"
+}
+
+# elf_hardening_gaps <elf> <readelf>: prints one line for each mitigation
+# <elf> lacks, nothing when it has them all: a non-executable GNU_STACK, a
+# GNU_RELRO segment, BIND_NOW, the canary's __stack_chk_fail among the
+# undefined dynamic symbols, and no TEXTREL. Returns 2 when readelf read
+# nothing. Reads the output of GNU readelf and of llvm-readelf.
+elf_hardening_gaps() {
+  local elf="$1" readelf="${2:-readelf}" segs dyn syms stack
+  segs="$(LC_ALL=C "$readelf" -lW "$elf" 2>/dev/null)"
+  dyn="$(LC_ALL=C "$readelf" -dW "$elf" 2>/dev/null)"
+  syms="$(LC_ALL=C "$readelf" -W --dyn-syms "$elf" 2>/dev/null)"
+  [[ -n "$segs" && -n "$dyn" && -n "$syms" ]] || return 2
+  # The flags are what stands between the six columns after the name and the
+  # alignment: "RW" or "RWE", and "R E" in two fields.
+  stack="$(awk '$1 == "GNU_STACK" { f = ""; for (i = 7; i < NF; i++) f = f $i; print "flags=" f; exit }' <<<"$segs")"
+  if [[ -z "$stack" ]]; then
+    echo "no GNU_STACK segment (the loader takes the stack as executable)"
+  elif [[ "$stack" == *E* ]]; then
+    echo "GNU_STACK is executable"
+  fi
+  grep -qE '^ *GNU_RELRO ' <<<"$segs" || echo "no GNU_RELRO segment"
+  grep -qE '\(BIND_NOW\)|\(FLAGS\).*BIND_NOW|\(FLAGS_1\).*NOW' <<<"$dyn" || \
+    echo "no BIND_NOW (RELRO is partial: the PLT's GOT stays writable)"
+  if grep -qE '\(TEXTREL\)|\(FLAGS\).*TEXTREL' <<<"$dyn"; then
+    echo "TEXTREL (relocations in the code, which must then be writable)"
+  fi
+  awk '$7 == "UND" && $8 ~ /^__stack_chk_fail(@|$)/ { found = 1 } END { exit !found }' <<<"$syms" || \
+    echo "no __stack_chk_fail among the undefined symbols (no stack canary)"
+  return 0
+}
+
+# assert_hardening <elf> <readelf>: die unless elf_hardening_gaps finds
+# nothing missing in <elf>.
+assert_hardening() {
+  local elf="$1" readelf="${2:-readelf}" gaps rc=0
+  gaps="$(elf_hardening_gaps "$elf" "$readelf")" || rc=$?
+  (( rc == 0 )) || die "readelf read nothing from $elf"
+  [[ -z "$gaps" ]] || die "hardening missing in $elf: $(tr '\n' ';' <<<"$gaps")"
+  ok "hardening: NX stack, full RELRO, BIND_NOW, stack canary, no TEXTREL"
+}
+
 # ── Extra ELF size flags for the final libmpv link (linux + android) ─────────
 # Returned as a COMMA SUFFIX to append inside an existing `-Wl,...` group, e.g.
 #   ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags relr)"
