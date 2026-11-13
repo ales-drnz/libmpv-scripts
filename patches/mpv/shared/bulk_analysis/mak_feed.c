@@ -393,15 +393,17 @@ static MP_THREAD_VOID feed_main(void *p)
 #if MAK_FEED_LOUDNESS
         struct mak_loud_slice slice;
         int rate = a->rate;
-        if (d.loud && mak_loud_worker_finish(d.loud, &slice)) {
-            d.loud = NULL;
+        /* Asked before the finish, which frees the accumulator. */
+        bool unmeasured = d.loud_broken ||
+            mak_loud_worker_miss(d.loud) == MAK_LOUD_MISS_UNAVAILABLE;
+        bool sliced = d.loud && mak_loud_worker_finish(d.loud, &slice);
+        d.loud = NULL;
+        if (sliced)
             mak_loudness_publish(&slice, 1, rate, a->gen);
-        } else if (d.loud_broken) {
+        else if (unmeasured)
             mak_loudness_mark_unavailable(a->gen);
-        } else if (d.loud_on) {
-            d.loud = NULL;
+        else if (d.loud_on)
             mak_loudness_mark_failed(a->gen);
-        }
 #endif
     }
     /* The pass cannot cover the file: the re-open takes the generation over,

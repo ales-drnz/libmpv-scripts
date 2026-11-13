@@ -52,6 +52,13 @@ struct AVFrame;
 /* Per-worker accumulator (opaque — owned by one bulk worker thread). */
 struct mak_loud_worker;
 
+/* Why a worker has no slice for the merge. */
+enum mak_loud_miss {
+    MAK_LOUD_MISS_NONE = 0,     /* it has one, or owns no sub-block */
+    MAK_LOUD_MISS_UNAVAILABLE,  /* the scan cannot measure this file */
+    MAK_LOUD_MISS_FAILED,       /* an allocation or a conversion failed */
+};
+
 /* The finished output of one worker: weighted K-energy sums and sample
  * counts per owned 100 ms sub-block, placed on the global grid via
  * first_subblock, plus the slice's raw peaks. */
@@ -66,13 +73,28 @@ struct mak_loud_slice {
 
 /* Create the accumulator for a bulk worker covering source samples
  * [slice_sample_start, slice_sample_end). [par] supplies the channel
- * layout and sample format for the internal converter. Returns NULL on
- * allocation/converter failure (the worker then simply skips loudness;
- * the merge degrades to the slices that exist). */
+ * layout and sample format for the internal converter. Returns NULL when
+ * the slice owns no sub-block (a file shorter than the workers' hops)
+ * and on an allocation or converter failure: mak_loud_slice_miss() tells which, and the merge
+ * publishes nothing when a slice that should exist is missing. */
 struct mak_loud_worker *mak_loud_worker_create(
     const struct AVCodecParameters *par, int sample_rate,
     int64_t slice_sample_start, int64_t slice_sample_end,
     int64_t total_samples);
+
+/* What it means that mak_loud_worker_create() returned NULL for this
+ * slice: NONE when the slice owns no sub-block, so nothing of the measure
+ * is missing, FAILED otherwise. */
+enum mak_loud_miss mak_loud_slice_miss(int sample_rate,
+                                       int64_t slice_sample_start,
+                                       int64_t slice_sample_end,
+                                       int64_t total_samples);
+
+/* Whether the accumulator still measures, asked before its finish: NONE,
+ * UNAVAILABLE once a frame came in another format or channel count than
+ * the one it converts (two files joined), FAILED after an allocation or a
+ * conversion error. Its slice is then invalid. */
+enum mak_loud_miss mak_loud_worker_miss(const struct mak_loud_worker *w);
 
 /* The sample position the bulk worker must decode up to so the slice's
  * trailing sub-block completes: slice end rounded up to the next hop

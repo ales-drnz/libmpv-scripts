@@ -188,6 +188,7 @@ struct mak_loud_worker {
     float   *buf;                /* interleaved FLT conversion buffer */
     int      buf_capacity;       /* in samples-per-channel */
     bool     failed;
+    bool     format_changed;     /* failed on a frame of another format */
 };
 
 static double channel_weight(enum AVChannel ch)
@@ -207,6 +208,49 @@ static double channel_weight(enum AVChannel ch)
     }
 }
 
+/* The sub-blocks a slice owns, [*first_k, *end_k): those k with k*hop in
+ * [start, end), the end rounded up to the hop boundary and clamped to the
+ * track total. Returns the hop in samples, 0 for a rate without one. */
+static int64_t slice_grid(int sample_rate, int64_t slice_sample_start,
+                          int64_t slice_sample_end, int64_t total_samples,
+                          int64_t *first_k, int64_t *end_k)
+{
+    int64_t hop = ((int64_t)sample_rate + MAK_LOUD_SUBBLOCK_HOPS_PER_SEC / 2) /
+                  MAK_LOUD_SUBBLOCK_HOPS_PER_SEC;
+    *first_k = *end_k = 0;
+    if (hop <= 0 || slice_sample_start < 0 ||
+        slice_sample_end <= slice_sample_start)
+        return hop > 0 ? hop : 0;
+    *first_k = (slice_sample_start + hop - 1) / hop;
+    if (slice_sample_start == 0) *first_k = 0;
+    *end_k = (slice_sample_end + hop - 1) / hop;
+    int64_t total_k = total_samples > 0
+                      ? (total_samples + hop - 1) / hop
+                      : *end_k;
+    if (*end_k > total_k) *end_k = total_k;
+    return hop;
+}
+
+enum mak_loud_miss mak_loud_slice_miss(int sample_rate,
+                                       int64_t slice_sample_start,
+                                       int64_t slice_sample_end,
+                                       int64_t total_samples)
+{
+    int64_t first_k, end_k;
+    if (slice_grid(sample_rate, slice_sample_start, slice_sample_end,
+                   total_samples, &first_k, &end_k) > 0 && end_k <= first_k)
+        return MAK_LOUD_MISS_NONE;
+    return MAK_LOUD_MISS_FAILED;
+}
+
+enum mak_loud_miss mak_loud_worker_miss(const struct mak_loud_worker *w)
+{
+    if (!w || !w->failed)
+        return MAK_LOUD_MISS_NONE;
+    return w->format_changed ? MAK_LOUD_MISS_UNAVAILABLE
+                             : MAK_LOUD_MISS_FAILED;
+}
+
 struct mak_loud_worker *mak_loud_worker_create(
     const struct AVCodecParameters *par, int sample_rate,
     int64_t slice_sample_start, int64_t slice_sample_end,
@@ -214,7 +258,7 @@ struct mak_loud_worker *mak_loud_worker_create(
 {
     if (!par || sample_rate <= 0 || par->ch_layout.nb_channels <= 0 ||
         par->ch_layout.nb_channels > MAK_LOUD_MAX_CH ||
-        slice_sample_end <= slice_sample_start)
+        slice_sample_start < 0 || slice_sample_end <= slice_sample_start)
         return NULL;
 
     struct mak_loud_worker *w = av_mallocz(sizeof(*w));
@@ -223,19 +267,10 @@ struct mak_loud_worker *mak_loud_worker_create(
     w->channels = par->ch_layout.nb_channels;
     w->in_format = par->format;
     w->rate     = sample_rate;
-    w->hop      = (sample_rate + MAK_LOUD_SUBBLOCK_HOPS_PER_SEC / 2) /
-                  MAK_LOUD_SUBBLOCK_HOPS_PER_SEC;
+    int64_t first_k, end_k;
+    w->hop      = slice_grid(sample_rate, slice_sample_start, slice_sample_end,
+                             total_samples, &first_k, &end_k);
     if (w->hop <= 0) { av_free(w); return NULL; }
-
-    /* Owned grid: sub-blocks k with k*hop in [start, end), end rounded
-     * up to the hop boundary and clamped to the track total. */
-    int64_t first_k = (slice_sample_start + w->hop - 1) / w->hop;
-    if (slice_sample_start == 0) first_k = 0;
-    int64_t end_k = (slice_sample_end + w->hop - 1) / w->hop;
-    int64_t total_k = total_samples > 0
-                      ? (total_samples + w->hop - 1) / w->hop
-                      : end_k;
-    if (end_k > total_k) end_k = total_k;
     if (end_k <= first_k) { av_free(w); return NULL; }
 
     w->first_subblock = first_k;
@@ -297,6 +332,7 @@ int mak_loud_worker_feed(struct mak_loud_worker *w,
     if (frame->format != w->in_format ||
         frame->ch_layout.nb_channels != w->channels) {
         w->failed = true;
+        w->format_changed = true;
         return -1;
     }
 
@@ -510,8 +546,6 @@ static int cmp_double(const void *a, const void *b)
 void mak_loudness_publish(struct mak_loud_slice *slices, int n,
                           int sample_rate, int gen)
 {
-    (void)sample_rate;
-
     /* Concatenate the slices onto one global sub-block array. */
     int64_t first = INT64_MAX, last = INT64_MIN;
     double sample_peak = 0, true_peak = 0;
@@ -563,7 +597,7 @@ void mak_loudness_publish(struct mak_loud_slice *slices, int n,
     }
 
     /* Expected samples per complete sub-block. */
-    int64_t hop = (sample_rate + MAK_LOUD_SUBBLOCK_HOPS_PER_SEC / 2) /
+    int64_t hop = ((int64_t)sample_rate + MAK_LOUD_SUBBLOCK_HOPS_PER_SEC / 2) /
                   MAK_LOUD_SUBBLOCK_HOPS_PER_SEC;
 
     /* Momentary 400 ms blocks: 4 consecutive complete sub-blocks. */
