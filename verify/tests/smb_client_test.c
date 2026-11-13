@@ -32,6 +32,10 @@
 //   pause-read  read 1 s, stop the server for PAUSE s (35, more than the
 //               connect deadline), resume it: the read goes on, no limit
 //               holds after the connect (F84).
+//   close-hang  read 1 s, stop the server, close with no timeout and no
+//               interrupt: the close returns at its own 5 s deadline, twice
+//               at most (the file, then the share) (F5-7; r24 waits for a
+//               server that went silent until a stop).
 //   stress      30 opens with the server running, each read cut by the
 //               interrupt at a random point: AddressSanitizer finds nothing.
 // A blocked call fails the mode once its limit is past.
@@ -373,6 +377,30 @@ static int mode_open_hang(void)
     return result(msg);
 }
 
+static int mode_close_hang(void)
+{
+    char msg[160];
+    watch("open", 40);
+    int r = open_input(&shared_fc, url);
+    unwatch();
+    if (r < 0 || read_secs(shared_fc, 1) < 0) {
+        check(0, "the open and the first second");
+        return result("no playback to close");
+    }
+    kill(server, SIGSTOP);
+    double t0 = now();
+    // LIBSMB2_CLOSE_TIMEOUT is 5 s; the close that times out breaks the
+    // context, so the disconnect after it does not wait.
+    watch("the close of a stopped server", 15);
+    avformat_close_input(&shared_fc);
+    unwatch();
+    double t = now() - t0;
+    check(t >= 3, "the close waits for its deadline");
+    snprintf(msg, sizeof msg, "the close returned after %.2f s", t);
+    resume_server();
+    return result(msg);
+}
+
 static int mode_pause_read(void)
 {
     char err[128], msg[160];
@@ -470,5 +498,7 @@ int main(int argc, char **argv)
         return mode_open_hang();
     if (!strcmp(mode, "pause-read"))
         return mode_pause_read();
+    if (!strcmp(mode, "close-hang"))
+        return mode_close_hang();
     return 2;
 }
