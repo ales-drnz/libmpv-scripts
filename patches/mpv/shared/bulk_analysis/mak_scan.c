@@ -818,18 +818,18 @@ static int    g_last_gen;
 static mp_mutex g_last_lock = MP_STATIC_MUTEX_INITIALIZER;
 
 /* Size and modification time of [url] when it is a local file, -1
- * otherwise: a file written again under the same path is another file. */
-static void scan_file_stamp(const char *url, struct scan_key *k)
+ * otherwise: a file written again under the same path is another file.
+ * [url] is a path here, never a file:// URL (see mak_scan_start). Returns
+ * false for a local file that has no stamp: nothing then tells a rewrite
+ * of it apart, so its result is not kept. */
+static bool scan_file_stamp(const char *url, struct scan_key *k)
 {
     k->size = k->mtime_s = k->mtime_ns = -1;
-    const char *path = url;
-    if (!strncmp(path, "file://", 7))
-        path += 7;
-    else if (strstr(path, "://"))
-        return;
+    if (strstr(url, "://"))
+        return true;
     struct stat st;
-    if (stat(path, &st) != 0)
-        return;
+    if (stat(url, &st) != 0)
+        return false;
     k->size = (int64_t)st.st_size;
     k->mtime_s = (int64_t)st.st_mtime;
 #if defined(__APPLE__)
@@ -839,6 +839,7 @@ static void scan_file_stamp(const char *url, struct scan_key *k)
 #else
     k->mtime_ns = 0;
 #endif
+    return true;
 }
 
 /* Whether [k] is the last scan's source, its analysis complete: the same
@@ -879,6 +880,13 @@ static void scan_remember(const struct scan_key *k, int gen)
     mp_mutex_unlock(&g_last_lock);
 }
 
+static void scan_start(const char *url, double duration_secs,
+                       double duration_hint,
+                       const char *format_name, bool is_network,
+                       bool seekable, struct mpv_global *global,
+                       struct mp_log *log, struct demuxer *demuxer,
+                       struct sh_stream *audio);
+
 void mak_scan_start(const char *url, double duration_secs,
                     double duration_hint,
                     const char *format_name, bool is_network,
@@ -887,6 +895,25 @@ void mak_scan_start(const char *url, double duration_secs,
                     struct sh_stream *audio)
 {
     if (!url || !*url) return;
+    /* A file:// URL becomes the path it names, as mpv's own stream reads
+     * it (escapes decoded, the slash before a drive letter dropped). mpv
+     * turns the ones of a playlist into paths itself, but one a hook
+     * writes to stream-open-filename arrives as it is, and FFmpeg's file
+     * protocol takes the text after the scheme for the path: with "%20"
+     * in it the re-open found no file, and stat() no stamp. */
+    char *local = mp_file_url_to_filename(NULL, bstr0(url));
+    scan_start(local ? local : url, duration_secs, duration_hint, format_name,
+               is_network, seekable, global, log, demuxer, audio);
+    talloc_free(local);
+}
+
+static void scan_start(const char *url, double duration_secs,
+                       double duration_hint,
+                       const char *format_name, bool is_network,
+                       bool seekable, struct mpv_global *global,
+                       struct mp_log *log, struct demuxer *demuxer,
+                       struct sh_stream *audio)
+{
 #if MAK_SCAN_FD_IO
     /* Before the gate: the file keeps its descriptor for a later start. */
     scan_hold_fd(url, demuxer);
@@ -904,7 +931,8 @@ void mak_scan_start(const char *url, double duration_secs,
         .lavf_index = key_track.lavf_index, .mkv_id = key_track.mkv_id,
         .ordinal = key_track.ordinal,
     };
-    scan_file_stamp(url, &key);
+    if (!scan_file_stamp(url, &key))
+        reusable = false;
     if (reusable && scan_still_ready(&key)) {
         if (log)
             mp_verbose(log, "analysis: same file, the result stays\n");
