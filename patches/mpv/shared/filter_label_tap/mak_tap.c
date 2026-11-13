@@ -674,8 +674,13 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
             delta_secs = end_pts - target_pts_secs;
         if (delta_secs < 0) delta_secs = 0;
 
-        size_t delta_bytes_unaligned =
-            (size_t)(delta_secs * rate * (double)frame_bytes);
+        /* Clamped before the cast: a ring nothing writes any more keeps
+         * an old end, and its distance in bytes from the playhead can
+         * pass what a size_t holds (three hours at 48 kHz stereo where
+         * it has 32 bits). Past the ring it is the fallback below. */
+        double delta_bytes_f = delta_secs * rate * (double)frame_bytes;
+        size_t delta_bytes_unaligned = delta_bytes_f < (double)valid_bytes
+            ? (size_t)delta_bytes_f : valid_bytes;
         size_t delta_bytes =
             (delta_bytes_unaligned / frame_bytes) * frame_bytes;
         /* Soft fallback: if the requested PTS-aligned slice falls
@@ -714,7 +719,9 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
                 double slice_end_secs = end_pts -
                     ((double)delta_bytes / (double)frame_bytes /
                      (double)rate);
-                pts_ns = (int64_t)(slice_end_secs * 1e9);
+                /* A timestamp no int64 of nanoseconds holds reads 0. */
+                if (fabs(slice_end_secs) < 9e9)
+                    pts_ns = (int64_t)(slice_end_secs * 1e9);
             }
             have_data = true;
             gen = s1;
