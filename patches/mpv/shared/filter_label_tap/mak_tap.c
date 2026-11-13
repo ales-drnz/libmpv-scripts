@@ -1,4 +1,4 @@
-/* MAK_TAP_PATCH_V4 ─── per-filter pre / post audio tap.
+/* MAK_TAP_PATCH_V5 ─── per-filter pre / post audio tap.
  *
  * Concurrency model
  * -----------------
@@ -130,9 +130,14 @@ struct tap_slot {
      * thread runs find_slot per frame; we want zero overhead
      * when no taps are active. */
     _Atomic bool     used;
-    /* Written under activation_lock; read after a `used == true`
-     * acquire-load (the release-store on `used` publishes the
-     * preceding name write). */
+    /* Hash of the name (tap_name_hash), what find_slot() compares: it
+     * probes with no lock, and set_active rewrites the name while a
+     * writer that already saw `used` may still be comparing. 0 while the
+     * slot has no name. */
+    _Atomic uint_fast32_t name_hash;
+    /* Written and read under g_tap_write_lock (set_active also holds
+     * the activation lock, which is enough for get_active and the
+     * reader's snapshot). */
     char             name[64];
     struct tap_ring  pre;
     struct tap_ring  post;
@@ -165,19 +170,33 @@ static mp_mutex g_tap_activation_lock = MP_STATIC_MUTEX_INITIALIZER;
  * g_tap_activation_lock before g_tap_write_lock. */
 static mp_mutex g_tap_write_lock = MP_STATIC_MUTEX_INITIALIZER;
 
-/* Lock-free probe — atomic_load on the slot.used flag (acquire
- * orders the subsequent name read against the matching
- * activation's release-store on used). Returns the slot index
- * or -1 when not active. Hot path of every writer. */
+/* FNV-1a of a label, never 0 (the hash of a slot without a name). */
+static uint_fast32_t tap_name_hash(const char *name)
+{
+    uint_fast32_t h = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++)
+        h = ((h ^ *p) * 16777619u) & 0xffffffffu;
+    return h ? h : 1;
+}
+
+/* Lock-free probe: atomic loads of the slot's used flag and of its
+ * name's hash, never the name itself, which set_active may be writing.
+ * Returns the index of the slot armed for a label with the hash of
+ * [name], or -1. A match is a candidate: the writer compares the name
+ * under g_tap_write_lock before it writes. Hot path of every writer. */
 static int find_slot(const char *name)
 {
     if (!name) return -1;
+    uint_fast32_t h = 0;
     for (int i = 0; i < MAK_TAP_MAX; i++) {
-        if (atomic_load_explicit(&g_tap.slots[i].used,
-                                  memory_order_acquire) &&
-            strcmp(g_tap.slots[i].name, name) == 0) {
+        if (!atomic_load_explicit(&g_tap.slots[i].used,
+                                  memory_order_acquire))
+            continue;
+        if (!h)
+            h = tap_name_hash(name);
+        if (atomic_load_explicit(&g_tap.slots[i].name_hash,
+                                 memory_order_acquire) == h)
             return i;
-        }
     }
     return -1;
 }
@@ -220,6 +239,8 @@ void mak_tap_set_active(const char *csv)
      * its slot no longer armed for its label: it writes nothing. */
     mp_mutex_lock(&g_tap_write_lock);
     for (int i = 0; i < MAK_TAP_MAX; i++) {
+        atomic_store_explicit(&g_tap.slots[i].name_hash, 0,
+                              memory_order_release);
         g_tap.slots[i].name[0] = 0;
         reset_ring(&g_tap.slots[i].pre);
         reset_ring(&g_tap.slots[i].post);
@@ -232,10 +253,9 @@ void mak_tap_set_active(const char *csv)
     }
 
     /* Phase 3: parse CSV, populate slots, publish via release-
-     * store on `used = true`. Name is written before the publish
-     * so a writer that sees used==true reads a consistent
-     * name; under g_tap_write_lock, so a writer holding it reads a
-     * stable name when it checks its slot again. */
+     * store on `used = true`. The name and its hash are written
+     * before the publish, under g_tap_write_lock, so a writer holding
+     * it reads a stable name when it checks its slot again. */
     int slot = 0;
     const char *p = csv;
     while (*p && slot < MAK_TAP_MAX) {
@@ -246,6 +266,9 @@ void mak_tap_set_active(const char *csv)
         if (len > 0 && len < sizeof(g_tap.slots[slot].name)) {
             memcpy(g_tap.slots[slot].name, p, len);
             g_tap.slots[slot].name[len] = 0;
+            atomic_store_explicit(&g_tap.slots[slot].name_hash,
+                                  tap_name_hash(g_tap.slots[slot].name),
+                                  memory_order_release);
             atomic_store_explicit(&g_tap.slots[slot].used, true,
                                   memory_order_release);
             slot++;
@@ -283,6 +306,17 @@ bool mak_tap_label_active(const char *name)
      * first iteration and the function returns ~immediately
      * (no strcmp, no lock). */
     return find_slot(name) >= 0;
+}
+
+/* Silences the samples that are not finite: a float source can hold NaN
+ * or infinities, which would stay in the ring for the reader's FFT and in
+ * a bin of the waveform that grows from playback. */
+static void tap_scrub(float *s, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (!isfinite(s[i]))
+            s[i] = 0.0f;
+    }
 }
 
 /* Convert part of a planar / packed PCM aframe into interleaved Float32,
@@ -348,6 +382,7 @@ static size_t convert_aframe(struct mp_aframe *aframe, int offset,
             } else {
                 MAK_TAP_CONV(float, v);
             }
+            tap_scrub(dst, total);
             return total;
         case AF_FORMAT_S16:
             MAK_TAP_CONV(int16_t, (float)v * (1.0f / 32768.0f));
@@ -363,6 +398,7 @@ static size_t convert_aframe(struct mp_aframe *aframe, int offset,
             return total;
         case AF_FORMAT_DOUBLE:
             MAK_TAP_CONV(double, (float)v);
+            tap_scrub(dst, total);
             return total;
         default:
             return 0;
@@ -370,7 +406,7 @@ static size_t convert_aframe(struct mp_aframe *aframe, int offset,
 #undef MAK_TAP_CONV
 }
 
-/* MAK_TAP_PATCH_V4 ─── pre-DSP waveform fold from the af chain
+/* MAK_TAP_PATCH_V5 ─── pre-DSP waveform fold from the af chain
  * "in" filter (PRE side). Converts + mono-downmixes the SOURCE frame
  * (pre volume / ReplayGain / EQ — those run later on the AO thread)
  * and folds it into the progressive waveform envelope, per-bin by PTS.
@@ -443,10 +479,7 @@ void mak_tap_write(const char *name, bool is_post,
     /* Lock-free probe — early-exit when the label is not in
      * the active set (zero atomic-load cost when nothing is
      * being tapped, which is the steady-state). */
-    int idx = find_slot(name);
-    if (idx < 0) return;
-    struct tap_ring *ring = is_post ? &g_tap.slots[idx].post
-                                    : &g_tap.slots[idx].pre;
+    if (find_slot(name) < 0) return;
 
     /* The rings and the scratch are process-wide, but every mpv
      * instance runs its own audio chain. Two players tapping the same
@@ -455,15 +488,24 @@ void mak_tap_write(const char *name, bool is_post,
      * thread. */
     mp_mutex_lock(&g_tap_write_lock);
 
-    /* The slot found above may have been torn down, or armed for
-     * another label, while this writer waited: set_active changes both
-     * under this lock. Writing would put this label's audio in another
-     * label's ring, or a buffer nothing frees in a slot nobody taps. */
-    if (!atomic_load_explicit(&g_tap.slots[idx].used, memory_order_relaxed) ||
-        strcmp(g_tap.slots[idx].name, name) != 0) {
+    /* The slot is looked up by name here, under the lock set_active
+     * changes the names under: the one the probe found may have been
+     * torn down, or armed for another label, while this writer waited
+     * (and its hash is only a hint). Writing there would put this
+     * label's audio in another label's ring, or a buffer nothing frees
+     * in a slot nobody taps. */
+    int idx = -1;
+    for (int i = 0; i < MAK_TAP_MAX && idx < 0; i++) {
+        if (atomic_load_explicit(&g_tap.slots[i].used, memory_order_relaxed) &&
+            strcmp(g_tap.slots[i].name, name) == 0)
+            idx = i;
+    }
+    if (idx < 0) {
         mp_mutex_unlock(&g_tap_write_lock);
         return;
     }
+    struct tap_ring *ring = is_post ? &g_tap.slots[idx].post
+                                    : &g_tap.slots[idx].pre;
 
     int channels = 0, rate = 0;
     size_t produced = convert_aframe(aframe, 0, g_tap.scratch,
@@ -632,8 +674,13 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
             delta_secs = end_pts - target_pts_secs;
         if (delta_secs < 0) delta_secs = 0;
 
-        size_t delta_bytes_unaligned =
-            (size_t)(delta_secs * rate * (double)frame_bytes);
+        /* Clamped before the cast: a ring nothing writes any more keeps
+         * an old end, and its distance in bytes from the playhead can
+         * pass what a size_t holds (three hours at 48 kHz stereo where
+         * it has 32 bits). Past the ring it is the fallback below. */
+        double delta_bytes_f = delta_secs * rate * (double)frame_bytes;
+        size_t delta_bytes_unaligned = delta_bytes_f < (double)valid_bytes
+            ? (size_t)delta_bytes_f : valid_bytes;
         size_t delta_bytes =
             (delta_bytes_unaligned / frame_bytes) * frame_bytes;
         /* Soft fallback: if the requested PTS-aligned slice falls
@@ -672,7 +719,9 @@ static void build_ring_node(struct mpv_node *out, void *parent_list,
                 double slice_end_secs = end_pts -
                     ((double)delta_bytes / (double)frame_bytes /
                      (double)rate);
-                pts_ns = (int64_t)(slice_end_secs * 1e9);
+                /* A timestamp no int64 of nanoseconds holds reads 0. */
+                if (fabs(slice_end_secs) < 9e9)
+                    pts_ns = (int64_t)(slice_end_secs * 1e9);
             }
             have_data = true;
             gen = s1;

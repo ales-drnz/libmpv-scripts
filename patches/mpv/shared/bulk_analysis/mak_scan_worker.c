@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── bulk-analysis scan engine: one worker.
+/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine: one worker.
  *
  * Decodes the worker's sample region of the source and bins it into its
  * disjoint slice of the envelope, publishing sealed bins through its
@@ -335,6 +335,7 @@ reseek:
             emitted_samples = frame_seq_pos;
             anchored = true;
 
+            mak_scrub_samples(out_buf, (size_t)converted * channels);
             mak_downmix_mono(out_buf, converted, channels, mono_buf);
             process_samples(mono_buf, converted,
                             &emitted_samples, a->total_samples, a);

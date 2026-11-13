@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── cache-fed analysis of an HTTP file.
+/* MAK_WAVEFORM_PATCH_V2 ─── cache-fed analysis of an HTTP file.
  *
  * The bulk decode re-opens the source, so for a remote file it downloaded the
  * whole track a second time while mpv was caching the same bytes. For a

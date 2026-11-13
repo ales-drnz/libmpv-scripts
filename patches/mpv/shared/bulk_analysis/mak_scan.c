@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── bulk-analysis scan engine.
+/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine.
  *
  * The decode engine: on mak_scan_start() it spawns a detached coordinator that
  * probes + classifies the source and either BULK-decodes a complete seekable
@@ -253,7 +253,15 @@ static MP_THREAD_VOID coordinator_main(void *p)
 
     AVStream *st = probe_fmt->streams[audio_idx];
     int sample_rate = st->codecpar->sample_rate;
-    if (sample_rate <= 0) goto fail;
+    /* The bounds of the cache-fed engine (mak_feed_start) hold here too:
+     * the rate and the duration are the file's word, and their product,
+     * the axis in samples, must stay inside an int64. A rate past
+     * MAK_WAVEFORM_FED_MAX_RATE is no audio this decodes. */
+    if (sample_rate <= 0 || sample_rate > MAK_WAVEFORM_FED_MAX_RATE)
+        goto fail;
+    /* Checked in double, before any conversion to an integer. */
+    bool too_long = dur_secs > MAK_WAVEFORM_FED_MAX_SECS;
+    const int64_t max_us = (int64_t)MAK_WAVEFORM_FED_MAX_SECS * 1000000;
 
     /* Track duration in microseconds. Prefer the caller's (mpv's), the one
      * the cache-fed engine builds its axis from (mak_feed.c), so both paths
@@ -261,13 +269,16 @@ static MP_THREAD_VOID coordinator_main(void *p)
      * which can differ. Fall back to the format-level duration, then to the
      * audio stream's own. */
     int64_t duration_us = 0;
-    if (dur_secs > 0) duration_us = llround(dur_secs * 1e6);
-    if (duration_us <= 0 && probe_fmt->duration > 0)
+    if (dur_secs > 0 && !too_long) duration_us = llround(dur_secs * 1e6);
+    if (duration_us <= 0 && !too_long && probe_fmt->duration > 0)
         duration_us = probe_fmt->duration;
-    if (duration_us <= 0 && st->duration > 0) {
+    if (duration_us <= 0 && !too_long && st->duration > 0) {
         duration_us = av_rescale_q(st->duration,
                                    st->time_base, AV_TIME_BASE_Q);
     }
+    /* av_rescale_q answers INT64_MIN for what does not fit. */
+    if (duration_us < 0) duration_us = 0;
+    if (duration_us > max_us) too_long = true;
 
     /* ── Classify the source (fully automatic, no caller hint) ──────────
      * Bulk parallel decode needs a complete, randomly seekable file. An
@@ -304,15 +315,21 @@ static MP_THREAD_VOID coordinator_main(void *p)
                        mak_url_scheme_is(url, scheme_sep, "file");
 
     if (is_adaptive || unseekable) {
-        double eff_dur = dur_secs > 0 ? dur_secs : duration_us / 1e6;
+        /* A length past the bound has no axis: arm_progressive fails it. */
+        double eff_dur = dur_secs > 0 ? dur_secs
+                       : too_long ? 2.0 * MAK_WAVEFORM_FED_MAX_SECS
+                       : duration_us / 1e6;
         if (eff_dur > 0)
             mak_waveform_arm_progressive(my_gen, eff_dur);
         else
             mak_waveform_arm_rolling(my_gen);   /* true live: cache-aligned roll */
         goto cleanup;
     }
-    if (duration_us <= 0) goto fail;
+    if (duration_us <= 0 || too_long) goto fail;
+    /* The start time becomes samples as well. */
+    if (!(fabs(track.start_secs) <= MAK_WAVEFORM_FED_MAX_SECS)) goto fail;
 
+    /* At most 5e12 us times 1e6 Hz, inside an int64. */
     int64_t total_samples = (int64_t)duration_us * sample_rate / 1000000;
     if (total_samples <= 0) goto fail;
     /* A source whose timestamps start later (an MPEG-TS at 1.4 s or hours
@@ -801,18 +818,18 @@ static int    g_last_gen;
 static mp_mutex g_last_lock = MP_STATIC_MUTEX_INITIALIZER;
 
 /* Size and modification time of [url] when it is a local file, -1
- * otherwise: a file written again under the same path is another file. */
-static void scan_file_stamp(const char *url, struct scan_key *k)
+ * otherwise: a file written again under the same path is another file.
+ * [url] is a path here, never a file:// URL (see mak_scan_start). Returns
+ * false for a local file that has no stamp: nothing then tells a rewrite
+ * of it apart, so its result is not kept. */
+static bool scan_file_stamp(const char *url, struct scan_key *k)
 {
     k->size = k->mtime_s = k->mtime_ns = -1;
-    const char *path = url;
-    if (!strncmp(path, "file://", 7))
-        path += 7;
-    else if (strstr(path, "://"))
-        return;
+    if (strstr(url, "://"))
+        return true;
     struct stat st;
-    if (stat(path, &st) != 0)
-        return;
+    if (stat(url, &st) != 0)
+        return false;
     k->size = (int64_t)st.st_size;
     k->mtime_s = (int64_t)st.st_mtime;
 #if defined(__APPLE__)
@@ -822,6 +839,7 @@ static void scan_file_stamp(const char *url, struct scan_key *k)
 #else
     k->mtime_ns = 0;
 #endif
+    return true;
 }
 
 /* Whether [k] is the last scan's source, its analysis complete: the same
@@ -862,6 +880,13 @@ static void scan_remember(const struct scan_key *k, int gen)
     mp_mutex_unlock(&g_last_lock);
 }
 
+static void scan_start(const char *url, double duration_secs,
+                       double duration_hint,
+                       const char *format_name, bool is_network,
+                       bool seekable, struct mpv_global *global,
+                       struct mp_log *log, struct demuxer *demuxer,
+                       struct sh_stream *audio);
+
 void mak_scan_start(const char *url, double duration_secs,
                     double duration_hint,
                     const char *format_name, bool is_network,
@@ -870,6 +895,25 @@ void mak_scan_start(const char *url, double duration_secs,
                     struct sh_stream *audio)
 {
     if (!url || !*url) return;
+    /* A file:// URL becomes the path it names, as mpv's own stream reads
+     * it (escapes decoded, the slash before a drive letter dropped). mpv
+     * turns the ones of a playlist into paths itself, but one a hook
+     * writes to stream-open-filename arrives as it is, and FFmpeg's file
+     * protocol takes the text after the scheme for the path: with "%20"
+     * in it the re-open found no file, and stat() no stamp. */
+    char *local = mp_file_url_to_filename(NULL, bstr0(url));
+    scan_start(local ? local : url, duration_secs, duration_hint, format_name,
+               is_network, seekable, global, log, demuxer, audio);
+    talloc_free(local);
+}
+
+static void scan_start(const char *url, double duration_secs,
+                       double duration_hint,
+                       const char *format_name, bool is_network,
+                       bool seekable, struct mpv_global *global,
+                       struct mp_log *log, struct demuxer *demuxer,
+                       struct sh_stream *audio)
+{
 #if MAK_SCAN_FD_IO
     /* Before the gate: the file keeps its descriptor for a later start. */
     scan_hold_fd(url, demuxer);
@@ -887,7 +931,8 @@ void mak_scan_start(const char *url, double duration_secs,
         .lavf_index = key_track.lavf_index, .mkv_id = key_track.mkv_id,
         .ordinal = key_track.ordinal,
     };
-    scan_file_stamp(url, &key);
+    if (!scan_file_stamp(url, &key))
+        reusable = false;
     if (reusable && scan_still_ready(&key)) {
         if (log)
             mp_verbose(log, "analysis: same file, the result stays\n");

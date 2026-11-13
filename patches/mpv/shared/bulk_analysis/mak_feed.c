@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── cache-fed analysis of an HTTP file.
+/* MAK_WAVEFORM_PATCH_V2 ─── cache-fed analysis of an HTTP file.
  * See mak_feed.h. One detached thread per generation: it pops the demuxer
  * feed, decodes with libavcodec the way mpv's own audio decoder does, folds
  * the mono downmix into the waveform and, with the loudness patch in, feeds
@@ -156,6 +156,11 @@ static void loud_begin(struct feed_dec *d, const AVFrame *f,
         p->format = f->format;
         p->sample_rate = f->sample_rate;
         d->loud = mak_loud_worker_create(p, f->sample_rate, 0, total, total);
+        /* A file longer than the scan measures: no accumulator, and no
+         * new try at every frame. */
+        if (!d->loud && mak_loud_slice_miss(f->sample_rate, 0, total, total) ==
+                        MAK_LOUD_MISS_UNAVAILABLE)
+            d->loud_broken = true;
     }
     avcodec_parameters_free(&p);
 }
@@ -243,6 +248,7 @@ static bool fold_frame(struct feed_dec *d, struct feed_args *a, AVFrame *f)
     if (!d->anchored)
         d->first_pos = pos;
     d->anchored = true;
+    mak_scrub_samples(d->buf, (size_t)n * channels);
     mak_downmix_mono(d->buf, n, channels, d->mono);
     mak_waveform_fold_fed(d->mono, n, d->emitted, a->gen);
     d->emitted += n;
@@ -393,15 +399,17 @@ static MP_THREAD_VOID feed_main(void *p)
 #if MAK_FEED_LOUDNESS
         struct mak_loud_slice slice;
         int rate = a->rate;
-        if (d.loud && mak_loud_worker_finish(d.loud, &slice)) {
-            d.loud = NULL;
+        /* Asked before the finish, which frees the accumulator. */
+        bool unmeasured = d.loud_broken ||
+            mak_loud_worker_miss(d.loud) == MAK_LOUD_MISS_UNAVAILABLE;
+        bool sliced = d.loud && mak_loud_worker_finish(d.loud, &slice);
+        d.loud = NULL;
+        if (sliced)
             mak_loudness_publish(&slice, 1, rate, a->gen);
-        } else if (d.loud_broken) {
+        else if (unmeasured)
             mak_loudness_mark_unavailable(a->gen);
-        } else if (d.loud_on) {
-            d.loud = NULL;
+        else if (d.loud_on)
             mak_loudness_mark_failed(a->gen);
-        }
 #endif
     }
     /* The pass cannot cover the file: the re-open takes the generation over,
@@ -457,8 +465,11 @@ bool mak_feed_start(int gen, struct demuxer *demuxer, struct sh_stream *audio,
                     const struct mak_scan_track *track,
                     struct mpv_global *global, struct mp_log *log)
 {
+    /* The start time is counted in samples too: bounded like the length,
+     * before it is multiplied by the rate. */
     if (!demuxer || !audio || !audio->codec || !url ||
-        !(duration_secs > 0 && duration_secs <= MAK_WAVEFORM_FED_MAX_SECS))
+        !(duration_secs > 0 && duration_secs <= MAK_WAVEFORM_FED_MAX_SECS) ||
+        !(fabs(track->start_secs) <= MAK_WAVEFORM_FED_MAX_SECS))
         return false;
     AVCodecParameters *par = mp_codec_params_to_av(audio->codec);
     if (!par || par->sample_rate <= 0 ||

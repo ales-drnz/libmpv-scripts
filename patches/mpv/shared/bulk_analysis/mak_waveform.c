@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── waveform product (min/max/RMS amplitude envelope).
+/* MAK_WAVEFORM_PATCH_V2 ─── waveform product (min/max/RMS amplitude envelope).
  *
  * Owns the visible waveform state `g_wave` and everything that touches it: the
  * generation/lifecycle, the reader, the decode-progress fraction, the
@@ -543,7 +543,8 @@ void mak_waveform_update_cache_range(double begin_secs, double end_secs)
         g_wave.bins_min && g_wave.bins_max && g_wave.bins_sq &&
         g_wave.bins_n && g_wave.bins_filled) {
         const int cap = g_wave.bins;
-        if (begin_secs >= 0) {
+        /* A range past the bound of every axis is no bin number. */
+        if (begin_secs >= 0 && begin_secs <= MAK_WAVEFORM_FED_MAX_SECS) {
             int64_t new_base = (int64_t)(begin_secs / g_wave.roll_bin_secs);
             if (new_base > g_wave.roll_base_bin) {
                 int64_t shift = new_base - g_wave.roll_base_bin;
@@ -687,6 +688,12 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
 {
     if (!mono || n <= 0 || rate <= 0) return;
     if (!(pts_secs >= 0)) return;            /* also rejects NaN */
+    /* The bounds of every axis (see mak_waveform_arm_fed): a timestamp or
+     * a rate past them has no bin, and their products below, sample
+     * positions and bin numbers, stay inside an int64. */
+    if (pts_secs > MAK_WAVEFORM_FED_MAX_SECS ||
+        rate > MAK_WAVEFORM_FED_MAX_RATE)
+        return;
     mp_mutex_lock(&g_wave_lock);
     const bool live_gen = atomic_load(&g_wave.current_gen) == gen;
     if (live_gen && g_wave.progressive && g_wave.bins > 0 &&
@@ -755,13 +762,17 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
             const int64_t total = (int64_t)(g_wave.duration_secs * rate);
             const int64_t base  = (int64_t)llround(pts_secs * rate);
             int i = 0;
-            while (i < n) {
+            /* Audio past the axis has no bin, as in the bulk and the
+             * cache-fed folds: the axis can be shorter than the audio (a
+             * duration estimated from the bitrate, a hinted length), and
+             * the last bin would hold the peak of everything after it. */
+            while (i < n && base + i < total) {
                 int64_t b = mak_sample_to_bin(base + i, bins, total);
                 float  rmin = mono[i];
                 float  rmax = mono[i];
                 double rsq  = (double)mono[i] * mono[i];
                 int j = i + 1;
-                while (j < n &&
+                while (j < n && base + j < total &&
                        mak_sample_to_bin(base + j, bins, total) == b) {
                     if (mono[j] < rmin) rmin = mono[j];
                     if (mono[j] > rmax) rmax = mono[j];

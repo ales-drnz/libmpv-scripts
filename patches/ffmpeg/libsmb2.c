@@ -46,6 +46,13 @@
  * wakes up. */
 #define LIBSMB2_CONNECT_TIMEOUT 30
 
+/* The close of the file and the disconnect get this many seconds, whatever
+ * "timeout" says: with none (mpv's network-timeout 0) libsmb2 expires no
+ * request after the connect, and a server that went silent would hold the
+ * close, and the demuxer thread in it, until a stop. Past it the context
+ * is only destroyed, which closes the socket. */
+#define LIBSMB2_CLOSE_TIMEOUT 5
+
 /* Longest single wait on the socket. The interrupt callback is checked
  * after each one, so a stop is seen within this. */
 #define LIBSMB2_SLICE_MS 100
@@ -125,7 +132,7 @@ static int libsmb2_wait(URLContext *h, int64_t deadline)
             return AVERROR_EXIT;
         }
         if (deadline && av_gettime_relative() > deadline) {
-            av_log(h, AV_LOG_ERROR, "SMB2 connect timed out\n");
+            av_log(h, AV_LOG_ERROR, "SMB2 request timed out\n");
             ctx->broken = 1;
             return AVERROR(ETIMEDOUT);
         }
@@ -249,7 +256,8 @@ static void libsmb2_disconnect(URLContext *h)
         return;
     if (!ctx->broken) {
         ctx->done = 0;
-        libsmb2_finish(h, smb2_disconnect_share_async(ctx->smb2, libsmb2_cb, ctx), 0);
+        libsmb2_finish(h, smb2_disconnect_share_async(ctx->smb2, libsmb2_cb, ctx),
+                       av_gettime_relative() + LIBSMB2_CLOSE_TIMEOUT * INT64_C(1000000));
     }
     smb2_destroy_context(ctx->smb2);
     ctx->smb2 = NULL;
@@ -262,7 +270,8 @@ static av_cold int libsmb2_close(URLContext *h)
         /* A broken context still owns the handle: destroy frees it. */
         if (!ctx->broken) {
             ctx->done = 0;
-            libsmb2_finish(h, smb2_close_async(ctx->smb2, ctx->fh, libsmb2_cb, ctx), 0);
+            libsmb2_finish(h, smb2_close_async(ctx->smb2, ctx->fh, libsmb2_cb, ctx),
+                           av_gettime_relative() + LIBSMB2_CLOSE_TIMEOUT * INT64_C(1000000));
         }
         ctx->fh = NULL;
     }

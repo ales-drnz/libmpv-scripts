@@ -22,6 +22,14 @@
 //           the same number N: a new scan
 //   rewrite a copy of a.flac analyzed, then b.flac (also 30 s) copied over
 //           it: a new scan
+//   hookurl an on_load hook writes a file:// URL with an escape in it
+//           (re%20write.flac) to stream-open-filename, as a source resolver
+//           does: the waveform is ready, and stays at a second load. r24
+//           hands the URL to FFmpeg's file protocol, which takes "%20" for
+//           part of the name: the re-open finds no file and the analysis
+//           fails, while the file plays (F5-15).
+//   hookrewrite  the same, then b.flac copied over the file: a new scan,
+//           the stamp is the decoded path's
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "analysis_test.h"
@@ -93,10 +101,32 @@ static void same_result(const struct an_wave *a, const struct an_loud *la,
              la->integrated);
 }
 
+// Answers the on_load hook with [url] as stream-open-filename and waits for
+// FILE_LOADED. Returns 0 when the load ends without it.
+static int hook_loaded(mpv_handle *h, const char *url)
+{
+    double t0 = mt_now();
+    int hooked = 0;
+    while (mt_now() - t0 < 20) {
+        mpv_event *e = mpv_wait_event(h, 0.05);
+        if (e->event_id == MPV_EVENT_HOOK) {
+            mpv_event_hook *hk = e->data;
+            mpv_set_property_string(h, "stream-open-filename", url);
+            mpv_hook_continue(h, hk->id);
+            hooked = 1;
+        } else if (e->event_id == MPV_EVENT_FILE_LOADED) {
+            return 1;
+        } else if (e->event_id == MPV_EVENT_END_FILE && hooked) {
+            return 0;   // before the hook it is the end of the file before
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s same|loop|other|loudon|track|ext|fd|rewrite <fixtures> <tmpdir>\n",
+        fprintf(stderr, "usage: %s same|loop|other|loudon|track|ext|fd|rewrite|hookurl|hookrewrite <fixtures> <tmpdir>\n",
                 argv[0]);
         return 2;
     }
@@ -194,6 +224,31 @@ int main(int argc, char **argv)
         copy_file(b, copy);
         mt_cmd(h, "loadfile", copy, NULL, NULL);
         expect_rescan(h, "the file written again");
+    } else if (!strcmp(mode, "hookurl") || !strcmp(mode, "hookrewrite")) {
+        char copy[1200], url[1300];
+        snprintf(copy, sizeof copy, "%s/re write.flac", argv[3]);
+        snprintf(url, sizeof url, "file://%s/re%%20write.flac", argv[3]);
+        copy_file(a, copy);
+        mpv_set_property_string(h, "pause", "yes");
+        mpv_hook_add(h, 0, "on_load", 0);
+        mt_cmd(h, "loadfile", "resolve-me", NULL, NULL);
+        mt_check(hook_loaded(h, url), "the hook's URL loaded");
+        an_wait_final(h, 1, 0, 30, &w1, &l1);
+        mt_check(!strcmp(w1.state, "ready") && w1.filled == w1.bins,
+                 "the waveform of the file:// URL is ready (%s, %d of %d bins)",
+                 w1.state, w1.filled, w1.bins);
+        if (!strcmp(mode, "hookrewrite"))
+            copy_file(b, copy);
+        mt_cmd(h, "loadfile", "resolve-me", NULL, NULL);
+        mt_check(hook_loaded(h, url), "loaded again");
+        an_wave_read(h, &w2);
+        printf("     after FILE_LOADED: waveform %s\n", w2.state);
+        if (!strcmp(mode, "hookrewrite"))
+            mt_check(strcmp(w2.state, "ready") != 0,
+                     "the file written again is scanned again (%s)", w2.state);
+        else
+            mt_check(!strcmp(w2.state, "ready") && w2.filled == w1.filled,
+                     "the result stays, no new scan (%s)", w2.state);
     } else {
         fprintf(stderr, "unknown mode %s\n", mode);
         return 2;

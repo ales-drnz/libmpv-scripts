@@ -131,7 +131,7 @@ import property_seam as seam  # noqa: E402
 
 # Idempotency marker — re-running the build pipeline against the same
 # extracted mpv tree is safe.
-MARKER = 'MAK_PCM_TAP_PATCH_V1'
+MARKER = 'MAK_PCM_TAP_PATCH_V2'
 
 
 # ─── audio/out/ao.c ───────────────────────────────────────────────────

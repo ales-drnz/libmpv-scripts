@@ -40,6 +40,8 @@ protos="$(sed -n 's/^[^#]*extern.*URLProtocol *ff_\([^ ]*\)_protocol;/\1/p' "$T/
 [[ "$protos" == "webio_http webio_https webio_makblob " ]]; check $? "pristine: configure sees webio_http, webio_https, webio_makblob ($protos)"
 [[ "$(grep -c '+= webio.o$' "$T/ok/libavformat/Makefile")" == 3 ]]; check $? "pristine: the Makefile builds webio.o for each"
 cmp -s "$SRC" "$T/ok/libavformat/webio.c"; check $? "pristine: webio.c copied"
+cmp -s "${SRC%.c}_log.h" "$T/ok/libavformat/webio_log.h"; check $? "pristine: webio_log.h copied"
+! grep -nE 'av_log\(.*(s->(url|location|note|errmsg)|\buri\b)' "$SRC"; check $? "webio.c logs no URL as it is (webio_redact)"
 has "$T/ok/libavformat/hls.c" '{.i64 = CONFIG_HTTP_PROTOCOL}' &&
   [[ "$(grep -A4 '^#if !CONFIG_HTTP_PROTOCOL' "$T/ok/libavformat/hls.c" | grep -c 'ff_format_io_close(s, pb);')" == 1 ]]
 check $? "pristine: hls.c keeps no connection alive and closes the one it cannot reuse"

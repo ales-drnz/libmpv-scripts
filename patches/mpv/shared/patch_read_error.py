@@ -112,7 +112,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
 import property_seam as seam  # noqa: E402
 
-MARKER = 'MAK_READ_ERROR_PATCH_V1'
+MARKER = 'MAK_READ_ERROR_PATCH_V2'
 
 STREAM_H = 'stream/stream.h'
 STREAM_C = 'stream/stream.c'
@@ -177,6 +177,17 @@ LAVF_FILL_NEW = (
     '// from serving the seek from its buffer or reading on to it; the buffer\n'
     '// is dropped because the seek back by half a buffer (and refill) does\n'
     '// not look at direct (libavformat/aviobuf.c, FFmpeg 8.1).\n'
+    '// These are fields of AVIOContext that aviobuf.c owns, and no anchor\n'
+    '// watches FFmpeg from here: the check below stops the build on a\n'
+    '// libavformat this was not read against (60, FFmpeg 6.1, to 62, FFmpeg\n'
+    '// 8.1). For a new one read avio_seek() and fill_buffer() again, then\n'
+    '// raise the bound.\n'
+    '#if (LIBAVFORMAT_VERSION_MAJOR < 60 || LIBAVFORMAT_VERSION_MAJOR > 62) && \\\n'
+    '    !defined(MAK_PROTOCOL_SEEK_UNCHECKED)\n'
+    '#error "mak_protocol_seek writes AVIOContext fields as aviobuf.c of ' \
+    'libavformat 60 to 62 reads them: check it against this libavformat ' \
+    '(or define MAK_PROTOCOL_SEEK_UNCHECKED)"\n'
+    '#endif\n'
     'static int64_t mak_protocol_seek(AVIOContext *avio, int64_t pos)\n'
     '{\n'
     '    int direct = avio->direct;\n'

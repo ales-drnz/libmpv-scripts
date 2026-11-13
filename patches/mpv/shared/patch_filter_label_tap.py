@@ -95,7 +95,7 @@ import property_seam as seam  # noqa: E402
 # V4 keys the taps on chain labels (V3 keyed them on filter names). A tree
 # patched by an older version fails in check_stale_marker instead of being
 # skipped as already patched.
-MARKER = 'MAK_TAP_PATCH_V4'
+MARKER = 'MAK_TAP_PATCH_V5'
 MARKER_RE = re.compile(r'MAK_TAP_PATCH_V\d+')
 
 # Wire-protocol limits. Keep in sync with the Dart parser.
@@ -275,51 +275,21 @@ COMMAND_INCLUDE = (
 
 # ─── meson.build ──────────────────────────────────────────────────────
 
-# Compose with patch_pcm_tap.py and patch_bulk_analysis.py — each adds
-# its own audio/* source. We anchor on `audio/out/ao.c` with optional
-# preceding patches.
-MESON_AFTER_BULK = (
-    "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
-    "    'audio/out/mak_pcm_tap.c',\n"
-    "    # MAK_WAVEFORM_PATCH_V1\n"
-    "    'audio/mak_waveform.c',"
-)
-
-MESON_AFTER_BULK_PATCHED = (
-    "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
-    "    'audio/out/mak_pcm_tap.c',\n"
-    "    # MAK_WAVEFORM_PATCH_V1\n"
-    "    'audio/mak_waveform.c',\n"
-    "    # " + MARKER + "\n"
-    "    'audio/mak_tap.c',"
-)
+# Composes with patch_pcm_tap.py, which adds its source right after
+# `audio/out/ao.c`: this one goes after it, or after ao.c without that
+# patch. The sources of the bulk analysis, when that patch ran before,
+# stay after this entry (meson does not mind the order).
 
 MESON_AFTER_PCM_TAP = (
     "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
+    "    # MAK_PCM_TAP_PATCH_V2\n"
     "    'audio/out/mak_pcm_tap.c',"
 )
 
 MESON_AFTER_PCM_TAP_PATCHED = (
     "    'audio/out/ao.c',\n"
-    "    # MAK_PCM_TAP_PATCH_V1\n"
+    "    # MAK_PCM_TAP_PATCH_V2\n"
     "    'audio/out/mak_pcm_tap.c',\n"
-    "    # " + MARKER + "\n"
-    "    'audio/mak_tap.c',"
-)
-
-MESON_AFTER_BULK_ONLY = (
-    "    'audio/out/ao.c',\n"
-    "    # MAK_WAVEFORM_PATCH_V1\n"
-    "    'audio/mak_waveform.c',"
-)
-
-MESON_AFTER_BULK_ONLY_PATCHED = (
-    "    'audio/out/ao.c',\n"
-    "    # MAK_WAVEFORM_PATCH_V1\n"
-    "    'audio/mak_waveform.c',\n"
     "    # " + MARKER + "\n"
     "    'audio/mak_tap.c',"
 )
@@ -369,11 +339,9 @@ def apply(p):
     if p.marked('meson.build'):
         print('Already patched: meson.build')
     else:
-        # The most-specific form first (both prior patches present).
+        # After the PCM tap's source when that patch ran, else after ao.c.
         p.optional('meson.build', [
-            (MESON_AFTER_BULK, MESON_AFTER_BULK_PATCHED),
             (MESON_AFTER_PCM_TAP, MESON_AFTER_PCM_TAP_PATCHED),
-            (MESON_AFTER_BULK_ONLY, MESON_AFTER_BULK_ONLY_PATCHED),
             (MESON_PRISTINE, MESON_PATCHED),
         ], 'audio/out/ao.c entry')
 

@@ -14,7 +14,8 @@
 #   - the white-box tests, which include one patched source file of the
 #     tree (unit), pristine ao_audiotrack.c with its patch (audiotrack) or
 #     the ao_tizen.c that its patch adds (tizen, on the headers of
-#     tizen_sim/);
+#     tizen_sim/); a tsan test is a unit test built with ThreadSanitizer,
+#     which reports its data races;
 #   - the tests of the patch scripts in verify/tests/patches, on pristine
 #     mpv and FFmpeg (downloaded and checked the same way).
 # A mode passes when its process exits 0: it printed RESULT PASS and
@@ -35,6 +36,10 @@
 # tarballs (checked against the same pins), DISABLED_PATCHES leaves patches
 # out as the build does (to see a test fail without its fix), JOBS sets the
 # build jobs (default 4), CC the compiler of libmpv and the tests (gcc).
+# UBSAN=1 also builds libmpv and the tests with the overflow checks of
+# UndefinedBehaviorSanitizer (a signed integer overflow, a float out of the
+# range of the integer it is cast to), which stop the test; a work dir keeps
+# the setting it was built with.
 # The tests take about two minutes, most of it waiting on playback.
 #
 # Usage: bash verify/tests/native/run.sh [--reuse] <work dir> [test[:mode,...] ...]
@@ -54,6 +59,12 @@ WORK="${1:?$USAGE}"; shift
 CC="${CC:-gcc}"; export CC
 JOBS="${JOBS:-4}"
 WANT_DISABLED="${DISABLED_PATCHES:-}"
+# Not the whole of -fsanitize=undefined: upstream mpv is not clean under it,
+# and these two are the classes the analysis code can hit on a hostile file.
+SAN=()
+if [[ "${UBSAN:-0}" == 1 ]]; then
+  SAN=(-fsanitize=signed-integer-overflow,float-cast-overflow -fno-sanitize-recover=all)
+fi
 
 # shellcheck source=/dev/null
 source "$ROOT/scripts/shared/_helpers.sh"
@@ -68,6 +79,7 @@ DISABLED_PATCHES="$WANT_DISABLED"
 #   lib: linked with libmpv; unit: includes a patched source file;
 #   audiotrack: includes pristine ao_audiotrack.c with its patch.
 #   tizen: includes ao_tizen.c, added to pristine mpv by its patch.
+#   tsan: a unit test built with ThreadSanitizer instead of AddressSanitizer.
 #   fixtures: a dir of fixtures.sh, "-" for none; HTTP "-": no server.
 #   The cut and the options go to slow_http.py, which lists them.
 CASES=(
@@ -84,9 +96,11 @@ CASES=(
   "lib fd_offset_test playback - two"
   "lib analysis_close_test analysis 600000 stop feedstop readystop loudoff loudkeep probe"
   "lib analysis_worker_test analysis - fail"
-  "lib analysis_reload_test analysis - same loop other loudon track ext fd rewrite"
+  "lib analysis_reload_test analysis - same loop other loudon track ext fd rewrite hookurl hookrewrite"
   "lib duration_estimated_test analysis - est aac exact none observe"
   "lib analysis_oom_test analysis - start"
+  "lib analysis_exit_test analysis - exit"
+  "lib analysis_hostile_test analysis - loudpart longloud rate nan"
   "lib analysis_start_test analysis - ts late ogg"
   "lib analysis_start_test analysis 2000000 http"
   "lib analysis_tail_test analysis 2000000 over"
@@ -97,14 +111,17 @@ CASES=(
   "lib analysis_hint_test analysis 600000 range"
   "lib analysis_hint_test analysis 600000::norange known estimate"
   "unit loudness_lock_test - - run"
+  "unit webio_log_test - - run"
+  "unit wave_fold_test - - tail far roll"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
   "tizen ao_tizen_test - - play pause seek underrun delay race seekrace refuse fast slow dead noresume short busy clock format"
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "lib keep_open_park_test playback - pause park nopause stop unload afterend seekend"
-  "unit pcm_tap_idle_test - - idle slow pause quiet"
-  "unit tap_ring_test - - grow free flip rearm race"
+  "unit pcm_tap_idle_test - - idle slow pause quiet busy alloc nan"
+  "unit tap_ring_test - - grow free flip rearm race nan stale"
+  "tsan tap_tsan_test - - rearm race"
   "unit pull_pause_tail_test - - hold mid reset"
   "lib pcm_loop_test playback - file late ab next abnext off afdrop"
   "lib chapter_list_test playback - meta index observe kit same"
@@ -129,6 +146,7 @@ PATCH_TESTS=(
   "property_seam_patch_test {mpv}"
   "scan_before_loaded_patch_test {mpv}"
   "end_file_layout_test {src}"
+  "read_error_guard_test {src}"
   "ios_audio_stubs_patch_test {mpv}"
   "audiotrack_patch_test {mpv} {src} {build}"
   "apply_order_test {mpv}"
@@ -180,6 +198,9 @@ WORK="$(cd "$WORK" && pwd)"
 RUNS="$WORK/runs" BIN="$WORK/bin" FX="$WORK/fixtures"
 SRC="$WORK/src" BLD="$WORK/build"
 rm -rf "$RUNS"; mkdir -p "$RUNS" "$BIN"
+if [[ -f "$BLD/libmpv.so" && "$(cat "$WORK/san" 2> /dev/null)" != "${SAN[*]}" ]]; then
+  die "$WORK was built with other sanitizers (UBSAN): run without --reuse"
+fi
 
 # fetch <url> <local copy or ""> <dest dir> [path...]: the tarball, checked
 # against its pin, extracted to <dest dir> (only the given paths of its top
@@ -222,10 +243,12 @@ if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   (( $? == 0 )) || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
   ( cd "$SRC" && meson setup "$BLD" -Dbuildtype=debug -Doptimization=1 -Dauto_features=disabled \
       -Dgpl=false -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
-      -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Dsdl2-audio=enabled -Db_sanitize=address -Db_lundef=false
+      -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Dsdl2-audio=enabled -Db_sanitize=address -Db_lundef=false \
+      ${SAN[0]:+-Dc_args="${SAN[*]}" -Dc_link_args="${SAN[*]}"}
   ) > "$WORK/logs/setup.log" 2>&1 || { tail -30 "$WORK/logs/setup.log"; die "meson setup failed"; }
   ninja -C "$BLD" -j"$JOBS" > "$WORK/logs/ninja.log" 2>&1 || {
     grep -B2 -A8 'error' "$WORK/logs/ninja.log" | head -60; die "the mpv build failed"; }
+  echo "${SAN[*]}" > "$WORK/san"
   ok "built $BLD/libmpv.so"
 fi
 if (( NEED_FX )); then
@@ -246,7 +269,7 @@ report() {
   fi
   (( $2 == 124 )) && res="timed out, $res"
   echo "FAIL $1: exit $2, $res"
-  grep -E '^FAIL|ERROR: (Address|Leak)Sanitizer|^SUMMARY|Assertion|runtime error' "$3" | head -8 | sed 's/^/     /'
+  grep -E '^FAIL|ERROR: (Address|Leak)Sanitizer|WARNING: ThreadSanitizer|^SUMMARY|Assertion|runtime error' "$3" | head -8 | sed 's/^/     /'
   FAILED+=("$1")
 }
 skip() { echo "skip $1"; SKIPPED=$((SKIPPED + 1)); }
@@ -269,13 +292,21 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # The FFmpeg headers for read_error_test, which stands in for an
       # libavutil function.
       # shellcheck disable=SC2046
-      "$CC" -g -O1 -fsanitize=address -I"$SRC/include" $(pkg-config --cflags libavutil) \
+      "$CC" -g -O1 -fsanitize=address "${SAN[@]}" -I"$SRC/include" $(pkg-config --cflags libavutil) \
         "$HERE/$t.c" -o "$BIN/$t" -L"$BLD" -lmpv -Wl,-rpath,"$BLD" -ldl -lpthread -lm > "$log" 2>&1 ;;
     unit)
       # shellcheck disable=SC2046
-      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address "${SAN[@]}" \
         -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" \
+        $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
+    tsan)
+      # talloc from its sources: the objects of the build carry
+      # AddressSanitizer, which does not link with ThreadSanitizer.
+      # shellcheck disable=SC2046
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=thread \
+        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
+        "$HERE/$t.c" "$SRC"/ta/ta.c "$SRC"/ta/ta_talloc.c "$SRC"/ta/ta_utils.c -o "$BIN/$t" \
         $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
     audiotrack)
       local o="$WORK/audiotrack" ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
@@ -288,7 +319,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # driver only, but the patch wants both files to apply.
       cp "$WORK/mpv/audio/out/ao_audiotrack.c" "$WORK/mpv/audio/out/buffer.c" "$o/audio/out/"
       python3 -B "$AUDIOTRACK_PATCH" "$o" > "$log" 2>&1 || return 1
-      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address "${SAN[@]}" \
         -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -idirafter "$o/jni" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
     tizen)
@@ -300,7 +331,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       cp "$WORK/mpv/audio/out/ao.c" "$o/audio/out/"
       cp "$WORK/mpv/meson.build" "$WORK/mpv/meson.options" "$o/"
       python3 -B "$TIZEN_PATCH" "$o" > "$log" 2>&1 || return 1
-      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address \
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address "${SAN[@]}" \
         -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -I"$HERE/tizen_sim" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
   esac

@@ -84,12 +84,12 @@ DISABLED_PATCHES="$WANT_DISABLED"
 CASES=(
   "smb_url_test strip decode parse"
   "tls_roots_test verify"
-  "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read"
+  "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read close-hang"
   "editlist_test fmp4 dash"
   "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid ranged-between ranged-mid ranged-resume ranged-ok ranged-seek hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
-LONG_MODES=" open-hang pause-read "
+LONG_MODES=" open-hang pause-read close-hang "
 
 declare -A SEL=()
 for a in "$@"; do
