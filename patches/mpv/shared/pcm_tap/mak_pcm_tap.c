@@ -216,7 +216,11 @@ void mak_pcm_tap_write(struct ao *ao, void **data, int num_samples)
     if (channels <= 0)
         return;
 
-    mp_mutex_lock(&g_tap_lock);
+    /* Never a wait here: for a pull output this is the device's callback.
+     * The reader holds the lock for one copy of its window; a chunk that
+     * meets it is dropped, 10 ms the visualizer does not show. */
+    if (mp_mutex_trylock(&g_tap_lock) != 0)
+        return;
 
     size_t produced = convert_to_float(ao->format, data, num_samples,
                                        channels, g_tap.scratch,
@@ -279,6 +283,11 @@ int mak_pcm_tap_read(struct mpv_node *out, int max_samples)
         next_idle = MAK_PCM_TAP_IDLE_NS;
     atomic_store_explicit(&g_tap_idle_ns, next_idle, memory_order_relaxed);
 
+    /* The lock is held twice, each time for a few loads or one copy, and
+     * never across an allocation: the output's thread drops its chunk
+     * when it meets this lock (see mak_pcm_tap_write), and before that it
+     * waited for the allocator here. First the format, to size the
+     * window. */
     mp_mutex_lock(&g_tap_lock);
 
     /* Audio went by uncopied during the idle span: start over, so the
@@ -290,16 +299,15 @@ int mak_pcm_tap_read(struct mpv_node *out, int max_samples)
 
     int channels = g_tap.channels;
     int rate     = g_tap.sample_rate;
-    int64_t pts  = g_tap.last_pts_ns;
-    if (channels <= 0 || rate <= 0 || g_tap.valid_bytes == 0) {
-        mp_mutex_unlock(&g_tap_lock);
+    size_t valid = g_tap.valid_bytes;
+    mp_mutex_unlock(&g_tap_lock);
+    if (channels <= 0 || rate <= 0 || valid == 0)
         return -1;
-    }
 
     size_t frame_bytes  = (size_t)channels * sizeof(float);
     size_t window_bytes = (size_t)max_samples * frame_bytes;
-    if (window_bytes > g_tap.valid_bytes)
-        window_bytes = g_tap.valid_bytes;
+    if (window_bytes > MAK_PCM_TAP_CAPACITY)
+        window_bytes = MAK_PCM_TAP_CAPACITY;
 
     /* Build the MAP_NODE tree. Top-level list rooted at NULL —
      * children parented to it so the entire tree frees via a
@@ -309,10 +317,29 @@ int mak_pcm_tap_read(struct mpv_node *out, int max_samples)
     list->num    = 4;
     list->keys   = talloc_array(list, char *, 4);
     list->values = talloc_array(list, struct mpv_node, 4);
+    list->keys[0] = talloc_strdup(list, "sample_rate");
+    list->keys[1] = talloc_strdup(list, "channels");
+    list->keys[2] = talloc_strdup(list, "pts_ns");
+    list->keys[3] = talloc_strdup(list, "samples");
 
     struct mpv_byte_array *ba =
         talloc_zero(list, struct mpv_byte_array);
     ba->data = talloc_size(ba, window_bytes);
+
+    /* Then the copy. The output may have changed format in between (the
+     * ring started over with another frame size): this read has no
+     * window, the next one is sized for the new format. */
+    mp_mutex_lock(&g_tap_lock);
+    if (g_tap.channels != channels || g_tap.sample_rate != rate ||
+        g_tap.valid_bytes == 0) {
+        mp_mutex_unlock(&g_tap_lock);
+        talloc_free(list);
+        return -1;
+    }
+    int64_t pts = g_tap.last_pts_ns;
+    if (window_bytes > g_tap.valid_bytes)
+        window_bytes = g_tap.valid_bytes;
+    window_bytes -= window_bytes % frame_bytes;
     ba->size = window_bytes;
 
     /* Most-recent window ends at write_pos (exclusive). Walk back
@@ -330,16 +357,12 @@ int mak_pcm_tap_read(struct mpv_node *out, int max_samples)
 
     mp_mutex_unlock(&g_tap_lock);
 
-    list->keys[0] = talloc_strdup(list, "sample_rate");
     list->values[0] = (struct mpv_node){
         .format = MPV_FORMAT_INT64, .u.int64 = rate};
-    list->keys[1] = talloc_strdup(list, "channels");
     list->values[1] = (struct mpv_node){
         .format = MPV_FORMAT_INT64, .u.int64 = channels};
-    list->keys[2] = talloc_strdup(list, "pts_ns");
     list->values[2] = (struct mpv_node){
         .format = MPV_FORMAT_INT64, .u.int64 = pts};
-    list->keys[3] = talloc_strdup(list, "samples");
     list->values[3] = (struct mpv_node){
         .format = MPV_FORMAT_BYTE_ARRAY, .u.ba = ba};
 
