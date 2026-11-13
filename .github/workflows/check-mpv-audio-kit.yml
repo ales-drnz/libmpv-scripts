@@ -16,7 +16,8 @@ name: Check mpv_audio_kit
 # the Android emulators, and '[android emu]', '[native]', '[cpu diag]',
 # '[underrun diag]', '[ios only]' and '[macos test only]' run just their
 # part. Only '[full check]' with none of the others is a complete check,
-# the one a libmpv release needs.
+# the one a libmpv release needs: the Summary job says which jobs a run
+# left out and why, and whether it counts for a release.
 #
 # The Build run is the libs_run input, or '[libs_run <id>]' in the commit
 # message of a ci/ branch. Without either the Plan job takes the latest
@@ -817,3 +818,90 @@ jobs:
     uses: ./.github/workflows/checks.yml
     with:
       only: native
+
+  # What this run checked and what it left out, on the run's page and in
+  # the check-result artifact. A job that did not run shows as skipped next
+  # to the green ones, and a run of '[native]' alone is green with nothing
+  # of the kit tested: libmpv-r24 was published after nine such runs and no
+  # complete one. The verdict says whether this run counts for a release,
+  # and .github/ci/release_gate.sh reads it from the artifact.
+  summary:
+    name: Summary
+    needs: [plan, test, windows-per-file, build, ios-integration, android-emu, native-check, underrun-diag, cpu-diag]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Summary
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TAGS: ${{ format('{0} {1}', github.event.head_commit.message, inputs.tags) }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re
+          needs = json.loads(os.environ['NEEDS'])
+          plan = needs['plan'].get('outputs') or {}
+          out = open(os.environ['GITHUB_STEP_SUMMARY'], 'a')
+          if needs['plan']['result'] != 'success' or not plan.get('libs_run'):
+              out.write('### No check\n\nThe Plan job found no Build run to check: nothing ran.\n')
+              raise SystemExit(0)
+          # job, what it is, the plan output that starts it, why it is off
+          # when no tag asked for it, whether a release needs it
+          jobs = [
+              ('test', 'Kit tests on macOS', 'tests', plan.get('why_tests'), True),
+              ('windows-per-file', 'Kit tests on Windows, per file and whole', 'apps', plan.get('why_apps'), True),
+              ('build', 'App builds for Windows, macOS and iOS', 'apps', plan.get('why_apps'), True),
+              ('ios-integration', 'iOS simulator integration tests', 'ios', plan.get('why_ios'), True),
+              ('android-emu', 'Android emulators', 'android', 'needs [full check] or [android emu]', True),
+              ('native-check', 'Native tests (ASan)', 'native', 'needs [native]', False),
+              ('underrun-diag', 'Underrun diagnostic', 'underrun', 'needs [underrun diag]', False),
+              ('cpu-diag', 'CPU diagnostic', 'cpu', 'needs [cpu diag]', False),
+          ]
+          results, rows, green = {}, [], True
+          for job, what, key, why, release in jobs:
+              result = needs[job]['result']
+              results[job] = result
+              planned = plan.get(key) == 'true'
+              if planned:
+                  note = '' if result != 'skipped' else 'planned, but a job it needs did not succeed'
+              else:
+                  note = why or 'not planned'
+              if release and result != 'success':
+                  green = False
+              rows.append(f"| {what} | {'yes' if release else 'no'} | {result} | {note} |")
+          complete = plan.get('complete') == 'true'
+          release_build = plan.get('release_build') == 'true'
+          build = f"Build run {plan['libs_run']} ({plan.get('libs_branch')} at {(plan.get('libs_sha') or '')[:7]})"
+          if complete and green and release_build:
+              verdict = f'Complete check, green: it counts for the release of {build}.'
+          elif complete and green:
+              verdict = (f'Complete check, green, but {build} was not started by a push to a '
+                         'release/rN branch: it does not count for a release.')
+          elif complete:
+              verdict = f'Complete check of {build}, not green: it does not count for a release.'
+          else:
+              verdict = (f'Partial check of {build}: it does not count for a release. A release '
+                         'needs a run with [full check] and no tag that runs only its part.')
+          tags = ' '.join(re.findall(r'\[[^\]\n]+\]', os.environ.get('TAGS', '')))
+          out.write(f"### {verdict}\n\n")
+          out.write(f"Kit: `{os.environ['KIT_REF']}`. Flutter {os.environ['FLUTTER_VERSION']}. Tags: {tags or 'none'}.\n\n")
+          out.write('| job | a release needs it | result | why it did not run |\n|---|---|---|---|\n')
+          out.write('\n'.join(rows) + '\n\n')
+          out.write('A file of the iOS simulator or of an emulator that never started is a warning of '
+                    'its job, not a failure: a release needs those files run again.\n')
+          if not (complete and green and release_build):
+              print(f'::warning title=Not a release check::{verdict}')
+          json.dump({
+              'build_run': plan['libs_run'], 'build_branch': plan.get('libs_branch'),
+              'build_sha': plan.get('libs_sha'), 'release_build': release_build,
+              'kit_ref': os.environ['KIT_REF'], 'flutter': os.environ['FLUTTER_VERSION'],
+              'tags': tags, 'complete': complete, 'green': complete and green,
+              'counts_for_release': complete and green and release_build, 'jobs': results,
+          }, open('check-result.json', 'w'), indent=2)
+          EOF
+          cat check-result.json 2>/dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: check-result
+          path: check-result.json
+          if-no-files-found: ignore
