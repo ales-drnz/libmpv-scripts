@@ -1,4 +1,4 @@
-# ruff, which the lint job of build.yml runs as warnings: pyflakes and the
+# ruff, which the lint job of checks.yml runs as warnings: pyflakes and the
 # pycodestyle errors, without the line length (the patch texts are long)
 # and without E702 (slow_http.py keeps short statements on one line).
 [lint]
