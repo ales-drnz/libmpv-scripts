@@ -3,8 +3,56 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 # shellcheck shell=bash
 
-# The Windows layer of verify_binaries.sh: the L13 LoadLibrary test under
-# Wine. Sourced by verify_binaries.sh. Do not run directly.
+# The Windows layers of verify_binaries.sh: the L13 LoadLibrary test under
+# Wine and the L16 DllCharacteristics. Sourced by verify_binaries.sh. Do not
+# run directly.
+
+# _pe_dll_characteristics <dll> prints the DllCharacteristics flags of the
+# optional header, one name a line (DYNAMIC_BASE, NX_COMPAT, ...). Read with
+# llvm-readobj (llvm-mingw's in the verify image, else the one on PATH),
+# which names them, else from the hex value objdump -p prints. Returns 1 when
+# no tool reads the header.
+_pe_dll_characteristics() {
+  local dll="$1" readobj="${LLVM_MINGW_DIR:-/opt/llvm-mingw}/bin/llvm-readobj" out
+  [[ -x "$readobj" ]] || readobj="$(command -v llvm-readobj 2>/dev/null || true)"
+  if [[ -n "$readobj" ]]; then
+    out="$("$readobj" --file-headers "$dll" 2>/dev/null)" || return 1
+    grep -q 'ImageOptionalHeader' <<<"$out" || return 1
+    grep -oE 'IMAGE_DLL_CHARACTERISTICS_[A-Z_]+' <<<"$out" | sed 's/^IMAGE_DLL_CHARACTERISTICS_//'
+    return 0
+  fi
+  local hex
+  hex="$(objdump -p "$dll" 2>/dev/null | awk '$1 == "DllCharacteristics" { print $2; exit }')"
+  [[ "$hex" =~ ^[0-9a-fA-F]+$ ]] || return 1
+  (( 16#$hex & 0x20 ))  && echo HIGH_ENTROPY_VA
+  (( 16#$hex & 0x40 ))  && echo DYNAMIC_BASE
+  (( 16#$hex & 0x100 )) && echo NX_COMPAT
+  return 0
+}
+
+# Layer 16 on Windows: the loader's mitigations a DLL opts into with its
+# DllCharacteristics. binutils and llvm-mingw set all three by default, and
+# this keeps a toolchain change from dropping one unseen:
+#   DYNAMIC_BASE     ASLR, the DLL may be loaded at any base
+#   HIGH_ENTROPY_VA  64-bit ASLR, the base may be anywhere in the address space
+#   NX_COMPAT        DEP, its data pages are never executable
+# Args: $1 = artifact path
+layer16_pe_hardening() {
+  local artifact="$1" flags flag missing=""
+  if ! flags="$(_pe_dll_characteristics "$artifact")"; then
+    fail "L16: the DllCharacteristics could not be read (tool failure)"
+    return 0
+  fi
+  for flag in DYNAMIC_BASE HIGH_ENTROPY_VA NX_COMPAT; do
+    grep -qx "$flag" <<<"$flags" || missing+="$flag "
+  done
+  if [[ -z "$missing" ]]; then
+    pass "L16 DllCharacteristics: DYNAMIC_BASE, HIGH_ENTROPY_VA, NX_COMPAT"
+  else
+    fail "L16 DllCharacteristics lack: $missing"
+  fi
+  return 0
+}
 
 # Wine state for L13. Set once per run.
 WINE_PREFIX_READY=0
