@@ -116,8 +116,9 @@ LTO_EXTRA="$(lto_deps_cflags)"
 VIS_EXTRA="$(vis_deps_cflags)"
 SEC_EXTRA="$(section_gc_cflags)"
 UNWIND_EXTRA="$(dep_unwind_cflags)"   # C++-safe .eh_frame trim, shared by all deps
-export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
-export CXXFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
+HARD_EXTRA="$(hardening_cflags)"      # stack canary and fortify, see _audio_only.sh
+export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA $HARD_EXTRA"
+export CXXFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA $HARD_EXTRA"
 export CPPFLAGS="-I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib -L$PREFIX/lib/${CROSS_TRIPLE} -L$PREFIX/lib64 -L/usr/lib/${CROSS_TRIPLE} $LTO_EXTRA"
 
@@ -292,7 +293,7 @@ build_ffmpeg() {
     --disable-libxcb-shm \
     --disable-libxcb-xfixes \
     --disable-libxcb-shape \
-    --extra-cflags="$(eh_frame_cflags)" \
+    --extra-cflags="$(eh_frame_cflags) $HARD_EXTRA" \
     --extra-libs="-lm -lpthread -ldl"
 }
 
@@ -403,7 +404,11 @@ build_mpv() {
   #     --static by default, so Libs.private is never emitted. Without
   #     these explicit -l flags the symbols become UND in libmpv.so and
   #     fail at runtime on systems without those .so installed (e.g. WSL).
-  local link_extra=()
+  # hardening_ldflags (full RELRO, BIND_NOW, NX stack) goes here and not in
+  # LDFLAGS: -Dc_link_args makes meson drop the environment's. The audio
+  # stubs do not mind BIND_NOW, see hardening_cflags in _audio_only.sh.
+  local link_extra=() hard_ld
+  hard_ld="$(hardening_ldflags)"
   if [[ "${VIS_HIDDEN:-1}" != "0" || "${SECTION_GC:-1}" != "0" ]]; then
     # Shared ELF flags from _audio_only.sh: -Bsymbolic without relocation packing
     # (`none`): RELR would need glibc 2.36 on the user's machine, see
@@ -412,12 +417,14 @@ build_mpv() {
     # See the note in build_libmpv_android.sh: `local x="$(cmd)"` would mask a
     # failure inside the command substitution from set -e.
     local ld_args
-    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
+    ld_args="$hard_ld -Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
     local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"
     link_extra+=("-Dc_link_args=$ld_args $extra_libs")
     link_extra+=("-Dcpp_link_args=$ld_args $extra_libs")
+  else
+    link_extra+=("-Dc_link_args=$hard_ld" "-Dcpp_link_args=$hard_ld")
   fi
 
   # The stub .pc files come first, so libpipewire-0.3 and libpulse resolve to
@@ -431,7 +438,7 @@ build_mpv() {
     -Dalsa=enabled \
     -Dpulse=enabled \
     -Dpipewire=enabled \
-    -Dc_args="$(eh_frame_cflags)" \
+    -Dc_args="$(eh_frame_cflags) $HARD_EXTRA" \
     "${link_extra[@]}"
 }
 
@@ -469,6 +476,7 @@ finalize() {
   "$STRIP" --strip-unneeded "$out"
   assert_soname "$out"
   assert_no_relr "$out"
+  assert_hardening "$out"
   assert_no_needed "$out" 'libpipewire|libpulse'
   assert_glibc_floor "$out" "$LINUX_GLIBC_FLOOR"
   write_build_record "linux-$ARCH" "$PREFIX"
@@ -522,7 +530,7 @@ main() {
   # configure and takes its whole CFLAGS. DSP and crypto deps (openssl,
   # rubberband in the GPL build) keep -O2.
   CFLAGS="$CFLAGS -Os" cross_build_zlib
-  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64 $HARD_EXTRA" cross_build_bzip2
   CFLAGS="$CFLAGS -Os" cross_build_xz
   build_audio_stubs
 
