@@ -99,6 +99,7 @@ CASES=(
   "lib analysis_reload_test analysis - same loop other loudon track ext fd rewrite hookurl hookrewrite"
   "lib duration_estimated_test analysis - est aac exact none observe"
   "lib analysis_oom_test analysis - start"
+  "lib analysis_exit_test analysis - exit"
   "lib analysis_hostile_test analysis - loudpart longloud rate nan"
   "lib analysis_start_test analysis - ts late ogg"
   "lib analysis_start_test analysis 2000000 http"
