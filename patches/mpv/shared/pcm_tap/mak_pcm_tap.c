@@ -2,6 +2,7 @@
  * samples, polled via the pcm-tap-frame property. See
  * patches/mpv/shared/patch_pcm_tap.py in libmpv-scripts for
  * the rationale. */
+#include <math.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -72,6 +73,17 @@ static atomic_int_least64_t g_tap_read_ns;   /* 0: never read */
 static atomic_int_least64_t g_tap_idle_ns;
 static atomic_bool g_tap_skipped;  /* a write skipped since the last read */
 
+/* Silences the samples that are not finite: a float output can carry the
+ * NaN or the infinities of its source, which would reach the reader's
+ * FFT. */
+static void scrub_floats(float *s, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (!isfinite(s[i]))
+            s[i] = 0.0f;
+    }
+}
+
 /* Format normalisation: every supported PCM format → interleaved
  * Float32 in `dst`. Returns the number of float samples written
  * (== num_samples * channels), or 0 if the format is unsupported.
@@ -87,6 +99,7 @@ static size_t convert_to_float(int format, void **data,
     switch (format) {
         case AF_FORMAT_FLOAT: {
             memcpy(dst, data[0], total * sizeof(float));
+            scrub_floats(dst, total);
             return total;
         }
         case AF_FORMAT_FLOATP: {
@@ -94,6 +107,7 @@ static size_t convert_to_float(int format, void **data,
             for (int s = 0; s < num_samples; s++)
                 for (int c = 0; c < channels; c++)
                     dst[s * channels + c] = p[c][s];
+            scrub_floats(dst, total);
             return total;
         }
         case AF_FORMAT_S16: {
@@ -162,6 +176,7 @@ static size_t convert_to_float(int format, void **data,
             const double *p = (const double *)data[0];
             for (size_t i = 0; i < total; i++)
                 dst[i] = (float)p[i];
+            scrub_floats(dst, total);
             return total;
         }
         case AF_FORMAT_DOUBLEP: {
@@ -169,6 +184,7 @@ static size_t convert_to_float(int format, void **data,
             for (int s = 0; s < num_samples; s++)
                 for (int c = 0; c < channels; c++)
                     dst[s * channels + c] = (float)p[c][s];
+            scrub_floats(dst, total);
             return total;
         }
         default:

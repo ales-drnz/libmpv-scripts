@@ -17,13 +17,88 @@
 //   quiet  a pause the kit does not poll (it rests while the core is idle):
 //          5 s with no writes and no reads, then a read must still return
 //          the samples from before, and the writes after it go on from them
+//   busy   the reader holds the tap's lock (F5-1): a write of the output's
+//          thread returns at once and drops its chunk, and the next one
+//          goes through. r24 waits on the lock, in the device's callback
+//          for a pull output.
+//   alloc  a read allocates nothing while it holds the tap's lock, where
+//          the output's thread may be waiting for it. r24 allocates the
+//          whole node there, six times a read.
+//   nan    a float chunk with NaN and infinite samples (F5-4): the window
+//          read back holds zeros in their place, and the samples around
+//          them. r24 hands them to the reader.
 //   bench  time of one write (480 stereo float frames) while a listener
 //          reads, and 10 s after it stopped (real clock for the timing,
 //          fake clock for the tap); prints, never fails
+#include <math.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+#include "osdep/threads.h"
+
+// The tap's lock, counted per thread, and the allocations made under it:
+// the test replaces malloc, calloc and realloc for the process (ASan's
+// underneath), which talloc calls.
+static _Thread_local int locks_held;
+static atomic_int allocs_locked;
+
+static int t_lock(pthread_mutex_t *m)
+{
+    int r = pthread_mutex_lock(m);
+    locks_held++;
+    return r;
+}
+
+static int t_trylock(pthread_mutex_t *m)
+{
+    int r = pthread_mutex_trylock(m);
+    if (!r)
+        locks_held++;
+    return r;
+}
+
+static int t_unlock(pthread_mutex_t *m)
+{
+    locks_held--;
+    return pthread_mutex_unlock(m);
+}
+
+#undef mp_mutex_lock
+#undef mp_mutex_trylock
+#undef mp_mutex_unlock
+#define mp_mutex_lock(m) t_lock(m)
+#define mp_mutex_trylock(m) t_trylock(m)
+#define mp_mutex_unlock(m) t_unlock(m)
+
+extern void *__interceptor_malloc(size_t n);
+extern void *__interceptor_calloc(size_t nmemb, size_t n);
+extern void *__interceptor_realloc(void *p, size_t n);
+
+void *malloc(size_t n)
+{
+    if (locks_held)
+        atomic_fetch_add(&allocs_locked, 1);
+    return __interceptor_malloc(n);
+}
+
+void *calloc(size_t nmemb, size_t n)
+{
+    if (locks_held)
+        atomic_fetch_add(&allocs_locked, 1);
+    return __interceptor_calloc(nmemb, n);
+}
+
+void *realloc(void *p, size_t n)
+{
+    if (locks_held)
+        atomic_fetch_add(&allocs_locked, 1);
+    return __interceptor_realloc(p, n);
+}
 
 #include "audio/out/mak_pcm_tap.c"
 
@@ -210,6 +285,93 @@ static void mode_quiet(void)
           "(%zu frames, %ld before, %ld after)", w.frames, w.count[0], w.count[2]);
 }
 
+static atomic_int busy_done;
+
+static void *busy_writer(void *arg)
+{
+    (void)arg;
+    wr(0.75f);
+    atomic_store(&busy_done, 1);
+    return NULL;
+}
+
+static void mode_busy(void)
+{
+    struct win w;
+    rd(&w);
+    step_ms(10);
+    check(wr(0.25f), "a write reaches the ring");
+    size_t valid = g_tap.valid_bytes;
+    pthread_mutex_lock(&g_tap_lock);   // a reader inside its copy
+    pthread_t t;
+    pthread_create(&t, NULL, busy_writer, NULL);
+    for (int i = 0; i < 100 && !atomic_load(&busy_done); i++)
+        usleep(5000);
+    int returned = atomic_load(&busy_done);
+    check(returned, "a write returns while the reader holds the lock");
+    check(g_tap.valid_bytes == valid, "and leaves the ring as it was "
+          "(%zu bytes, %zu before)", g_tap.valid_bytes, valid);
+    pthread_mutex_unlock(&g_tap_lock);
+    pthread_join(t, NULL);
+    step_ms(10);
+    check(wr(0.25f), "the next write reaches the ring");
+    int r = rd(&w);
+    check(r == 0 && w.count[0] == 1920 && w.count[2] == 0,
+          "the reader gets the two chunks written (%ld samples, %ld of the "
+          "dropped one)", w.count[0], w.count[2]);
+}
+
+static void mode_alloc(void)
+{
+    struct win w;
+    rd(&w);
+    for (int t = 0; t < 200; t += 10) {
+        step_ms(10);
+        wr(0.25f);
+    }
+    atomic_store(&allocs_locked, 0);
+    int r = rd(&w);
+    int n = atomic_load(&allocs_locked);
+    check(r == 0 && w.frames == 4096, "a read returns a full window (%zu frames)",
+          w.frames);
+    check(n == 0, "it allocates nothing under the tap's lock (%d allocations)", n);
+}
+
+static void mode_nan(void)
+{
+    struct win w;
+    rd(&w);
+    step_ms(10);
+    for (int i = 0; i < 480 * 2; i++)
+        chunk[i] = 0.25f;
+    for (int i = 100; i < 200; i++)
+        chunk[i] = i % 3 == 0 ? NAN : i % 3 == 1 ? INFINITY : -INFINITY;
+    void *d[1] = {chunk};
+    mak_pcm_tap_write(&fake_ao, d, 480);
+    struct mpv_node n = {0};
+    int r = mak_pcm_tap_read(&n, 4096);
+    check(r == 0, "the chunk reads back");
+    if (r < 0)
+        return;
+    struct mpv_node_list *l = n.u.list;
+    int bad = 0, zero = 0, kept = 0;
+    for (int i = 0; i < l->num; i++) {
+        if (strcmp(l->keys[i], "samples"))
+            continue;
+        const float *s = l->values[i].u.ba->data;
+        size_t ns = l->values[i].u.ba->size / sizeof(float);
+        for (size_t k = 0; k < ns; k++) {
+            bad += !isfinite(s[k]);
+            zero += s[k] == 0.0f;
+            kept += s[k] == 0.25f;
+        }
+    }
+    talloc_free(l);
+    check(bad == 0, "no sample of the window is NaN or infinite (%d are)", bad);
+    check(zero == 100 && kept == 860, "they read as silence, the others as "
+          "written (%d zeros, %d kept)", zero, kept);
+}
+
 static double real_ns(void)
 {
     struct timespec ts;
@@ -258,6 +420,12 @@ int main(int argc, char **argv)
         mode_pause();
     else if (!strcmp(mode, "quiet"))
         mode_quiet();
+    else if (!strcmp(mode, "busy"))
+        mode_busy();
+    else if (!strcmp(mode, "alloc"))
+        mode_alloc();
+    else if (!strcmp(mode, "nan"))
+        mode_nan();
     else if (!strcmp(mode, "bench"))
         mode_bench();
     else {

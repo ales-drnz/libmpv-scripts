@@ -73,6 +73,18 @@ static inline int64_t mak_sample_to_bin(int64_t abs_sample, int bins,
     return b;
 }
 
+/* Silences the samples of [s] that are not finite. A float file can hold
+ * NaN or infinities (a corrupt or badly exported one), and swresample copies
+ * them through: one would stay in a bin's min, max and energy for good, and
+ * in the state of the loudness filters to the end of the decode. */
+static inline void mak_scrub_samples(float *s, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (!isfinite(s[i]))
+            s[i] = 0.0f;
+    }
+}
+
 /* Average-downmix [n_per_ch] frames of INTERLEAVED float ([ch] channels)
  * into mono [dst]. Conversion to interleaved float is the caller's job
  * (bulk via swresample, progressive via the af-tap convert path) — this

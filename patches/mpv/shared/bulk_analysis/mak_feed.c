@@ -248,6 +248,7 @@ static bool fold_frame(struct feed_dec *d, struct feed_args *a, AVFrame *f)
     if (!d->anchored)
         d->first_pos = pos;
     d->anchored = true;
+    mak_scrub_samples(d->buf, (size_t)n * channels);
     mak_downmix_mono(d->buf, n, channels, d->mono);
     mak_waveform_fold_fed(d->mono, n, d->emitted, a->gen);
     d->emitted += n;

@@ -18,6 +18,7 @@
 #include <mpv/client.h>
 
 #include "audio/mak_loudness.h"
+#include "audio/mak_wave_fold.h"
 #include "audio/mak_waveform.h"
 
 /* ─── BS.1770 K-weighting ─────────────────────────────────────────────
@@ -367,6 +368,7 @@ int mak_loud_worker_feed(struct mak_loud_worker *w,
     if (converted < 0) { w->failed = true; return -1; }
 
     const int ch = w->channels;
+    mak_scrub_samples(w->buf, (size_t)converted * ch);
     for (int i = 0; i < converted; i++) {
         int64_t pos = abs_sample_pos + i;
         bool in_grid = pos >= w->grid_start && pos < w->grid_end;

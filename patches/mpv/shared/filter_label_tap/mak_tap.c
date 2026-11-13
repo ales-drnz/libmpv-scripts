@@ -285,6 +285,17 @@ bool mak_tap_label_active(const char *name)
     return find_slot(name) >= 0;
 }
 
+/* Silences the samples that are not finite: a float source can hold NaN
+ * or infinities, which would stay in the ring for the reader's FFT and in
+ * a bin of the waveform that grows from playback. */
+static void tap_scrub(float *s, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (!isfinite(s[i]))
+            s[i] = 0.0f;
+    }
+}
+
 /* Convert part of a planar / packed PCM aframe into interleaved Float32,
  * writing into `dst` (capacity `dst_cap` floats). Starts at sample
  * `offset` and converts as many whole samples as fit, so a caller loops
@@ -348,6 +359,7 @@ static size_t convert_aframe(struct mp_aframe *aframe, int offset,
             } else {
                 MAK_TAP_CONV(float, v);
             }
+            tap_scrub(dst, total);
             return total;
         case AF_FORMAT_S16:
             MAK_TAP_CONV(int16_t, (float)v * (1.0f / 32768.0f));
@@ -363,6 +375,7 @@ static size_t convert_aframe(struct mp_aframe *aframe, int offset,
             return total;
         case AF_FORMAT_DOUBLE:
             MAK_TAP_CONV(double, (float)v);
+            tap_scrub(dst, total);
             return total;
         default:
             return 0;

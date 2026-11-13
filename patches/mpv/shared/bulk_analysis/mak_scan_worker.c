@@ -335,6 +335,7 @@ reseek:
             emitted_samples = frame_seq_pos;
             anchored = true;
 
+            mak_scrub_samples(out_buf, (size_t)converted * channels);
             mak_downmix_mono(out_buf, converted, channels, mono_buf);
             process_samples(mono_buf, converted,
                             &emitted_samples, a->total_samples, a);
