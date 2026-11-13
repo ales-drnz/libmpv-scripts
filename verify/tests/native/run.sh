@@ -110,6 +110,8 @@ CASES=(
   "lib analysis_hint_test analysis 60000:165000:chunked cut"
   "lib analysis_hint_test analysis 600000 range"
   "lib analysis_hint_test analysis 600000::norange known estimate"
+  "lib loudness_ebu_test ebu - tone gate surround rate peak lra"
+  "lib loudness_ebu_test ebu 20000000 tonehttp gatehttp surroundhttp ratehttp peakhttp lrahttp"
   "unit loudness_lock_test - - run"
   "unit webio_log_test - - run"
   "unit wave_fold_test - - tail far roll"
