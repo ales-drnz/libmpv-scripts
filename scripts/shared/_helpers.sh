@@ -30,6 +30,62 @@ die()  { err "$*"; exit 1; }
 # Backwards-compatible alias used by some scripts.
 fail() { die "$@"; }
 
+# ── Work at exit ─────────────────────────────────────────────────────────────
+# on_exit <command>: run <command> when the script exits, whatever its
+# status; the commands run in the order they were given, and the status of
+# the script stays its own. One EXIT trap for the helpers, taken only when
+# the script has none yet (a script that set its own keeps it, and a script
+# that sets one later replaces this one: the empty temporary directory below
+# then stays). A subshell runs no trap of its parent, though trap -p still
+# prints them there, so a subshell that sources this file always gets it.
+ON_EXIT=()
+on_exit() { ON_EXIT+=("$1"); }
+_run_on_exit() {
+  local status=$? cmd
+  for cmd in ${ON_EXIT[@]+"${ON_EXIT[@]}"}; do
+    eval "$cmd" || true
+  done
+  return "$status"
+}
+if (( BASH_SUBSHELL > 0 )) || [[ -z "$(trap -p EXIT)" ]]; then
+  trap _run_on_exit EXIT
+fi
+
+# ── Build log ────────────────────────────────────────────────────────────────
+# mirror_build_log <file>: from here on, stdout and stderr also go to <file>,
+# each line with a [YYYY-MM-DD HH:MM:SS] in front (the terminal gets them as
+# they are). The mirror is one process that ends only when its last line is
+# written, and the script waits for it at exit: without that a container can
+# stop with the end of the log, the lines of the error, still unwritten.
+mirror_build_log() {
+  local file="$1" line
+  exec > >(
+    tee >(while IFS= read -r line || [[ -n "$line" ]]; do
+      printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
+    done >> "$file")
+    # tee is gone at the end of the output; the loop above may still be
+    # writing. bash 4.4 waits here for a process substitution, older ones
+    # (macOS's own 3.2) do not, and behave as before.
+    wait
+  ) 2>&1
+  BUILD_LOG_PID=$!
+  on_exit _finish_build_log
+}
+# Closes the two streams, which ends the mirror, and waits for it: 30 s at
+# most, since a process the build left behind with the streams still open
+# would keep the mirror, and the script, alive for as long as it runs.
+# Nothing can be printed after this, so it is the last work given to on_exit
+# by the scripts that print at exit.
+_finish_build_log() {
+  exec >&- 2>&-
+  local n=0
+  while kill -0 "$BUILD_LOG_PID" 2>/dev/null && (( n < 300 )); do
+    sleep 0.1
+    n=$((n + 1))
+  done
+  return 0
+}
+
 # ── Source download with cache ───────────────────────────────────────────────
 # Usage: download <url> <dest_path> [mirror_url...]
 # Smart default: an existing non-empty dest is always reused. Pass
@@ -80,13 +136,17 @@ SOURCES_SHA256_FILE="$LIBMPV_SCRIPTS_ROOT/scripts/shared/_sources.sha256"
 # "<hash>  <key>" as in _sources.sha256 (the key of the pin, not the mirror
 # that served it), so the README.txt of write_licenses names the sources
 # this build used. Exported, so the scripts the build runs and sources
-# (build_openssl.sh) append to the same file. It is made by the first
-# source a build checks, so verify_binaries.sh and write_manifest.sh leave
-# none; $$ stays the build's own PID in the $(...) of fetch.
+# (build_openssl.sh) append to the same file. The file is made by the first
+# source a build checks; its directory is made here with mktemp (a name
+# nobody else can have prepared in a shared /tmp) and removed at exit by
+# the script that made it, so verify_binaries.sh and write_manifest.sh
+# leave nothing either. The $(...) of fetch write to the same path.
 if [[ -z "${SOURCES_FETCHED:-}" ]]; then
-  SOURCES_FETCHED="${TMPDIR:-/tmp}/libmpv-sources.$$"
-  rm -f "$SOURCES_FETCHED"
+  SOURCES_FETCHED_DIR="$(mktemp -d "${TMPDIR:-/tmp}/libmpv-sources.XXXXXX")" ||
+    die "mktemp failed in ${TMPDIR:-/tmp}"
+  SOURCES_FETCHED="$SOURCES_FETCHED_DIR/fetched"
   export SOURCES_FETCHED
+  on_exit 'rm -rf "$SOURCES_FETCHED_DIR"'
 fi
 
 # fetched_source <hash> <key> — list a checked source in SOURCES_FETCHED.
@@ -209,9 +269,13 @@ cleanup_build() {
 # Detects extracted top directory from the archive's basename minus the
 # `.tar.<ext>` / `.tgz` suffix. Returns the extracted directory path on
 # stdout. Idempotent: if the directory already exists, skips extraction.
+# The archive is unpacked in a staging directory next to the destination and
+# its entries are renamed into place only when tar is done: an interrupted
+# tar leaves no half tree that the next build would take as "already
+# extracted". A staging directory left by such a run is removed first.
 extract() {
   local archive="$1" dest_parent="$2"
-  local name
+  local name stage entry
   name="$(basename "$archive" | sed 's/\.tar\..*//' | sed 's/\.tgz//')"
   if [[ -d "$dest_parent/$name" ]]; then
     ok "Already extracted: $name"
@@ -220,6 +284,17 @@ extract() {
   fi
   log "Extracting: $name"
   mkdir -p "$dest_parent"
-  tar -xf "$archive" -C "$dest_parent"
+  stage="$dest_parent/.extract-$name"
+  rm -rf "$stage"
+  mkdir "$stage"
+  tar -xf "$archive" -C "$stage" || { rm -rf "$stage"; die "tar failed on $archive"; }
+  for entry in "$stage"/* "$stage"/.[!.]*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    rm -rf "${dest_parent:?}/$(basename "$entry")"
+    mv "$entry" "$dest_parent/"
+  done
+  rmdir "$stage"
+  [[ -d "$dest_parent/$name" ]] ||
+    die "$(basename "$archive") did not unpack to $name/ in $dest_parent"
   echo "$dest_parent/$name"
 }
