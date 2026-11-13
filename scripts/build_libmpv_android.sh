@@ -380,7 +380,6 @@ build_abi() {
   log "═══ ABI: $abi ═══"
 
   android_zlib       "$abi" "$prefix"
-  android_iconv      "$abi" "$prefix"
   # The size pass of the compression deps is -Oz here.
   CFLAGS="-Oz -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
   CFLAGS="-Oz -fPIC" cross_build_xz
@@ -389,8 +388,12 @@ build_abi() {
   # dependency, so the expat/libpng/freetype/fribidi/harfbuzz/freetype-r2/
   # fontconfig/libass chain is unreferenced and skipped (libpng + expat are
   # font-only here — ffmpeg uses zlib/lzma, libxml2 is built
-  # --without-{iconv,lzma,zlib}).
+  # --without-{iconv,lzma,zlib}). libiconv belongs to the chain too: FFmpeg is
+  # configured --disable-iconv, mpv with iconv off and libxml2 without it, so
+  # in the default build nothing links it (no libiconv table is in the
+  # libmpv-r24 libraries, which built it and listed its license all the same).
   if ! libass_stripped; then
+    android_iconv      "$abi" "$prefix"
     CFLAGS="-O2 -fPIC" cross_build_expat
     android_libpng     "$abi" "$prefix"
     android_freetype   "$abi" "$prefix"
@@ -453,10 +456,10 @@ build_abi() {
   write_build_record "android-$abi" "$prefix"
   # llvm-runtimes: the NDK's libc++_static, libc++abi, libunwind and
   # compiler-rt builtins, linked into libmpv.so (write_licenses).
-  local licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib libiconv bzip2 xz speexdsp llvm-runtimes)
+  local licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp llvm-runtimes)
   patch_on libsmb2 && licenses+=(libsmb2)
   gpl_build && licenses+=(rubberband)
-  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+  libass_stripped || licenses+=(libiconv expat libpng freetype fribidi harfbuzz fontconfig libass)
   write_licenses "android-$abi" "$BUILD_DIR/src" "${licenses[@]}"
   ok "Output: $release_dir/$final_name"
 }
