@@ -492,8 +492,13 @@ finalize() {
   total_syms="$("$READELF" -W --dyn-syms "$out" 2>/dev/null | awk '$5=="GLOBAL" && $4=="FUNC" && $7!="UND" {n++} END{print n+0}')"
   mpv_syms="$("$READELF"   -W --dyn-syms "$out" 2>/dev/null | awk '$5=="GLOBAL" && $4=="FUNC" && $7!="UND" && $8 ~ /^mpv_/ {n++} END{print n+0}')"
   ok "Symbols: $total_syms total, $mpv_syms mpv_*"
+  # 63 in libmpv-r24. More than 200: the version script was not bound into
+  # the link; none: readelf could not read the library. Both stop the build,
+  # as on macOS.
+  [[ "$mpv_syms" -gt 0 ]] || die "No mpv_* symbol exported by $out"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
-    warn "Expected ~60 symbols with VIS_HIDDEN=1 but got $total_syms"
+    die "Export-filter regression: expected ~60 exported symbols with" \
+        "VIS_HIDDEN=1 but got $total_syms"
   fi
 
   ok "Output: $out"

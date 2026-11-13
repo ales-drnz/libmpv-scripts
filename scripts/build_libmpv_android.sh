@@ -419,7 +419,8 @@ build_abi() {
   local final_name="libmpv_android-${abi}.so"
   cp "$prefix/lib/libmpv.so" "$release_dir/$final_name"
 
-  "$(ndk_strip)" --strip-unneeded "$release_dir/$final_name" 2>/dev/null || true
+  # Not masked: a strip that fails must not publish an unstripped library.
+  "$(ndk_strip)" --strip-unneeded "$release_dir/$final_name"
   local readelf; readelf="$(dirname "$(ndk_strip)")/llvm-readelf"
   assert_soname "$release_dir/$final_name" "$readelf"
   assert_no_relr "$release_dir/$final_name" "$readelf"
@@ -798,16 +799,22 @@ android_mpv() {
     -Dc_args="$(eh_frame_cflags) -Oz" \
     "${link_extra[@]}"
 
-  # Dynsym hygiene check.
-  local total_syms mpv_syms
-  total_syms="$("$(ndk_strip)" --strip-unneeded "$prefix/lib/libmpv.so" 2>/dev/null; \
-    "$(ndk_toolchain)/bin/llvm-nm" -D --defined-only "$prefix/lib/libmpv.so" 2>/dev/null \
-    | grep -c ' T ' || echo 0)"
-  mpv_syms="$("$(ndk_toolchain)/bin/llvm-nm" -D --defined-only "$prefix/lib/libmpv.so" 2>/dev/null \
-    | grep -c ' T mpv_' || echo 0)"
+  # Dynsym hygiene check: the version script exports the mpv_* API and a few
+  # symbols of ours (64 in libmpv-r24), so more than 200 means it was not
+  # bound into the link and the library leaks FFmpeg and mpv internals, and
+  # none means nm could not read it. Both stop the build, as on macOS.
+  # grep -c prints its 0 and fails when nothing matches: || true keeps the
+  # one 0, where || echo 0 printed a second.
+  local total_syms mpv_syms syms
+  "$(ndk_strip)" --strip-unneeded "$prefix/lib/libmpv.so"
+  syms="$("$(ndk_toolchain)/bin/llvm-nm" -D --defined-only "$prefix/lib/libmpv.so")"
+  total_syms="$(grep -c ' T ' <<< "$syms" || true)"
+  mpv_syms="$(grep -c ' T mpv_' <<< "$syms" || true)"
   ok "mpv shared ($abi) ✓ — symbols: $total_syms total, $mpv_syms mpv_*"
+  [[ "$mpv_syms" -gt 0 ]] || die "No mpv_* symbol exported by $prefix/lib/libmpv.so"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
-    warn "Expected ~60 symbols with VIS_HIDDEN=1 but got $total_syms"
+    die "Export-filter regression: expected ~60 exported symbols with" \
+        "VIS_HIDDEN=1 but got $total_syms ($abi)"
   fi
 }
 
