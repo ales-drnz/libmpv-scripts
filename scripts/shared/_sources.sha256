@@ -1,8 +1,9 @@
 # SHA-256 of every source tarball the build scripts download: "<sha256>  <url>",
 # and the commit of every git tag they clone: "<commit>  <url>#<tag>". The
-# web build also checks two files of the emsdk release it compiles with:
-# "<sha256>  emsdk:<version>/upstream/<file>", and for clang, pinned per host,
-# "<sha256>  emsdk:<version>/<os>-<arch>/upstream/bin/clang".
+# web build also checks files of the emsdk release it compiles with:
+# "<sha256>  emsdk:<version>/upstream/<file>", and for the native tools
+# (clang, wasm-ld, wasm-opt, wasm-emscripten-finalize, llvm-ar), pinned per
+# host, "<sha256>  emsdk:<version>/<os>-<arch>/upstream/bin/<tool>".
 # Checked by verify_source and verify_git_source in _helpers.sh. Add the line
 # a local build prints for an unpinned source (or run with RECORD_SOURCES=<file>).
 af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9  https://breakfastquay.com/files/releases/rubberband-4.0.0.tar.bz2
@@ -32,4 +33,8 @@ ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269  https://source
 1fd3c7bde7b943fe8985c893310b5269a09b46c5  https://code.videolan.org/videolan/libplacebo.git#v7.349.0
 b9444620ba7f26ed216a663bf2282a9427e36c36  https://github.com/sahlberg/libsmb2.git#v6.0.0
 38407510e232fed1b4bc642b5752f93295e6a8bca66df6557eb979ee159ccd91  emsdk:6.0.12/linux-x86_64/upstream/bin/clang
+e9442011124a1ec7ae9c936eb74a064818862ff737785ca957b8059417a7be56  emsdk:6.0.12/linux-x86_64/upstream/bin/llvm-ar
+da7236520002ed0b4a0aad58a334ee22b69a4640cd65f8a5b6e5a04330878941  emsdk:6.0.12/linux-x86_64/upstream/bin/wasm-emscripten-finalize
+c1a776043258fdc638cf7ec4d062781765d5b36cc3e3a7701f5c1829698e63cf  emsdk:6.0.12/linux-x86_64/upstream/bin/wasm-ld
+646443d963e0ea180a57a6dc92a4b31ebbb0693cb85149598f8a7c5ac503bb1a  emsdk:6.0.12/linux-x86_64/upstream/bin/wasm-opt
 5ccd3b66c9433389b0338706182197340bfdf241777cc8985821e7d150818e46  emsdk:6.0.12/upstream/emscripten/emcc.py

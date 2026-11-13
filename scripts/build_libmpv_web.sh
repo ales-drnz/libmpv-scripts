@@ -127,6 +127,35 @@ if ! command -v emcc >/dev/null 2>&1 && [[ -n "${EMSDK:-}" ]]; then
   source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
 fi
 
+# check_emsdk_files <upstream dir>: the files of the emsdk release that end
+# up in the module or decide what does, against their pins in
+# _sources.sha256: emsdk downloads its binaries with no checksum, and the
+# version string alone does not tell them apart. The compiler (clang), the
+# linker (wasm-ld), Binaryen's optimizer and the finalizer that rewrite the
+# module after the link (wasm-opt, wasm-emscripten-finalize) and the archiver
+# (llvm-ar) are native binaries, pinned per host
+# ("emsdk:<version>/<os>-<arch>/upstream/bin/<tool>"); emcc.py, the driver,
+# is the same file on every host ("emsdk:<version>/upstream/...").
+# Not covered: the system libraries, which emcc compiles from the sources of
+# the release into EM_CACHE, and node, which runs the JS tools.
+EMSDK_NATIVE=(bin/clang bin/wasm-ld bin/wasm-opt bin/wasm-emscripten-finalize bin/llvm-ar)
+check_emsdk_files() {
+  local upstream="$1" f key want have host
+  host="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+  for f in "${EMSDK_NATIVE[@]}" emscripten/emcc.py; do
+    key="emsdk:$EMSDK_VERSION/upstream/$f"
+    [[ "$f" == bin/* ]] && key="emsdk:$EMSDK_VERSION/$host/upstream/$f"
+    [[ -f "$upstream/$f" ]] || die "$key: no $upstream/$f"
+    have="$(sha256_of "$(readlink -f "$upstream/$f")")"
+    want="$(pinned_source "$key")"
+    if [[ -z "$want" ]]; then
+      unpinned_source "$have" "$key"
+    elif [[ "$have" != "$want" ]]; then
+      die "$key: SHA-256 $have, pinned $want"
+    fi
+  done
+}
+
 check_toolchain() {
   local missing=() t
   for t in emcc em++ emar emranlib emnm emconfigure emmake meson ninja \
@@ -138,25 +167,7 @@ check_toolchain() {
   got="$(emcc --version | sed -n '1s/.* \([0-9][0-9.]*\) (.*/\1/p')"
   [[ "$got" == "$EMSDK_VERSION" ]] || \
     die "emcc $got found, the web build pins $EMSDK_VERSION (./emsdk activate $EMSDK_VERSION)"
-  # The compiler and the driver of the release, against their pins in
-  # _sources.sha256: emsdk downloads its binaries with no checksum, and the
-  # version string alone does not tell them apart. clang is a native binary,
-  # pinned per host ("emsdk:<version>/<os>-<arch>/upstream/bin/clang");
-  # emcc.py is the same file on every host ("emsdk:<version>/upstream/...").
-  local upstream f key want have host
-  host="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-  upstream="$(cd "$(dirname "$(readlink -f "$(command -v emcc)")")/.." && pwd)"
-  for f in bin/clang emscripten/emcc.py; do
-    key="emsdk:$EMSDK_VERSION/upstream/$f"
-    [[ "$f" == bin/clang ]] && key="emsdk:$EMSDK_VERSION/$host/upstream/$f"
-    have="$(sha256_of "$(readlink -f "$upstream/$f")")"
-    want="$(pinned_source "$key")"
-    if [[ -z "$want" ]]; then
-      unpinned_source "$have" "$key"
-    elif [[ "$have" != "$want" ]]; then
-      die "$key: SHA-256 $have, pinned $want"
-    fi
-  done
+  check_emsdk_files "$(cd "$(dirname "$(readlink -f "$(command -v emcc)")")/.." && pwd)"
   ok "Toolchain OK (emcc $got)"
 }
 
