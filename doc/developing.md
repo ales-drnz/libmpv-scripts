@@ -204,10 +204,16 @@ release: `LIBMPV_RELEASE` must be `rN` there, or the first job stops.
 
    `release_gate.sh` exits 0 only when a check of that run was complete
    and green, and names it. A check of `[native]` or of another Build does
-   not count. The gate does not see a file that never started on a
-   simulator or an emulator: that is a warning of its job, and such a file
-   is run again before the release. No release without the gate: a later
-   commit to `release/rN` is a new Build, and needs its own check.
+   not count. Nor does a check with a file that never started on the
+   simulator or on an emulator (an install that never ended, an app that
+   never attached): its job stays green, the Summary job lists the file
+   under "Never started", raises an error and writes it in `never_started`
+   of the check result, and the check is not green. On the Android 7
+   emulator `adb install` of the test app at times never ends, with no
+   line of the package manager in the log: run the check again, or
+   `[android emu]` alone, until every file started. No release without
+   the gate: a later commit to `release/rN` is a new Build, and needs its
+   own check.
 3. The `libmpv-rN` release goes on `mpv_audio_kit` with the libraries,
    `libmpv_web.zip`, `licenses.zip` and `manifest.json` of the
    `libmpv-release` artifact of that run. Its notes come from the
