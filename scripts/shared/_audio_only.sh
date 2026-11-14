@@ -2,8 +2,9 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-# Audio-only ffmpeg flags + shared patch application across the 5
-# build_libmpv_<platform>.sh scripts. Sourced by every script.
+# Audio-only ffmpeg flags + shared patch application across the 9
+# build_libmpv_<platform>.sh scripts. Sourced by every one of them (the
+# tvOS one runs the iOS one), by verify_binaries.sh and by write_manifest.sh.
 #
 # Strategy: keep all demuxers (so the consumer can open any container,
 # including mixed audio+video files like .mkv/.mp4 — mpv ignores video
@@ -1041,7 +1042,10 @@ verify_mpv_config() {
   ok "mpv config audit passed ($platform)"
 }
 
-# ── ffmpeg patch application (9 patches, identical on every platform) ───────
+# ── ffmpeg patch application (9 scripts, identical on every platform) ───────
+# Three are always applied and five are toggles, of which read_error runs
+# two scripts. The web build runs a tenth after them, patch_ffmpeg_webio.py
+# (build_libmpv_web.sh).
 # Usage: apply_ffmpeg_patches <ffmpeg_source_dir>
 # Requires SCRIPT_DIR to be set to the directory containing this file.
 apply_ffmpeg_patches() {

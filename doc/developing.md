@@ -8,7 +8,7 @@ lists each check with its requirements.
 
 `patches/` holds one Python script per patch, by project (`mpv/`,
 `ffmpeg/`, `rubberband/`) and for mpv by platform (`shared/`, `android/`,
-`apple/`, `ios/`, `linux/`, `web/`, `windows/`). The build scripts run
+`apple/`, `ios/`, `linux/`, `tizen/`, `web/`, `windows/`). The build scripts run
 them on the pristine sources: `apply_mpv_patches_common` in
 `scripts/shared/_audio_only.sh` for the patches of every platform, then each
 platform script for its own.
@@ -27,10 +27,16 @@ anchor.main(apply, 'patch_example', marker='MAK_EXAMPLE_PATCH_V1')
 ```
 
 The marker goes into the patched text: a file that has it is left alone,
-so a second run changes nothing. A change to what a patch writes bumps its
-marker (`_V2`). Each script states its problem and its fix in its
-docstring; a new one does the same. Every script takes `--check` (all the
-checks, nothing written) and `--list-anchors`.
+so a second run changes nothing. Every marker ends with its version (`_V1`,
+`_V2`), and a change to what a patch writes raises it. The engine holds the
+rule: a file that carries another version of the marker, or the same marker
+with no version, was patched by another revision of the script, and the
+script stops there instead of leaving old hooks under new sources. Such a
+tree is extracted again from the pristine sources.
+
+Each script states its problem and its fix in its docstring; a new one does
+the same. Every script takes `--check` (all the checks, nothing written) and
+`--list-anchors`.
 
 ## Testing a patch
 
@@ -43,22 +49,34 @@ libmpv with AddressSanitizer:
 bash verify/tests/native/run.sh <work dir>                        # all
 bash verify/tests/native/run.sh --reuse <work dir> keep_open_park_test:unload
 DISABLED_PATCHES=keep_open_park bash verify/tests/native/run.sh --reuse <work dir> keep_open_park_test
+UBSAN=1 bash verify/tests/native/run.sh <work dir>                # with the overflow checks
 ```
 
 The first run downloads mpv and FFmpeg and builds libmpv, a few minutes;
 `--reuse` keeps them. `DISABLED_PATCHES` builds without a patch, to see
-its test fail. The `CASES` table at the top of `run.sh` lists each test,
-its kind and its modes:
+its test fail. `UBSAN=1` also builds libmpv and the tests with two checks of
+UndefinedBehaviorSanitizer, a signed integer overflow and a float out of
+the range of the integer it is cast to: either stops the test. A work dir
+keeps the setting it was built with, so `--reuse` on one built the other
+way is refused. CI runs without it.
+
+The `CASES` table at the top of `run.sh` lists each test, its kind and its
+modes:
 
 - `lib`: linked with the patched libmpv, one process per mode;
 - `unit`: includes one patched source file of mpv, with stubs around it,
   for a function no API reaches (`pull_pause_tail_test.c` and `buffer.c`);
 - `audiotrack`: includes `ao_audiotrack.c` with its patch and a simulated
-  JNI. It needs `jni.h` of the NDK in `ANDROID_NDK_HOME`.
+  JNI. It needs `jni.h` of the NDK in `ANDROID_NDK_HOME`;
+- `tizen`: includes the `ao_tizen.c` its patch adds, on the headers of
+  `tizen_sim/` in place of Tizen's;
+- `tsan`: a unit test built with ThreadSanitizer instead of
+  AddressSanitizer, for the data races (`tap_tsan_test.c`). libmpv itself
+  is not built with it.
 
 A new test is a `.c` file in that folder and a row of `CASES`. It prints
 `RESULT PASS` and exits 0; anything AddressSanitizer or LeakSanitizer finds
-fails it.
+fails it, and so does a data race in a `tsan` test.
 
 The tests need the packages listed at the top of `run.sh`. On a host that
 lacks them, an Ubuntu 24.04 container with them works. Give it
@@ -76,6 +94,27 @@ of HTTP, SMB, HLS and DASH.
 
 **After a refactor of the scripts**: `patch_identity_test.sh` checks that
 two revisions of `patches/` make the same trees, so no rebuild is needed.
+
+## Differences between the platforms
+
+The FFmpeg configuration is one for every platform (`ffmpeg_common_args` in
+`scripts/shared/_audio_only.sh`), and `verify_ffmpeg_config` checks it after
+each configure: the lists of decoders, parsers, filters and protocols are
+shared. What differs:
+
+| What | Where | Decided in |
+| :--- | :--- | :--- |
+| libplacebo | 7.349.0 on macOS, Linux, Tizen, webOS and the web. 6.338.2 on iOS, tvOS, Android and Windows | `LIBPLACEBO_VERSION` at the top of each `build_libmpv_<platform>.sh`, the reason in `scripts/shared/_versions.sh` |
+| Network | The web has no sockets and no OpenSSL: http, https and `blob:` URLs go through the `webio` protocols, on the browser's fetch. Every other platform has FFmpeg's network protocols on OpenSSL | `ffmpeg_web_args` and `patch_ffmpeg_webio.py` in `scripts/build_libmpv_web.sh`, the `web` case of `verify_ffmpeg_config` |
+| SMB | Not on the web. libsmb2 everywhere else | `DISABLED_PATCHES` in `scripts/build_libmpv_web.sh` |
+| Kerberos for SMB | The GSS framework is linked on macOS and iOS only. tvOS has no GSS framework, and the other builds add no Kerberos library | `apply_libsmb2_post_install_fixes` in `scripts/shared/_audio_only.sh` |
+| AudioToolbox decoders | `aac_at`, `alac_at` and `mp3_at` on macOS, iOS and tvOS only. FFmpeg's configure leaves them out elsewhere | `--enable-audiotoolbox` in the macOS and iOS scripts, the AudioToolbox case of `verify_ffmpeg_config` |
+| Audio outputs | CoreAudio and AVFoundation on macOS. AudioUnit and AVFoundation on iOS and tvOS. AudioTrack, AAudio and OpenSL ES on Android. WASAPI on Windows. ALSA, PulseAudio and PipeWire on Linux. `ao_tizen` on Tizen. ALSA on webOS. `webaudio` on the web | the `-D<output>=enabled` arguments of mpv in each platform script |
+| Optimization of mpv | `-Oz` on Android, macOS, iOS, tvOS and the web. `-Os`, from meson's `-Doptimization=s`, on Linux, Windows, Tizen and webOS | `-Dc_args` in `scripts/build_libmpv_android.sh`, `apple_mpv_c_args` in `scripts/shared/_apple.sh`, `WEB_OPT` in `scripts/build_libmpv_web.sh`, `mpv_common_args` in `scripts/shared/_audio_only.sh` |
+| C++ runtime | Linked in on Tizen (`-static-libstdc++`), on Android (the NDK's static libc++) and on Windows (`-static`). The system's `libstdc++.so.6` on webOS, whose NDK has no static one, and on Linux | the link arguments of mpv in each platform script, the NEEDED allowlist of `scripts/verify/common.sh` |
+| ALSA on Linux and webOS | `libasound.so.2` is a `DT_NEEDED`: the library does not load without it. PipeWire and PulseAudio on Linux are stubs loaded at the first use | `-Dalsa=enabled` and `build_audio_stubs` in `scripts/build_libmpv_linux.sh`, `finalize` in `scripts/build_libmpv_webos.sh` |
+| glibc floor | 2.31 on Linux, 2.30 on Tizen, 2.39 on webOS | `LINUX_GLIBC_FLOOR`, `TIZEN_GLIBC_FLOOR` and `WEBOS_GLIBC_FLOOR` in `scripts/shared/_audio_only.sh` |
+| Android `x86` | `ABIS` accepts it, with FFmpeg's assembly off, but no target of `./build` and no job of the Build workflow builds it: it is never tested | `scripts/build_libmpv_android.sh`, `tui/targets.go`, `.github/workflows/build.yml` |
 
 ## Hardening flags
 
@@ -101,7 +140,8 @@ Each build asserts its result (`assert_hardening`), and L16 of
 `verify_binaries.sh` checks the shipped files again: a non-executable
 `GNU_STACK`, `GNU_RELRO`, `BIND_NOW`, `__stack_chk_fail` among the undefined
 symbols and no `TEXTREL` on ELF, the three DllCharacteristics on Windows.
-`verify/tests/hardening_test.sh` runs those checks on good and bad samples.
+`verify/tests/hardening_test.sh` runs those checks on good and bad samples,
+in the TUI job of `checks.yml`.
 
 ## In CI
 
@@ -111,9 +151,11 @@ symbols and no `TEXTREL` on ELF, the three DllCharacteristics on Windows.
   `verify/tests`, and the native tests with AddressSanitizer. It needs no
   secret, so a pull request from a fork runs it too.
 - `build.yml` builds everything on a push to `release/rN`, or by hand
-  (`gh workflow run build.yml --ref <branch>`). It calls the jobs of
-  `checks.yml` instead of copying them, and its release waits for the
-  native ones.
+  (`gh workflow run build.yml --ref <branch>`): thirteen libraries and the
+  web module. It calls the jobs of `checks.yml` instead of copying them,
+  and its release waits for the native ones. The `webos` image is built
+  without the Actions cache, because LG's licence keeps the NDK on our
+  machines.
 - `check-mpv-audio-kit.yml` runs the tests of mpv_audio_kit against the
   binaries of a Build:
 
@@ -133,7 +175,9 @@ symbols and no `TEXTREL` on ELF, the three DllCharacteristics on Windows.
   run only their part, and leave the rest out. The Android emulators are
   API 24, 29 and 34 on phones, and API 36 on Android TV;
   `.github/diag/android_emulator.sh` runs the integration tests of the
-  kit's `test_app` on each.
+  kit's `test_app` on each. No job runs on Tizen or webOS: those libraries
+  have the checks of `./build verify` alone, which loads each under
+  qemu-user on its TV's sysroot.
 
   A run that left jobs out is still green. Its Summary job lists every
   job with its result and the tag that left it out, and says whether the
@@ -160,9 +204,10 @@ release: `LIBMPV_RELEASE` must be `rN` there, or the first job stops.
 
    `release_gate.sh` exits 0 only when a check of that run was complete
    and green, and names it. A check of `[native]` or of another Build does
-   not count, and a file that never started on a simulator or an emulator
-   is run again first. No release without it: a later commit to
-   `release/rN` is a new Build, and needs its own check.
+   not count. The gate does not see a file that never started on a
+   simulator or an emulator: that is a warning of its job, and such a file
+   is run again before the release. No release without the gate: a later
+   commit to `release/rN` is a new Build, and needs its own check.
 3. The `libmpv-rN` release goes on `mpv_audio_kit` with the libraries,
    `libmpv_web.zip`, `licenses.zip` and `manifest.json` of the
    `libmpv-release` artifact of that run. Its notes come from the

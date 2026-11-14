@@ -9,8 +9,9 @@
 # Static-analysis sanity check for every binary in builds/release/.
 # This file is the driver: the checks are in scripts/verify/, common.sh (the
 # tables, the result helpers, check_binary and the layers every platform
-# runs) and one file per platform (linux.sh with the ELF layers Android
-# shares, android.sh, windows.sh, apple.sh, web.sh).
+# runs) and one file per platform (linux.sh with the ELF layers that Android,
+# Tizen and webOS share, android.sh, windows.sh, apple.sh, web.sh, tizen.sh,
+# webos.sh).
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
@@ -45,8 +46,8 @@
 #       classic "I bumped harfbuzz in _versions.sh but the build cache held
 #       the old binary" drift
 #  10.  Mpv API surface hash (sorted mpv_* names → SHA-256/12) — must be
-#       IDENTICAL across all 10 binaries (otherwise the API surface drifted
-#       between platforms)
+#       IDENTICAL across all the binaries, 13 in a release (otherwise the
+#       API surface drifted between platforms)
 #  11.  NEEDED allowlist per platform (catches forbidden runtime
 #       dependencies — e.g. `libstdc++.so` on Android, removed in API 37)
 #  12.  UND symbol resolvability: every undefined dynamic symbol must be
@@ -56,7 +57,9 @@
 #  13.  dlopen / LoadLibrary load test — actually loads the binary with
 #       RTLD_NOW so the dynamic linker resolves every symbol up-front.
 #       Linux native arch runs in-container, foreign arch via
-#       qemu-user-static. Windows DLLs run via Wine. Catches symbol-version
+#       qemu-user-static. Tizen and webOS run via qemu-user-static on the
+#       TVs' sysroot (the pinned Tizen 6.0 packages, the sysroot out of
+#       LG's webOS NDK). Windows DLLs run via Wine. Catches symbol-version
 #       mismatches that only show at runtime.
 #  14.  Stub-function detection (Android only) — JNI_OnLoad's bl/callq
 #       target is disassembled and checked for non-trivial size. Catches
@@ -69,12 +72,14 @@
 #       Parses the Mach-O CodeDirectory directly (no macOS codesign needed), so
 #       it runs in-container. Catches the libmpv-r9 bare-Mach-O re-sign bug that
 #       every other layer missed (only a physical-device install enforces it).
-#  16.  ELF invariants (Linux + Android): SONAME is libmpv_audio_kit.so, no
-#       DT_RELR, LOAD segments aligned for 16 KB pages on 64-bit Android, and
-#       on Linux no GLIBC symbol version above LINUX_GLIBC_FLOOR. Hardening
-#       of every ELF library: non-executable stack, RELRO, BIND_NOW, a
-#       stack canary, no TEXTREL. On Windows: DYNAMIC_BASE, HIGH_ENTROPY_VA
-#       and NX_COMPAT in the DLL characteristics.
+#  16.  ELF invariants and hardening (Linux, Android, Tizen, webOS): SONAME
+#       is libmpv_audio_kit.so, no DT_RELR, LOAD segments aligned for 16 KB
+#       pages on 64-bit Android, and no GLIBC symbol version above the floor
+#       on the others (LINUX_GLIBC_FLOOR, TIZEN_GLIBC_FLOOR,
+#       WEBOS_GLIBC_FLOOR). Hardening of every ELF library: non-executable
+#       stack, RELRO, BIND_NOW, a stack canary, no TEXTREL. On Windows:
+#       DYNAMIC_BASE, HIGH_ENTROPY_VA and NX_COMPAT in the DLL
+#       characteristics.
 #
 # The web module (libmpv_web.zip) gets its own static checks, check_web_binary:
 # the four files of the zip and the record's release and versions, a shared
@@ -111,27 +116,29 @@
 #              reason is always emitted (see na()), never a silent gap
 #   ·          informational only (enumerates state; asserts nothing)
 #
-#  #  Category                  macOS  iOS  Linux  Win  Android   reason when N/A
-#  1  Format / arch               ✓    ✓     ✓     ✓     ✓
-#  2  Exports (54 mpv_*, 9 mak)  ✓    ✓     ✓     ✓     ✓
-#  3  mpv patched properties      ✓    ✓     ✓     ✓     ✓
-#  4  FFmpeg patches              ✓    ✓     ✓     ✓     ✓
-#  5  Audio decoders              ✓    ✓     ✓     ✓     ✓
-#  6  Audio filters               ✓    ✓     ✓     ✓     ✓
-#  7  Audio-only invariant        ✓    ✓     ✓     ✓     ✓
-# 7b  Feature presence (strips)    ✓    ✓     ✓     ✓     ✓    adaptive to Settings ▸ Patches (swscale/libass/GPU/win-icon + core protocols)
-# 7c  License                     ✓    ✓     ✓     ✓     ✓    the build's license, against its record and license texts
-#  8  Runtime dependencies        ·    ·     ·     ·     ·    info; the allowlist assertion is #11
-#  9  Dependency versions         ✓    ✓     ✓     ✓     ✓
-# 10  API surface hash            ·    ·     ·     ·     ·    info; asserted globally by the cross-platform audit
-# 11  NEEDED allowlist            ✓    ✓     ✓     ✓     ✓
-# 12  UND resolvability          N/A  N/A    ✓    N/A    ✓    nm/ELF-based; Mach-O & PE binds are resolved by their own loader (#13)
-# 13  Runtime load test          ✓†   N/A    ✓     ✓    N/A   needs the platform's real loader (Apple dyld; no emulator-less Android path)
-# 14  Stub detection             N/A  N/A   N/A   N/A    ✓    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
-# 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A   Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
-# 16  ELF invariants, hardening  N/A  N/A    ✓     ✓     ✓    SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns; Windows gets the DLL characteristics alone
+#  #  Category                  macOS  iOS  Linux  Win  Android  Tizen  webOS   reason when N/A
+#  1  Format / arch               ✓    ✓     ✓     ✓     ✓       ✓      ✓
+#  2  Exports (54 mpv_*, 9 mak)  ✓    ✓     ✓     ✓     ✓       ✓      ✓
+#  3  mpv patched properties      ✓    ✓     ✓     ✓     ✓       ✓      ✓
+#  4  FFmpeg patches              ✓    ✓     ✓     ✓     ✓       ✓      ✓
+#  5  Audio decoders              ✓    ✓     ✓     ✓     ✓       ✓      ✓
+#  6  Audio filters               ✓    ✓     ✓     ✓     ✓       ✓      ✓
+#  7  Audio-only invariant        ✓    ✓     ✓     ✓     ✓       ✓      ✓
+# 7b  Feature presence (strips)    ✓    ✓     ✓     ✓     ✓       ✓      ✓     adaptive to Settings ▸ Patches (swscale/libass/GPU/win-icon + core protocols)
+# 7c  License                     ✓    ✓     ✓     ✓     ✓       ✓      ✓     the build's license, against its record and license texts
+#  8  Runtime dependencies        ·    ·     ·     ·     ·       ·      ·     info; the allowlist assertion is #11
+#  9  Dependency versions         ✓    ✓     ✓     ✓     ✓       ✓      ✓
+# 10  API surface hash            ·    ·     ·     ·     ·       ·      ·     info; asserted globally by the cross-platform audit
+# 11  NEEDED allowlist            ✓    ✓     ✓     ✓     ✓       ✓      ✓
+# 12  UND resolvability          N/A  N/A    ✓    N/A    ✓       ✓      ✓     nm/ELF-based; Mach-O & PE binds are resolved by their own loader (#13)
+# 13  Runtime load test          ✓†   N/A    ✓     ✓    N/A      ✓      ✓     needs the platform's real loader (Apple dyld; no emulator-less Android path); Tizen and webOS load under qemu-user on the TVs' sysroot
+# 14  Stub detection             N/A  N/A   N/A   N/A    ✓      N/A    N/A    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
+# 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A     N/A    N/A    Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
+# 16  ELF invariants, hardening  N/A  N/A    ✓     ✓     ✓       ✓      ✓     SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns; Windows gets the DLL characteristics alone
 #
 #  tvOS gets the iOS column: the same build with the tvOS SDKs.
+#  Tizen is armv7l and x86_64, webOS armv7l. Their L12 resolves against the
+#  TVs' sysroot, not the container's libraries.
 #
 #  † macOS L13 runs the REAL dyld dlopen(RTLD_NOW) when verify is invoked
 #    natively on a macOS host (./scripts/verify_binaries.sh macos) — clang

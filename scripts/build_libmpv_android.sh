@@ -14,8 +14,11 @@
 # 
 # === SYSTEM & HARDWARE SPECS ===
 # Target OS:   Android (API Level 24 / Android 7.0 Nougat or newer)
-# Target Arch: arm64-v8a + x86_64 by default (physical devices + emulators;
-#              armeabi-v7a and x86 also supported via ABIS)
+# Target Arch: arm64-v8a + x86_64 when this script runs alone (physical
+#              devices + emulators). ./build and the Build workflow set
+#              ABIS to one of arm64-v8a, armeabi-v7a and x86_64, the three
+#              ABIs that ship. ABIS also takes x86, which nothing builds
+#              or tests.
 # Compiler:    Android NDK (LLVM Clang) statically linking libc++_static.a
 #
 # Usage (from project root):
@@ -26,7 +29,7 @@
 #   ANDROID_NDK_ROOT=/path/to/ndk   (else searched in known SDK locations; NDK r28c auto-downloaded if absent)
 #   ANDROID_API=24                   (default: 24 — minSdkVersion)
 #   MPV_VERSION=0.41.0              (default: 0.41.0)
-#   ABIS="arm64-v8a armeabi-v7a x86_64 x86"  (default: arm64-v8a x86_64)
+#   ABIS="arm64-v8a armeabi-v7a x86_64"      (default: arm64-v8a x86_64; x86 is accepted, never built in CI)
 #   JOBS=N
 #   FORCE_DOWNLOAD=1                 (redownload sources even if cached)
 #   KEEP_BUILD=1                     (preserve all of BUILD_DIR for inspection)

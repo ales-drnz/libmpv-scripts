@@ -2,8 +2,8 @@
 # All rights reserved.
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
-# Pinned dependency versions: single source of truth across the 6
-# build_libmpv_<platform>.sh scripts.
+# Pinned dependency versions: single source of truth across the 9
+# build_libmpv_<platform>.sh scripts (the tvOS one runs the iOS one).
 #
 # Override any version with an environment variable:
 #   MPV_VERSION=0.42.0 ./build_libmpv_macos.sh
@@ -65,10 +65,11 @@ export LIBSMB2_VERSION="${LIBSMB2_VERSION:-6.0.0}"
 export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 
 # ── TLS backend (every platform) ─────────────────────────────────────────────
-# OpenSSL is the unified TLS backend across the five native platforms. On Apple
-# we deliberately do NOT use SecureTransport: it's been deprecated by
-# Apple since 10.15, doesn't support TLS 1.3, and is on its way out of
-# upstream curl/ffmpeg (curl removed it in June 2025).
+# OpenSSL is the TLS backend of every native platform (macOS, iOS, tvOS,
+# Android, Linux, Windows, Tizen, webOS). The web build has none: the
+# browser does TLS. On Apple we deliberately do NOT use SecureTransport:
+# it's been deprecated by Apple since 10.15, doesn't support TLS 1.3, and
+# is on its way out of upstream curl/ffmpeg (curl removed it in June 2025).
 #
 # OpenSSL 3.5.6 is the current LTS patch (the 3.5 LTS line is supported
 # until 2030). License Apache 2.0 (OpenSSL 3.0+), GPL-compatible — no
@@ -80,11 +81,12 @@ export OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.6}"
 # different upstream branches — those stay in the per-platform script and
 # are NOT centralised here:
 #
-# - libplacebo: macOS / Linux pin v7.349.0; iOS / Android / Windows pin
-#   v6.338.2. Reason: libplacebo 7.x dropped some symbols mpv 0.41.0's
+# - libplacebo: macOS / Linux / Tizen / webOS / web pin v7.349.0; iOS (and
+#   tvOS, the same script) / Android / Windows pin v6.338.2. Reason:
+#   libplacebo 7.x dropped some symbols mpv 0.41.0's
 #   csputils.h still references when building under the cross-compile
 #   cross files used on mobile/Windows. Once mpv ships a release that
-#   uses the 7.x API on those platforms too, all five can converge
+#   uses the 7.x API on those platforms too, they can all converge
 #   (libplacebo 7.360.1 is the current latest).
 # - Android NDK: pinned in build_libmpv_android.sh (NDK_VERSION).
 # - libunibreak: pinned in build_libmpv_linux.sh (Linux libass dep).

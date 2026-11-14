@@ -1,6 +1,7 @@
 # ─── Build artefacts ─────────────────────────────────────────────────────────
 # Everything the build produces lives under one top-level dir:
-#   builds/release/   — per-arch libmpv binaries + SBOMs (the deliverables)
+#   builds/release/   — the libmpv binaries, their build records and license
+#                       texts, manifest.json and licenses.zip (the deliverables)
 #   builds/logs/      — timestamped per-build logs
 #   builds/work/<OS>/[<arch>/] — intermediate trees: downloaded source
 #                       tarballs, extracted sources, per-dep build outputs,
@@ -76,8 +77,8 @@ CLAUDE.md
 *.tar.xz
 *.tar.bz2
 *.zip
-# (zip is wide — keep release zips committed if you need the
-# xcframework artifact; track explicitly with `git add -f` when needed.)
+# (zip is wide: no zip is tracked. The xcframework and web zips are build
+# outputs under builds/, published as release assets.)
 
 # Build environment caches that some toolchains drop in cwd
 .cache/
