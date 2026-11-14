@@ -80,6 +80,8 @@
 #       stack, RELRO, BIND_NOW, a stack canary, no TEXTREL. On Windows:
 #       DYNAMIC_BASE, HIGH_ENTROPY_VA and NX_COMPAT in the DLL
 #       characteristics.
+#  17.  Timer imports (Windows): the DLL imports neither timeBeginPeriod nor
+#       timeEndPeriod, the system-wide timer resolution of mpv_audio_kit#12.
 #
 # The web module (libmpv_web.zip) gets its own static checks, check_web_binary:
 # the four files of the zip and the record's release and versions, a shared
@@ -135,6 +137,7 @@
 # 14  Stub detection             N/A  N/A   N/A   N/A    ✓      N/A    N/A    targets Android's JNI_OnLoad→av_jni_set_java_vm chain only
 # 15  Code-signing identity       ✓    ✓    N/A   N/A   N/A     N/A    N/A    Apple-only: signing identifier must == CFBundleIdentifier (iOS device install)
 # 16  ELF invariants, hardening  N/A  N/A    ✓     ✓     ✓       ✓      ✓     SONAME / DT_RELR / page alignment / glibc floor are ELF loader concerns; Windows gets the DLL characteristics alone
+# 17  Timer imports             N/A  N/A   N/A    ✓    N/A     N/A    N/A    winmm's timer resolution is a Windows matter
 #
 #  tvOS gets the iOS column: the same build with the tvOS SDKs.
 #  Tizen is armv7l and x86_64, webOS armv7l. Their L12 resolves against the

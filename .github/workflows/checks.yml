@@ -95,6 +95,8 @@ jobs:
         run: bash verify/tests/l13_windows_test.sh
       - name: Hardening checks on good and bad samples
         run: bash verify/tests/hardening_test.sh
+      - name: Timer imports check on good and bad samples
+        run: bash verify/tests/timer_imports_test.sh
       - name: xcframework slices
         run: bash verify/tests/xcf_slices_test.sh
       - name: FFmpeg muxer and protocol markers
