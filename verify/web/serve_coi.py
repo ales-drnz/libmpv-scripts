@@ -10,7 +10,9 @@ needs; Chrome and Firefox take credentialless too), so SharedArrayBuffer and
 the pthread workers are available. The page POSTs its JSON result to
 /result; the server writes it to --result and exits. A POST to
 /signal?name=<name> creates <result>.<name> for the runner (a user gesture
-to make, a CPU sample to take). A GET with ?delay=<ms> waits that long
+to make, a CPU sample to take). A POST to /progress adds its lines to
+<result>.progress: what the page did so far, for a run that never posts a
+result. A GET with ?delay=<ms> waits that long
 before it answers (a slow network for one file).
 
     python3 -I serve_coi.py --root <dir> --port 8123 --result <file>
@@ -54,6 +56,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        if self.path == '/progress':
+            body = self.rfile.read(min(int(self.headers.get('Content-Length', 0)), 1 << 20))
+            with self.server.progress_lock, open(f'{self.server.result_path}.progress', 'ab') as f:
+                f.write(body + b'\n')
+            self.send_response(204)
+            self.end_headers()
+            return
         if self.path != '/result':
             self.send_error(404)
             return
@@ -77,6 +86,7 @@ def main():
     handler = functools.partial(Handler, directory=a.root)
     server = http.server.ThreadingHTTPServer(('127.0.0.1', a.port), handler)
     server.result_path = a.result
+    server.progress_lock = threading.Lock()
     server.serve_forever()
 
 

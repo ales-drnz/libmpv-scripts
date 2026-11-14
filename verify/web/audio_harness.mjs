@@ -21,6 +21,11 @@
 //             run gesture=1 must fail on
 //   slowProcessorUrl the worklet module served late, for the context that
 //             replaces the first one
+//   trace     { step(name), status }: step names the call about to be made
+//             that has no time limit here (the module, makWebAudio.init and
+//             close, mpv's create and destroy), status is set to a function
+//             that says where the AudioContext and mpv's events are; the
+//             page sends both to the runner while the run goes on
 //
 // Fixtures (make_fixtures.sh): long_60s.flac (48 kHz), tone_48k_20s.flac and
 // tone_44k_20s.flac (1 kHz at -12 dBFS), sine_stereo_48k_5s.flac.
@@ -32,6 +37,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function runAudioHarness(factory, files, log, opts = {}) {
   const ao = opts.ao ?? 'webaudio';
   const signal = opts.signal ?? (async () => {});
+  const trace = opts.trace ?? { step() {} };
   const res = { checks: [], measures: {} };
   const check = (ok, name, detail) => {
     res.checks.push({ ok, name, detail });
@@ -44,10 +50,12 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   };
 
   let core = null;
+  trace.step('module');
   const m = await factory({ print: log, printErr: log });
   const wa = m.makWebAudio;
   if (!check(!!wa, 'glue', `makWebAudio ${wa ? 'present' : 'missing'}`)) return finish();
   const ti = performance.now();
+  trace.step('init');
   await wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false });
   measure('webaudio_init_ms', performance.now() - ti);
   const ctx = wa.context;
@@ -60,6 +68,10 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   for (const [name, bytes] of Object.entries(files)) m.FS.writeFile(`/in/${name}`, bytes);
 
   const st = { ended: null, starts: 0, outState: [], warnings: [], restarts: 0 };
+  // Not wa.stats(): reading it resets the peaks the checks measure.
+  trace.status = () => `context ${wa.state} at ${wa.context ? wa.context.currentTime.toFixed(2) : '-'} s, ` +
+    `mpv: ${core ? core.wakeups : '-'} wakeups, ${st.starts} starts, audio-output-state ${st.outState.at(-1) ?? '-'}`;
+  trace.step('core');
   core = createCore(m, [
     ['ao', ao], ['ao-null-untimed', 'no'], ['vid', 'no'], ['idle', 'yes'],
     ['config', 'no'], ['audio-display', 'no'], ['audio-fallback-to-null', 'no'],
@@ -365,6 +377,7 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   const rate2 = rate === 48000 ? 44100 : 48000;
   // The worklet module comes late: the outputs must wait for the new
   // context, not reopen on no context at all.
+  trace.step('init at another rate');
   await wa.init({ channels: 2, sampleRate: rate2, resumeOnGesture: opts.resumeOnGesture !== false,
     ...(opts.slowProcessorUrl ? { processorUrl: opts.slowProcessorUrl } : {}) });
   const moved = await poll(() => {
@@ -404,6 +417,7 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
     }
   };
   let initErr = null;
+  trace.step('init with no worklet module');
   try {
     await wa.init({ channels: 2, resumeOnGesture: false,
       processorUrl: new URL('missing_processor.js', location.href).href });
@@ -417,14 +431,18 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   check(initErr && made.length === 1 && made[0].state === 'closed' && wa.state === 'none' && failedInit && !!saidInit,
     'context.init_fails', `error ${initErr && initErr.message}, made ${made.length}, state ${made[0]?.state}, ` +
     `api ${wa.state}, audio-output-state ${st.outState.join(' > ')}, mpv: ${saidInit}`);
+  trace.step('init after the failed one');
   await wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false });
+  trace.step('play after the failed init');
   await loadAndStart('/in/tone_48k_20s.flac');
   await sleep(300);
 
   // ── No context any more: the output fails and mpv says why ───────────
   st.warnings.length = 0;
   st.outState.length = 0;
+  trace.step('close');
   await wa.close();
+  trace.step('closed');
   const failed = await core.until(() => st.outState.at(-1) === 'failed', 5000);
   const said = st.warnings.find((w) => /No AudioContext/.test(w));
   check(failed && !!said, 'context.closed', `audio-output-state ${st.outState.join(' > ')}, mpv: ${said}`);
@@ -433,17 +451,20 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
 
   async function finish() {
     try {
+      trace.step('destroy');
       core?.destroy();
     } catch (e) {
       log(`destroy: ${e}`);
     }
     try {
+      trace.step('last close');
       await wa?.close();
     } catch (e) {
       log(`close: ${e}`);
     }
     res.pass = res.checks.filter((c) => c.ok).length;
     res.fail = res.checks.length - res.pass;
+    trace.step('done');
     log(`RESULT pass=${res.pass} fail=${res.fail}`);
     return res;
   }
