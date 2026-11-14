@@ -17,7 +17,9 @@
        busy=1       keeps the main thread busy 50 ms every 100 ms
        memory=MiB   (spike, lib) the module gets a shared WebAssembly.Memory
                     of the page with that maximum, 32 MiB at start
-     The result goes to POST /result as JSON. -->
+     The result goes to POST /result as JSON. Meanwhile the lines go to
+     POST /progress as they come, with a line every 5 s that says the page
+     still runs: a run that never posts a result leaves how far it got. -->
 <meta charset="utf-8">
 <title>mak spike</title>
 <pre id="out"></pre>
@@ -28,7 +30,42 @@ const list = (k) => (q.get(k) || '').split(',').filter(Boolean);
 const files = list('files'), longs = list('longs');
 const lines = [];
 const out = document.getElementById('out');
-const log = (s) => { lines.push(String(s)); out.textContent += s + '\n'; };
+// The trace of a run with no result (serve_coi.py keeps it, run_browser.sh
+// prints it): every line, numbered, with the page's clock, sent within half
+// a second; a step and the alive line are sent at once.
+const t00 = performance.now();
+const unsent = [];
+let seq = 0, flushing = 0, step = 'none', status = () => '';
+const note = (s) => unsent.push(`${++seq}\t${((performance.now() - t00) / 1000).toFixed(1)}\t${s}`);
+const flush = () => {
+  clearTimeout(flushing);
+  flushing = 0;
+  if (!unsent.length) return;
+  fetch('/progress', { method: 'POST', keepalive: true, body: unsent.splice(0).join('\n') }).catch(() => {});
+};
+const log = (s) => {
+  lines.push(String(s));
+  out.textContent += s + '\n';
+  note(s);
+  flushing ||= setTimeout(flush, 500);
+};
+// trace.step(name): the harness is about to make a call with no time limit
+// of its own, which may never come back. trace.status = () => text: what
+// the alive line says, every 5 s while the main thread runs.
+const trace = {
+  step: (name) => {
+    step = name;
+    note(`step ${name}`);
+    flush();
+  },
+  set status(f) { status = f; },
+};
+setInterval(() => {
+  let s;
+  try { s = status(); } catch (e) { s = `status: ${e}`; }
+  note(`alive, last step ${step}${s ? ', ' + s : ''}`);
+  flush();
+}, 5000);
 let posted = false;
 const post = async (extra) => {
   if (posted) return;
@@ -57,7 +94,7 @@ try {
     // The runner acts on a signal (a user gesture, the CPU samples).
     const signal = async (name) => { await fetch(`/signal?name=${name}`, { method: 'POST' }); };
     const r = await runAudioHarness(factory, inputs, log,
-      { ao: q.get('ao') || 'webaudio', gesture: q.get('gesture') === '1', signal,
+      { ao: q.get('ao') || 'webaudio', gesture: q.get('gesture') === '1', signal, trace,
         resumeOnGesture: q.get('resume') !== '0',
         slowProcessorUrl: new URL('lib/mak_webaudio_processor.js?delay=400', location.href).href });
     await post({ code: r.fail ? 1 : 0, busyTicks, measures: r.measures });
