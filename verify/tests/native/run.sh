@@ -151,9 +151,7 @@ CASES=(
 # open. They are left out, as skipped with the reason, unless the mode is
 # named on the command line (wave_roll_test:stale). A fix of the defect
 # removes the row.
-OPEN_DEFECTS=(
-  "wave_roll_test stale a gap of the rolling window reads what the arrays held before the window moved"
-)
+OPEN_DEFECTS=()
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
 PATCH_TESTS=(

@@ -529,6 +529,20 @@ void mak_waveform_drop_partial(int gen)
     mp_mutex_unlock(&g_wave_lock);
 }
 
+/* After the rolling window moved: the bins past valid_bins hold nothing.
+ * All five arrays, not the filled flags alone: a gap that later lands
+ * there is read with filled == 0, and would show the minimum, the maximum
+ * and the energy the window held before it moved. Under g_wave_lock. */
+static void mak_wave_roll_clear_tail(int cap)
+{
+    const size_t n = (size_t)(cap - g_wave.valid_bins);
+    memset(g_wave.bins_min + g_wave.valid_bins, 0, n * sizeof(float));
+    memset(g_wave.bins_max + g_wave.valid_bins, 0, n * sizeof(float));
+    memset(g_wave.bins_sq + g_wave.valid_bins, 0, n * sizeof(double));
+    memset(g_wave.bins_n + g_wave.valid_bins, 0, n * sizeof(uint32_t));
+    memset(g_wave.bins_filled + g_wave.valid_bins, 0, n);
+}
+
 /* Evict the rolling window in lockstep with the demuxer's seekable cache:
  * [begin_secs, end_secs] is the cached range (negative = unknown). Drops
  * only bins older than begin (which are no longer seekable), so nothing
@@ -565,9 +579,7 @@ void mak_waveform_update_cache_range(double begin_secs, double end_secs)
                     g_wave.valid_bins = keep;
                 }
                 g_wave.roll_base_bin = new_base;
-                /* Restore the invariant: bins_filled[k]==0 for k>=valid_bins. */
-                memset(g_wave.bins_filled + g_wave.valid_bins, 0,
-                       (size_t)(cap - g_wave.valid_bins));
+                mak_wave_roll_clear_tail(cap);
             }
         }
         /* The reported range is derived from the bin grid by the reader
@@ -732,8 +744,7 @@ void mak_waveform_fold_samples(const float *mono, int n, double pts_secs,
                         g_wave.valid_bins = keep;
                     }
                     g_wave.roll_base_bin += shift;
-                    memset(g_wave.bins_filled + g_wave.valid_bins, 0,
-                           (size_t)(cap - g_wave.valid_bins));
+                    mak_wave_roll_clear_tail(cap);
                     local -= shift;
                 }
                 const int li = (int)local;
