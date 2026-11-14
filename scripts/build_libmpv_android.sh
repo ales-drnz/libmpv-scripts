@@ -95,9 +95,7 @@ LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR"
 ls -t "$LOG_DIR"/build_android_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 LOG_FILE="$LOG_DIR/build_android_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
+mirror_build_log "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo "Build started: $(date)"
 echo "Log file:      $LOG_FILE"
@@ -107,9 +105,33 @@ echo "════════════════════════�
 # Logging helpers (log / ok / warn / err / die / fail) come from _helpers.sh
 
 # ── NDK setup ─────────────────────────────────────────────────────────────────
+# ndk_revision <dir>: Pkg.Revision of the NDK in <dir> (source.properties),
+# or nothing when it is not an NDK.
+ndk_revision() {
+  sed -n 's/^Pkg\.Revision *= *//p' "$1/source.properties" 2>/dev/null | tr -d '\r' | head -1
+}
+
+# ndk_pinned <dir>: true when <dir> holds the NDK this script pins
+# (NDK_SEMVER). ALLOW_ANY_NDK=1 takes any NDK, with a warning: the library
+# is then built by another toolchain, which the build record names.
+ndk_pinned() {
+  local got; got="$(ndk_revision "$1")"
+  [[ "$got" == "$NDK_SEMVER" ]] && return 0
+  if [[ "${ALLOW_ANY_NDK:-0}" == "1" && -n "$got" ]]; then
+    warn "NDK $got in $1 is not the pinned $NDK_SEMVER (ALLOW_ANY_NDK=1)"
+    return 0
+  fi
+  return 1
+}
+
 find_or_download_ndk() {
-  # 1. Environment variable
+  # 1. Environment variable: the NDK asked for, so another version stops the
+  # build instead of being passed over.
   if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "$ANDROID_NDK_ROOT" ]]; then
+    ndk_pinned "$ANDROID_NDK_ROOT" ||
+      fail "ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT is NDK $(ndk_revision "$ANDROID_NDK_ROOT")," \
+           "this build pins $NDK_SEMVER ($NDK_VERSION). Unset it to download the" \
+           "pinned one, or set ALLOW_ANY_NDK=1"
     ok "NDK found: $ANDROID_NDK_ROOT"
     return
   fi
@@ -124,26 +146,31 @@ find_or_download_ndk() {
     "$HOME/Library/Android/sdk/ndk-bundle"
     "${TMPDIR:-/tmp}/mpv_android_build/ndk/android-ndk-${NDK_VERSION}"
   )
+  # An NDK found on the machine is used only when it is the pinned one: a
+  # directory of the right name with another NDK in it is passed over.
   for c in "${candidates[@]}"; do
-    if [[ -d "$c" ]]; then
+    if [[ -d "$c" ]] && ndk_pinned "$c"; then
       export ANDROID_NDK_ROOT="$c"
       ok "NDK found: $ANDROID_NDK_ROOT"
       return
     fi
   done
-  
-  # 2.5 Dynamic search in common bases
-  for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "/usr/local/lib/android/sdk/ndk"; do
-    if [[ -d "$base" ]]; then
-      local latest_ndk
-      latest_ndk="$(ls -d "$base"/* 2>/dev/null | grep -Ev 'ndk-bundle' | sort -V | tail -1)"
-      if [[ -n "$latest_ndk" && -d "$latest_ndk" ]]; then
-        export ANDROID_NDK_ROOT="$latest_ndk"
-        ok "NDK found: $ANDROID_NDK_ROOT"
-        return
+
+  # 2.5 Dynamic search in common bases: the newest NDK of the SDK, which is
+  # another version by definition, so only with ALLOW_ANY_NDK=1.
+  if [[ "${ALLOW_ANY_NDK:-0}" == "1" ]]; then
+    for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "/usr/local/lib/android/sdk/ndk"; do
+      if [[ -d "$base" ]]; then
+        local latest_ndk
+        latest_ndk="$(ls -d "$base"/* 2>/dev/null | grep -Ev 'ndk-bundle' | sort -V | tail -1)"
+        if [[ -n "$latest_ndk" && -d "$latest_ndk" ]] && ndk_pinned "$latest_ndk"; then
+          export ANDROID_NDK_ROOT="$latest_ndk"
+          ok "NDK found: $ANDROID_NDK_ROOT"
+          return
+        fi
       fi
-    fi
-  done
+    done
+  fi
   # 3. Download NDK
   warn "Android NDK not found. Downloading NDK ${NDK_VERSION}..."
   local ndk_dir="$BUILD_DIR/ndk"
@@ -157,24 +184,15 @@ find_or_download_ndk() {
   # Note: Google ships a single Darwin zip — the contained toolchain has both
   # arm64 and x86_64 binaries, with arm64 picked automatically on Apple Silicon.
   local url="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-${host_tag}.zip"
-  curl -fsSL --retry 3 -o "$ndk_dir/ndk.zip" "$url" || fail "NDK download failed"
   # Google publishes only a SHA-1 for the NDK zips (repository2-3.xml and the
-  # NDK downloads page), so the check is against that. Bump with NDK_VERSION.
-  local want_sha1 got_sha1
-  case "${NDK_VERSION}-${host_tag}" in
-    r28c-linux)  want_sha1="a7b54a5de87fecd125a17d54f73c446199e72a64" ;;
-    r28c-darwin) want_sha1="fc20a6bf15a30fb3428c9b60a7308793a362dc6d" ;;
-    *) fail "No pinned SHA-1 for NDK ${NDK_VERSION} (${host_tag})" ;;
-  esac
-  if command -v sha1sum >/dev/null 2>&1; then
-    got_sha1="$(sha1sum "$ndk_dir/ndk.zip" | cut -d' ' -f1)"
-  else
-    got_sha1="$(shasum -a 1 "$ndk_dir/ndk.zip" | cut -d' ' -f1)"
-  fi
-  if [[ "$got_sha1" != "$want_sha1" ]]; then
-    rm -f "$ndk_dir/ndk.zip"
-    fail "NDK SHA-1 mismatch: got $got_sha1, expected $want_sha1"
-  fi
+  # NDK downloads page). _sources.sha256 pins the SHA-256 of the zips whose
+  # SHA-1 was Google's (r28c: a7b54a5d… linux, fc20a6bf… darwin), and the
+  # check is against that, as for every other source. A zip with no pin stops
+  # the build here even without STRICT_SOURCES: bump with NDK_VERSION.
+  [[ -n "$(pinned_source "$url")" ]] ||
+    fail "No SHA-256 for $url in scripts/shared/_sources.sha256"
+  curl -fsSL --retry 3 -o "$ndk_dir/ndk.zip" "$url" || fail "NDK download failed"
+  verify_source "$url" "$ndk_dir/ndk.zip"
   # Clean any partial/previous extract first, then extract non-interactively
   # (-o). A leftover tree makes plain `unzip` prompt "replace? [y]es,[n]o,…",
   # and with no TTY in the container it reads EOF and aborts mid-extract,
@@ -184,6 +202,8 @@ find_or_download_ndk() {
   rm -f "$ndk_dir/ndk.zip"  # ~1 GB archive — not needed once extracted
   export ANDROID_NDK_ROOT="$(ls -d "$ndk_dir/android-ndk-${NDK_VERSION}" 2>/dev/null | head -1)"
   [[ -d "$ANDROID_NDK_ROOT" ]] || fail "NDK not found after extraction"
+  [[ "$(ndk_revision "$ANDROID_NDK_ROOT")" == "$NDK_SEMVER" ]] ||
+    fail "The NDK of $url is $(ndk_revision "$ANDROID_NDK_ROOT"), not NDK_SEMVER=$NDK_SEMVER"
   ok "NDK installed: $ANDROID_NDK_ROOT"
 }
 
@@ -363,7 +383,6 @@ build_abi() {
   log "═══ ABI: $abi ═══"
 
   android_zlib       "$abi" "$prefix"
-  android_iconv      "$abi" "$prefix"
   # The size pass of the compression deps is -Oz here.
   CFLAGS="-Oz -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
   CFLAGS="-Oz -fPIC" cross_build_xz
@@ -372,8 +391,12 @@ build_abi() {
   # dependency, so the expat/libpng/freetype/fribidi/harfbuzz/freetype-r2/
   # fontconfig/libass chain is unreferenced and skipped (libpng + expat are
   # font-only here — ffmpeg uses zlib/lzma, libxml2 is built
-  # --without-{iconv,lzma,zlib}).
+  # --without-{iconv,lzma,zlib}). libiconv belongs to the chain too: FFmpeg is
+  # configured --disable-iconv, mpv with iconv off and libxml2 without it, so
+  # in the default build nothing links it (no libiconv table is in the
+  # libmpv-r24 libraries, which built it and listed its license all the same).
   if ! libass_stripped; then
+    android_iconv      "$abi" "$prefix"
     CFLAGS="-O2 -fPIC" cross_build_expat
     android_libpng     "$abi" "$prefix"
     android_freetype   "$abi" "$prefix"
@@ -424,7 +447,8 @@ build_abi() {
   local final_name="libmpv_android-${abi}.so"
   cp "$prefix/lib/libmpv.so" "$release_dir/$final_name"
 
-  "$(ndk_strip)" --strip-unneeded "$release_dir/$final_name" 2>/dev/null || true
+  # Not masked: a strip that fails must not publish an unstripped library.
+  "$(ndk_strip)" --strip-unneeded "$release_dir/$final_name"
   local readelf; readelf="$(dirname "$(ndk_strip)")/llvm-readelf"
   assert_soname "$release_dir/$final_name" "$readelf"
   assert_no_relr "$release_dir/$final_name" "$readelf"
@@ -435,10 +459,10 @@ build_abi() {
   write_build_record "android-$abi" "$prefix"
   # llvm-runtimes: the NDK's libc++_static, libc++abi, libunwind and
   # compiler-rt builtins, linked into libmpv.so (write_licenses).
-  local licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib libiconv bzip2 xz speexdsp llvm-runtimes)
+  local licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp llvm-runtimes)
   patch_on libsmb2 && licenses+=(libsmb2)
   gpl_build && licenses+=(rubberband)
-  libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+  libass_stripped || licenses+=(libiconv expat libpng freetype fribidi harfbuzz fontconfig libass)
   write_licenses "android-$abi" "$BUILD_DIR/src" "${licenses[@]}"
   ok "Output: $release_dir/$final_name"
 }
@@ -485,8 +509,8 @@ android_iconv() {
 android_libpng() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libpng.a" ]] && return
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make clean 2>/dev/null || true
@@ -502,8 +526,8 @@ android_libpng() {
 android_freetype() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libfreetype.a" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/freetype-r1-android-$abi"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -524,7 +548,7 @@ android_freetype() {
 android_fribidi() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libfribidi.a" ]] && return
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi-android-$abi"; mkdir -p "$bdir"
@@ -540,8 +564,10 @@ android_fribidi() {
 android_harfbuzz() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libharfbuzz.a" ]] && return
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz-android-$abi"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -558,7 +584,7 @@ android_freetype2() {
   local abi="$1" prefix="$2"
   local sentinel="$prefix/.ft_r2_$abi"
   [[ -f "$sentinel" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   rm -rf "$BUILD_DIR/build/freetype-r1-android-$abi"
   local bdir="$BUILD_DIR/build/freetype-r2-android-$abi"; mkdir -p "$bdir"
@@ -803,16 +829,22 @@ android_mpv() {
     -Dc_args="$(eh_frame_cflags) -Oz" \
     "${link_extra[@]}"
 
-  # Dynsym hygiene check.
-  local total_syms mpv_syms
-  total_syms="$("$(ndk_strip)" --strip-unneeded "$prefix/lib/libmpv.so" 2>/dev/null; \
-    "$(ndk_toolchain)/bin/llvm-nm" -D --defined-only "$prefix/lib/libmpv.so" 2>/dev/null \
-    | grep -c ' T ' || echo 0)"
-  mpv_syms="$("$(ndk_toolchain)/bin/llvm-nm" -D --defined-only "$prefix/lib/libmpv.so" 2>/dev/null \
-    | grep -c ' T mpv_' || echo 0)"
+  # Dynsym hygiene check: the version script exports the mpv_* API and a few
+  # symbols of ours (64 in libmpv-r24), so more than 200 means it was not
+  # bound into the link and the library leaks FFmpeg and mpv internals, and
+  # none means nm could not read it. Both stop the build, as on macOS.
+  # grep -c prints its 0 and fails when nothing matches: || true keeps the
+  # one 0, where || echo 0 printed a second.
+  local total_syms mpv_syms syms
+  "$(ndk_strip)" --strip-unneeded "$prefix/lib/libmpv.so"
+  syms="$("$(ndk_toolchain)/bin/llvm-nm" -D --defined-only "$prefix/lib/libmpv.so")"
+  total_syms="$(grep -c ' T ' <<< "$syms" || true)"
+  mpv_syms="$(grep -c ' T mpv_' <<< "$syms" || true)"
   ok "mpv shared ($abi) ✓ — symbols: $total_syms total, $mpv_syms mpv_*"
+  [[ "$mpv_syms" -gt 0 ]] || die "No mpv_* symbol exported by $prefix/lib/libmpv.so"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
-    warn "Expected ~60 symbols with VIS_HIDDEN=1 but got $total_syms"
+    die "Export-filter regression: expected ~60 exported symbols with" \
+        "VIS_HIDDEN=1 but got $total_syms ($abi)"
   fi
 }
 
@@ -831,6 +863,8 @@ main() {
   done
 
   find_or_download_ndk
+  # The NDK that compiles, in the record of the build (write_build_record).
+  toolchain_note ndk "$(ndk_revision "$ANDROID_NDK_ROOT")"
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
   for abi in $ABIS; do

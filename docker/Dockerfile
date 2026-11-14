@@ -42,7 +42,10 @@
 # ══════════════════════════════════════════════════════════════════════════════
 # base — shared by every platform stage
 # ══════════════════════════════════════════════════════════════════════════════
-FROM ubuntu:24.04 AS base
+# The tag names the release, the digest (of the multi-arch index) is what is
+# pulled: a rebuilt ubuntu:24.04 enters with a commit that changes it. The
+# apt packages below are still the archive's current ones.
+FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -99,8 +102,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Meson from pip, not apt: Ubuntu 24.04 ships meson 1.3.2, but fontconfig 2.16+
 # and other recent deps require meson >= 1.6.0. --break-system-packages is fine
-# in a throwaway build image (PEP 668 / Ubuntu 24.04).
-RUN pip3 install --break-system-packages --no-cache-dir 'meson>=1.6.0'
+# in a throwaway build image (PEP 668 / Ubuntu 24.04). One version, with the
+# hash of its wheel: the version libmpv-r24 was built with.
+RUN printf '%s\n' \
+      'meson==1.12.1 --hash=sha256:930bc7542cbd9f57009e182fd014eba48cf1a0180a7b9006d2d32d8f168d8b02' \
+      > /tmp/requirements.txt \
+    && pip3 install --break-system-packages --no-cache-dir --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt \
+    && meson --version
 
 WORKDIR /src
 
@@ -160,7 +169,7 @@ WORKDIR /src
 # No libpipewire-0.3-dev: focal's 0.3.5 is below mpv's floor, and libmpv does
 # not link PipeWire anyway. build_libmpv_linux.sh builds PipeWire's headers
 # and turns both audio client libraries into lazily loaded stubs.
-FROM ubuntu:20.04 AS linux
+FROM ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 AS linux
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -184,8 +193,16 @@ RUN set -eux; \
     "${triple}-gcc" --version | head -1
 
 # meson, ninja and cmake from pip: focal's are too old for the dependency
-# builds (meson >= 1.6 for mpv).
-RUN pip3 install --no-cache-dir 'meson>=1.6.0,<1.8' 'ninja>=1.11' 'cmake>=3.28,<4'
+# builds (meson >= 1.6 for mpv). The versions libmpv-r24 was built with,
+# each with the hashes of its x86_64 and aarch64 wheels.
+RUN printf '%s\n' \
+      'meson==1.7.2 --hash=sha256:82c6818dc81743c96de3a458f06175776ebfde4081195ea31ea6971838f25e38' \
+      'ninja==1.13.2 --hash=sha256:65a24341b5ac09fcadcc37082660be40a94174e51a937fabf6e2cae26225fa2c --hash=sha256:d775a5e43e9088f507a6250d57fcf5678eb31268c545feb5064ffeee33735622' \
+      'cmake==3.31.10 --hash=sha256:3c17bb24dba15f8ecc3fd706afe04264410ef88796f4115c119327c961d5dc57 --hash=sha256:2f766bb46367e5e0559fa33184653754bce044583a06014dcaebf8e6dff8a1f1 --hash=sha256:a4a5615f31f692c9b9aa8b365704e4b76172348af6fa40e16fea3f118bb01194' \
+      > /tmp/requirements.txt \
+    && pip3 install --no-cache-dir --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt \
+    && meson --version && ninja --version && cmake --version | head -1
 
 WORKDIR /src
 

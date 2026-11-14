@@ -32,6 +32,13 @@
 #                  write_licenses of shared/_audio_only.sh leaves next to the
 #                  binary), with the source of the build in its README.txt
 #                  and all the texts in one file, THIRD_PARTY_LICENSES.txt
+#   components     what each target links, with its version: the components
+#                  its build named to write_licenses, so libplacebo 6 or 7,
+#                  the font stack only where libass is kept, and the date of
+#                  the CA bundle
+#   toolchain      what compiled each target: the first line of its
+#                  compiler's --version, meson, ninja, cmake, and what the
+#                  platform adds (the NDK, Xcode and its SDK, emsdk)
 #   structLayout   when struct_layout.json is there (verify/struct_layout.py,
 #                  on the patched client.h): sizeof and offsetof of the client
 #                  API structs a binding reads, per data model (lp64, ilp32)
@@ -165,6 +172,15 @@ manifest = {
     "assets": assets,
     "licenses": {"asset": licenses_zip.name, "sha256": licenses_sha},
 }
+# components and toolchain: additions a reader of the fields above ignores.
+# A record from before they existed leaves its target out of both, loudly.
+for field in ("components", "toolchain"):
+    found = {t: records[t][field] for t in sorted(records)
+             if isinstance(records[t].get(field), dict) and records[t][field]}
+    for t in sorted(set(records) - set(found)):
+        print(f"WARNING: build_{t}.json has no {field}: build it again to list it")
+    if found:
+        manifest[field] = found
 if web:
     manifest["web"] = web
 layout_path = release_dir / "struct_layout.json"

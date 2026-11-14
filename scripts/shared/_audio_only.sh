@@ -254,6 +254,39 @@ record_patch() {
   fi
 }
 
+# toolchain_note <name> <value> — one more entry of the "toolchain" of the
+# records this build writes (write_build_record): what only the platform
+# script knows. A later note of the same name replaces the earlier one.
+TOOLCHAIN_NOTES=()
+toolchain_note() {
+  local kept=() n
+  for n in ${TOOLCHAIN_NOTES[@]+"${TOOLCHAIN_NOTES[@]}"}; do
+    [[ "$n" == "$1="* ]] || kept+=("$n")
+  done
+  TOOLCHAIN_NOTES=(${kept[@]+"${kept[@]}"} "$1=$2")
+}
+
+# toolchain_lines — the "toolchain" of a record as name=value lines: the
+# compiler, the build tools on PATH, then the notes. $CC may hold a launcher
+# and flags ("ccache gcc"), so it is split into words on purpose.
+toolchain_lines() {
+  local cc="${BUILD_TOOLCHAIN_CC:-${CC:-}}" line tool n
+  if [[ -n "$cc" ]]; then
+    # shellcheck disable=SC2086
+    # || true: head closing the pipe early is not a failed compiler.
+    line="$($cc --version 2>/dev/null | head -1)" || true
+    [[ -n "$line" ]] && printf 'compiler=%s\n' "$line"
+  fi
+  for tool in meson ninja cmake; do
+    line="$("$tool" --version 2>/dev/null | head -1)" || true
+    [[ -n "$line" ]] && printf '%s=%s\n' "$tool" "${line#cmake version }"
+  done
+  for n in ${TOOLCHAIN_NOTES[@]+"${TOOLCHAIN_NOTES[@]}"}; do
+    printf '%s\n' "$n"
+  done
+  return 0
+}
+
 # write_build_record <target> <prefix>... — write builds/release/
 # build_<target>.json, the record of libmpv_<target>.*: its release, its
 # license, its patches and its filters, from the prefixes it was linked from
@@ -262,12 +295,20 @@ record_patch() {
 # side in each tree (read_error) found in one record only: a cached FFmpeg
 # stage built with it and mpv built again without it, or the reverse.
 # write_manifest.sh reads it. RELEASE_DIR overrides the directory.
+#
+# The record also names the toolchain, "toolchain": the first line of the
+# compiler's --version (the $CC the build exports, or BUILD_TOOLCHAIN_CC),
+# and meson, ninja and cmake as found on PATH, so a release states what
+# compiled it and not only what a Dockerfile asked for. A script adds what
+# only it knows (the NDK, Xcode and its SDK, emsdk) with toolchain_note.
+# A tool that is not there is left out: the record never stops a build for it.
 write_build_record() {
   local target="$1"; shift
   local out="${RELEASE_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/release}"
   mkdir -p "$out"
+  BUILD_TOOLCHAIN="$(toolchain_lines)" \
   python3 - "$out/build_$target.json" "$target" "$LIBMPV_RELEASE" "$LIBMPV_LICENSE" "$@" <<'PY'
-import json, pathlib, sys
+import json, os, pathlib, sys
 
 out, target, release, license, *prefixes = sys.argv[1:]
 # The toggles that patch both trees, FFmpeg and mpv.
@@ -301,12 +342,15 @@ if any(r != records[0] for r in records[1:]):
     sys.exit(f"The prefixes of {target} differ in patches or filters: "
              f"{dict(zip(prefixes, records))}")
 patches, filters = records[0]
+toolchain = dict(l.split("=", 1) for l in os.environ.get("BUILD_TOOLCHAIN", "").splitlines()
+                 if "=" in l and l.split("=", 1)[1].strip())
 pathlib.Path(out).write_text(json.dumps({
     "release": release,
     "target": target,
     "license": license,
     "patches": patches,
     "audioFilters": filters,
+    "toolchain": toolchain,
 }, indent=2) + "\n")
 print(f"Wrote {out} ({license}, {len(patches)} patches, {len(filters)} filters)")
 PY
@@ -334,6 +378,13 @@ PY
 # write_manifest.sh packs the directories into licenses.zip. RELEASE_DIR
 # overrides the directory.
 #
+# The same list, with the version of each component, goes into the record of
+# the build as "components" (build_<target>.json next to the directory, or
+# BUILD_RECORD when the record lives elsewhere): what this binary links, from
+# the call that names it, not what _versions.sh pins for every platform. The
+# runtime libraries of the toolchain have no version of their own and are
+# left to "toolchain". No record there, nothing written.
+#
 # mpv and FFmpeg get the texts of the license they are built under (LGPL or
 # GPL, see gpl_build; the LGPLv3 comes with the GPLv3 it adds to) with their
 # own notes on it (Copyright, LICENSE.md); the
@@ -352,7 +403,7 @@ write_licenses() {
   LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-}" LIBUNIBREAK_VERSION="${LIBUNIBREAK_VERSION:-}" \
   LIBEXPAT_VERSION="${EXPAT_VERSION:-$LIBEXPAT_VERSION}" \
     python3 - "$out" "$target" "$src" "$commit" "$@" ${extra[@]+"${extra[@]}"} <<'PY'
-import os, pathlib, re, shutil, sys
+import json, os, pathlib, re, shutil, sys
 
 out, target, src, commit, *components = sys.argv[1:]
 out, src = pathlib.Path(out), pathlib.Path(src)
@@ -590,6 +641,16 @@ for name, version, spdx, texts in combined:
         parts.append(f"--- {f} ---\n\n{body.rstrip()}\n")
 (out / "THIRD_PARTY_LICENSES.txt").write_text("\n".join(parts))
 print(f"Wrote {out} ({len(components) + 1} components)")
+
+record = pathlib.Path(env("BUILD_RECORD") or out.parent / f"build_{target}.json")
+if record.is_file():
+    data = json.loads(record.read_text())
+    # combined holds libmpv-scripts, then one entry per component, in order.
+    names = [c.partition("=")[0] for c in components]
+    data["components"] = {name: version
+                          for name, (_, version, _, _) in zip(names, combined[1:])
+                          if name not in TOOLCHAIN}
+    record.write_text(json.dumps(data, indent=2) + "\n")
 PY
 }
 

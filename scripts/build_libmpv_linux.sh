@@ -93,9 +93,7 @@ LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR"
 ls -t "$LOG_DIR"/build_linux-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 LOG_FILE="$LOG_DIR/build_linux-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
+mirror_build_log "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo "Build started: $(date)"
 echo "Log file:      $LOG_FILE"
@@ -147,8 +145,8 @@ check_toolchain() {
 
 build_libpng() {
   [[ -f "$PREFIX/lib/libpng.a" ]] && return
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared
@@ -159,8 +157,8 @@ build_libpng() {
 
 build_freetype() {
   [[ -f "$PREFIX/lib/libfreetype.a" && ! -f "$PREFIX/.ft_round2" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
 
   # Round 1: without HarfBuzz
@@ -182,7 +180,7 @@ build_freetype() {
 
 build_fribidi() {
   [[ -f "$PREFIX/lib/libfribidi.a" ]] && return
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi"; mkdir -p "$bdir"
@@ -197,8 +195,10 @@ build_fribidi() {
 
 build_harfbuzz() {
   [[ -f "$PREFIX/lib/libharfbuzz.a" ]] && return
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -213,7 +213,7 @@ build_harfbuzz() {
 
 build_freetype_round2() {
   [[ -f "$PREFIX/.ft_round2" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/freetype-r2"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -494,8 +494,13 @@ finalize() {
   total_syms="$("$READELF" -W --dyn-syms "$out" 2>/dev/null | awk '$5=="GLOBAL" && $4=="FUNC" && $7!="UND" {n++} END{print n+0}')"
   mpv_syms="$("$READELF"   -W --dyn-syms "$out" 2>/dev/null | awk '$5=="GLOBAL" && $4=="FUNC" && $7!="UND" && $8 ~ /^mpv_/ {n++} END{print n+0}')"
   ok "Symbols: $total_syms total, $mpv_syms mpv_*"
+  # 63 in libmpv-r24. More than 200: the version script was not bound into
+  # the link; none: readelf could not read the library. Both stop the build,
+  # as on macOS.
+  [[ "$mpv_syms" -gt 0 ]] || die "No mpv_* symbol exported by $out"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
-    warn "Expected ~60 symbols with VIS_HIDDEN=1 but got $total_syms"
+    die "Export-filter regression: expected ~60 exported symbols with" \
+        "VIS_HIDDEN=1 but got $total_syms"
   fi
 
   ok "Output: $out"

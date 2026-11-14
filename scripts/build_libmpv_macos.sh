@@ -209,8 +209,8 @@ build_libpng() {
   local prefix="$1"
   [[ -f "$prefix/lib/libpng.a" ]] && { ok "libpng already compiled"; return; }
   log "Build libpng $LIBPNG_VERSION..."
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   CFLAGS="$(arch_flags) -O2" \
@@ -228,8 +228,8 @@ build_freetype() {
   local prefix="$1"
   [[ -f "$prefix/lib/libfreetype.a" ]] && { ok "freetype already compiled"; return; }
   log "Build freetype $FREETYPE_VERSION [round 1 — without harfbuzz]..."
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/freetype-r1"
   mkdir -p "$bdir"
@@ -258,7 +258,7 @@ build_fribidi() {
   local prefix="$1"
   [[ -f "$prefix/lib/libfribidi.a" ]] && { ok "fribidi already compiled"; return; }
   log "Build fribidi $FRIBIDI_VERSION..."
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi"
@@ -281,8 +281,10 @@ build_harfbuzz() {
   local prefix="$1"
   [[ -f "$prefix/lib/libharfbuzz.a" ]] && { ok "harfbuzz already compiled"; return; }
   log "Build harfbuzz $HARFBUZZ_VERSION..."
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz"
   mkdir -p "$bdir"
@@ -309,7 +311,7 @@ build_freetype_round2() {
   local sentinel="$prefix/lib/freetype_harfbuzz_done"
   [[ -f "$sentinel" ]] && { ok "freetype round2 already compiled"; return; }
   log "Build freetype $FREETYPE_VERSION [round 2 — with harfbuzz]..."
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   rm -rf "$BUILD_DIR/build/freetype-r1"
   local bdir="$BUILD_DIR/build/freetype-r2"
@@ -591,8 +593,9 @@ verify_dylib() {
   # expect ~60 exported symbols — essentially just the public mpv_* C API.
   # Without it, expect ~8000.
   local total_syms mpv_syms
-  total_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T ' || echo 0)"
-  mpv_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T _mpv_' || echo 0)"
+  # || true, not || echo 0: grep -c already prints its 0 when it fails.
+  total_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T ' || true)"
+  mpv_syms="$(nm -gU "$out" 2>/dev/null | grep -c ' T _mpv_' || true)"
   ok "Symbols: $total_syms total, $mpv_syms mpv_*"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
     die "Export-filter regression: expected ~60 exported symbols with" \
@@ -652,7 +655,8 @@ assemble_xcframework() {
   apple_sign "$ver/libmpv" || warn "codesign (adhoc) of $ver/libmpv failed — host dlopen may SIGKILL on Apple Silicon"
   # Headers: pick from any arch's prefix — identical across arches.
   local first_arch="${ARCHS%% *}"
-  cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/" 2>/dev/null || true
+  # Not masked: a framework without its headers is not one to publish.
+  cp -r "$BUILD_ROOT/$first_arch/prefix/include/mpv"/* "$ver/Headers/"
   apple_write_modulemap "$ver/Modules/module.modulemap"
   apple_write_info_plist "$ver/Resources/Info.plist" LSMinimumSystemVersion "$MACOS_MIN"
   apple_write_privacy_manifest "$ver/Resources/PrivacyInfo.xcprivacy"
@@ -716,6 +720,7 @@ main() {
   echo ""
 
   apple_check_tools meson ninja nasm cmake pkg-config python3 autoconf automake libtool git
+  apple_toolchain_notes macosx
 
   # Build each requested arch into its own fully separate tree
   # (BUILD_ROOT/<arch>: src extract + build dirs + prefix) so a

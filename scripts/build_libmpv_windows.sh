@@ -96,9 +96,7 @@ LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR"
 ls -t "$LOG_DIR"/build_windows-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 LOG_FILE="$LOG_DIR/build_windows-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
+mirror_build_log "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo "Build started: $(date)"
 echo "Log file:      $LOG_FILE"
@@ -212,8 +210,12 @@ if [[ ! -f "$DIST/lib/liblzma.a" ]]; then
   ok "xz ✓"
 fi
 
-# ── libiconv ──────────────────────────────────────────────────────────────────
-if [[ ! -f "$DIST/lib/libiconv.a" ]]; then
+# ── libiconv — built ONLY when libass is kept ────────────────────────────────
+# Only fontconfig below uses it (-Diconv=enabled): FFmpeg is configured
+# --disable-iconv, mpv with iconv off and libxml2 without it, so in the
+# default build nothing links it (no libiconv table is in the libmpv-r24
+# DLLs, which built it and listed its license all the same).
+if ! libass_stripped && [[ ! -f "$DIST/lib/libiconv.a" ]]; then
   log "Building libiconv $LIBICONV_VERSION..."
   IC=$(fetch libiconv "https://ftp.gnu.org/pub/gnu/libiconv/libiconv-${LIBICONV_VERSION}.tar.gz" \
     "https://ftpmirror.gnu.org/libiconv/libiconv-${LIBICONV_VERSION}.tar.gz" \
@@ -580,6 +582,9 @@ fi
 # ── mpv ───────────────────────────────────────────────────────────────────────
 log "Building mpv $MPV_VERSION..."
 MPV_ARCHIVE=$(fetch mpv "https://github.com/mpv-player/mpv/archive/refs/tags/v${MPV_VERSION}.tar.gz")
+# A pristine tree on every build, as for FFmpeg above: the mpv patches are
+# not idempotent, and tar over a patched tree keeps the files they added.
+rm -rf "$SRC/mpv-$MPV_VERSION"
 tar -xf "$MPV_ARCHIVE" -C "$SRC"
 
 pushd "$SRC/mpv-$MPV_VERSION"
@@ -632,7 +637,7 @@ pushd "$SRC/mpv-$MPV_VERSION"
   #               when strip_libass is disabled; private deps libpng + expat)
   #   media:      libplacebo, libsmb2, libxml2, libspeexdsp (and librubberband
   #               in the GPL build)
-  #   compression: zlib, bz2, lzma, iconv
+  #   compression: zlib, bz2, lzma (and iconv with the font libs)
   #   tls:        openssl (ssl + crypto)
   #   threading + winsock: winpthread, ws2_32 (libsmb2)
   #   Windows system libs: avrt, dwmapi, gdi32, …
@@ -643,7 +648,7 @@ pushd "$SRC/mpv-$MPV_VERSION"
   # archives for circular refs, so the exact intra-group order is not critical.
   _font_libs=""
   if ! libass_stripped; then
-    _font_libs="-lass -lfontconfig -lharfbuzz -lfribidi -lfreetype -lpng16 -lexpat "
+    _font_libs="-lass -lfontconfig -lharfbuzz -lfribidi -lfreetype -lpng16 -lexpat -liconv "
   fi
   _rubberband_lib=""
   if gpl_build; then
@@ -651,7 +656,7 @@ pushd "$SRC/mpv-$MPV_VERSION"
   fi
   WIN_USR_LIBS="-Wl,--start-group \
     ${_font_libs}-lplacebo ${_rubberband_lib}-lsmb2 -lxml2 -lspeexdsp \
-    -lz -lbz2 -llzma -liconv \
+    -lz -lbz2 -llzma \
     -lssl -lcrypto \
     -Wl,--end-group"
   # -luxtheme: w32_common.c calls SetWindowTheme. GNU ld GCs the dead win32-VO
@@ -715,11 +720,11 @@ write_build_record "windows-$OUT_ARCH" "$DIST"
 # The toolchain's runtime libraries -static links in (write_licenses):
 # mingw-w64's winpthreads and CRT on both, and on aarch64 llvm-mingw's libc++,
 # libunwind and compiler-rt. GCC's libgcc and libstdc++ (x86_64) need no notice.
-licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz libiconv speexdsp winpthreads mingw-w64-crt)
+licenses=(mpv ffmpeg openssl libplacebo libxml2 zlib bzip2 xz speexdsp winpthreads mingw-w64-crt)
 [[ "$CROSS_TOOLCHAIN_KIND" == "llvm" ]] && licenses+=(llvm-runtimes)
 patch_on libsmb2 && licenses+=(libsmb2)
 gpl_build && licenses+=(rubberband)
-libass_stripped || licenses+=(expat libpng freetype fribidi harfbuzz fontconfig libass)
+libass_stripped || licenses+=(libiconv expat libpng freetype fribidi harfbuzz fontconfig libass)
 write_licenses "windows-$OUT_ARCH" "$SRC" "${licenses[@]}"
 
 log "=== Build libmpv for Windows COMPLETED! ==="

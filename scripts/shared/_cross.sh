@@ -329,8 +329,8 @@ cross_build_xz() {
 # expat: fontconfig's XML parser, in the font stack only.
 cross_build_expat() {
   [[ -f "$CROSS_PREFIX_DIR/lib/libexpat.a" ]] && return
-  local src="$CROSS_BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.gz"
-  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.gz" "$src"
+  local src="$CROSS_BUILD_DIR/src/expat-$LIBEXPAT_VERSION.tar.bz2"
+  download "https://github.com/libexpat/libexpat/releases/download/R_$(echo "$LIBEXPAT_VERSION" | tr . _)/expat-${LIBEXPAT_VERSION}.tar.bz2" "$src"
   local dir; dir="$(extract "$src" "$CROSS_BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make distclean 2>/dev/null || make clean 2>/dev/null || true
