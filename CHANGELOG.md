@@ -36,7 +36,7 @@
 - A failed strip, a leaking export list or an Apple framework without its headers stops the build. Archives are unpacked in a staging directory, and the build log is complete when a script exits.
 - `update_cacert.sh` checks the bundle against its published checksum and lists the roots that enter and leave. `--check` prints the list and writes nothing.
 - Every patch marker has a version: a source tree patched by an older release stops the build with a message. An anchor that changes a file writes it whole.
-- New native tests: loudness against the signals of EBU Tech 3341 and 3342, hostile inputs, the rolling window, an exit in the middle of a scan, and `playlist-prev-playlist` on the Windows DLL under Wine. `UBSAN=1` adds the overflow checks, and a `tsan` kind finds data races.
+- New native tests: loudness against the signals of EBU Tech 3341 and 3342, hostile inputs, the rolling window, an exit in the middle of a scan, and `playlist-prev-playlist` on the Windows DLL under Wine. `UBSAN=1` adds the overflow checks, a `tsan` kind finds data races, and `MEMCHECK=1` runs the tests under valgrind memcheck, for the reads of memory that was never set.
 - `checks.yml` runs the lint, the TUI tests and the native tests on every push and pull request, and Build calls it. Android builds one job per ABI, and every job has a timeout.
 - The check of the kit takes its Build run from the input or finds it, with no default, names its runners and Flutter by version, and its Summary job says whether the run counts for a release. A file that never started on a device makes it not green. `release_gate.sh` refuses a Build without a complete green check.
 - The TUI builds with Go 1.26.
