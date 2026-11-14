@@ -473,7 +473,7 @@ DEMUX_EDITS = [
      '            mak_demux_feed_cut(in->mak_feed);\n'),
     ('read_packet read-ahead reached',
      '    if (!read_more && !prefetch_more && !refresh_more) {\n'
-     '        in->hyst_active = !!in->hyst_secs;\n',
+     '        in->hyst_active = in->hyst_secs > 0 || in->hyst_bytes > 0;\n',
      '    if (!read_more && !prefetch_more && !refresh_more) {\n'
      '        /* ' + MARKER + ' ─── the read-ahead (cache-secs) is reached\n'
      '         * before the end of the file: from now on the demuxer reads at\n'
@@ -481,7 +481,7 @@ DEMUX_EDITS = [
      '         * would trail playback. The re-open takes over. */\n'
      '        if (in->mak_feed && !in->eof)\n'
      '            mak_demux_feed_cut(in->mak_feed);\n'
-     '        in->hyst_active = !!in->hyst_secs;\n'),
+     '        in->hyst_active = in->hyst_secs > 0 || in->hyst_bytes > 0;\n'),
     ('mark_stream_eof',
      'static void mark_stream_eof(struct demux_stream *ds)\n'
      '{\n'
@@ -528,16 +528,16 @@ DEMUX_EDITS = [
      '     * be freed below: cut before a replay could reach its queue. */\n'
      '    if (in->mak_feed)\n'
      '        mak_demux_feed_seek(in->mak_feed);\n'),
-    ('demuxer_select_track',
-     '        ds->selected = selected;\n'
-     '        update_stream_selection_state(in, ds);\n',
-     '        ds->selected = selected;\n'
-     '        /* ' + MARKER + ' ─── a deselected fed stream gets no more\n'
-     '         * packets and loses its cache: the pass cannot go on. */\n'
-     '        if (!selected && in->mak_feed &&\n'
-     '            stream->index == mak_demux_feed_stream(in->mak_feed))\n'
-     '            mak_demux_feed_cut(in->mak_feed);\n'
-     '        update_stream_selection_state(in, ds);\n'),
+    ('select_track',
+     '    ds->selected = selected;\n'
+     '    update_stream_selection_state(in, ds);\n',
+     '    ds->selected = selected;\n'
+     '    /* ' + MARKER + ' ─── a deselected fed stream gets no more\n'
+     '     * packets and loses its cache: the pass cannot go on. */\n'
+     '    if (!selected && in->mak_feed &&\n'
+     '        stream->index == mak_demux_feed_stream(in->mak_feed))\n'
+     '        mak_demux_feed_cut(in->mak_feed);\n'
+     '    update_stream_selection_state(in, ds);\n'),
     ('demux_shutdown',
      'static void demux_shutdown(struct demux_internal *in)\n'
      '{\n'
