@@ -25,12 +25,11 @@
 //              waveform, past the loudness's, which must not be ready.
 //   shorthttp, longhttp, hugehttp  the FLAC files over HTTP (served by
 //              run.sh): the pass that decodes mpv's cache.
+#include "real_alloc.h"
 #include <errno.h>
 #include <math.h>
 #include <stdatomic.h>
 #include "analysis_test.h"
-
-extern int __interceptor_posix_memalign(void **p, size_t align, size_t size);
 
 static atomic_size_t largest;
 
@@ -39,7 +38,7 @@ int posix_memalign(void **p, size_t align, size_t size)
     size_t old = atomic_load(&largest);
     while (size > old && !atomic_compare_exchange_weak(&largest, &old, size))
         ;
-    return __interceptor_posix_memalign(p, align, size);
+    return real_posix_memalign(p, align, size);
 }
 
 int main(int argc, char **argv)

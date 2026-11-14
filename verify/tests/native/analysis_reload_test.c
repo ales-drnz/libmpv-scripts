@@ -138,7 +138,7 @@ int main(int argc, char **argv)
     mpv_handle *h = an_create();
     mpv_initialize(h);
     an_flag(h, "waveform-enabled", 1);
-    struct an_wave w1, w2;
+    struct an_wave w1 = {0}, w2 = {0};
     struct an_loud l1, l2;
 
     if (!strcmp(mode, "same")) {

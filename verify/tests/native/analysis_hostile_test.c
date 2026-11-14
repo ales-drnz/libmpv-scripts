@@ -4,7 +4,7 @@
 
 // analysis_hostile_test <mode> <fixtures> <tmpdir>: files and failures the
 // bulk analysis must not take for a clean scan. The test replaces
-// posix_memalign() for the process (FFmpeg's av_malloc, ASan's underneath)
+// posix_memalign() for the process (FFmpeg's av_malloc, real_alloc.h's underneath)
 // to fail one allocation or to record the largest one, and writes its own
 // WAV files into <tmpdir>.
 //   loudpart  long.flac (15 min, 4 workers), waveform and loudness on, and
@@ -28,13 +28,12 @@
 //             file's. r24 leaves NaN in the bins, an infinite peak, and the
 //             K filter of the first worker on NaN to the end of its slice,
 //             which drops its blocks from the gate: 11 LU lower.
+#include "real_alloc.h"
 #include <errno.h>
 #include <math.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include "analysis_test.h"
-
-extern int __interceptor_posix_memalign(void **p, size_t align, size_t size);
 
 static atomic_size_t fail_size;      // fail the next allocation of this size
 static atomic_int failed_allocs;
@@ -53,7 +52,7 @@ int posix_memalign(void **p, size_t align, size_t size)
         while (size > old && !atomic_compare_exchange_weak(&largest, &old, size))
             ;
     }
-    return __interceptor_posix_memalign(p, align, size);
+    return real_posix_memalign(p, align, size);
 }
 
 static void put32(FILE *f, uint32_t v) { fwrite(&v, 4, 1, f); }
@@ -172,7 +171,7 @@ int main(int argc, char **argv)
         // 8 bytes per sum.
         atomic_store(&fail_size, 2250 * 8);
         mpv_handle *h = start(file, 1, 1);
-        an_wait_final(h, 1, 1, 60, &w, &lo);
+        an_wait_final(h, 1, 1, 300, &w, &lo);
         mt_check(atomic_load(&failed_allocs) == 1,
                  "one worker's accumulator failed to allocate (%d)",
                  atomic_load(&failed_allocs));

@@ -4,7 +4,7 @@
 
 // analysis_oom_test <mode> <fixtures> <tmpdir>: an allocation that fails in
 // mak_scan_start after the new generation started (F74). The test
-// replaces calloc() for the process (ASan's calloc underneath) and, once
+// replaces calloc() for the process (real_alloc.h's underneath) and, once
 // armed, fails the first calloc(1, n) with n between 24 and 96 bytes: the
 // coordinator's arguments (32 bytes on r17, 48 with the track and the
 // descriptor fields).
@@ -14,10 +14,9 @@
 //          decoding and the loudness on scanning until the next file. (The
 //          setter of waveform-enabled no longer starts a scan here: since
 //          r24 the complete analysis of the same file stays, F166.)
+#include "real_alloc.h"
 #include <stdatomic.h>
 #include "analysis_test.h"
-
-extern void *__interceptor_calloc(size_t nmemb, size_t size);
 
 static atomic_int armed;
 static atomic_size_t failed_size;
@@ -29,7 +28,7 @@ void *calloc(size_t nmemb, size_t size)
         atomic_store(&failed_size, size);
         return NULL;
     }
-    return __interceptor_calloc(nmemb, size);
+    return real_calloc(nmemb, size);
 }
 
 int main(int argc, char **argv)
