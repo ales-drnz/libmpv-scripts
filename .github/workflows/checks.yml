@@ -97,6 +97,14 @@ jobs:
         run: bash verify/tests/hardening_test.sh
       - name: Timer imports check on good and bad samples
         run: bash verify/tests/timer_imports_test.sh
+      - name: CA bundle update and its age
+        run: bash verify/tests/cacert_test.sh
+      - name: Source extraction and fetch helpers
+        run: bash verify/tests/helpers_test.sh
+      - name: Android NDK version and checksum
+        run: bash verify/tests/android_ndk_test.sh
+      - name: emsdk pins
+        run: bash verify/tests/emsdk_pins_test.sh
       - name: xcframework slices
         run: bash verify/tests/xcf_slices_test.sh
       - name: FFmpeg muxer and protocol markers
