@@ -301,7 +301,9 @@ struct mak_loud_worker *mak_loud_worker_create(
 
     /* Converter: source layout/format → interleaved float, same rate.
      * No resampling — pure format/packing conversion. */
-    AVChannelLayout out_layout;
+    /* Zeroed: av_channel_layout_copy() uninits its destination first, and
+     * on a custom order frees the map it finds there. */
+    AVChannelLayout out_layout = {0};
     if (av_channel_layout_copy(&out_layout, &par->ch_layout) < 0) goto fail;
     int ret = swr_alloc_set_opts2(&w->swr,
         &out_layout, AV_SAMPLE_FMT_FLT, sample_rate,
