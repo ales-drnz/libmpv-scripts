@@ -41,6 +41,16 @@
 # UndefinedBehaviorSanitizer (a signed integer overflow, a float out of the
 # range of the integer it is cast to), which stop the test; a work dir keeps
 # the setting it was built with.
+# MEMCHECK=1 builds libmpv and the tests with no sanitizer and runs each mode
+# under valgrind memcheck, which reports what AddressSanitizer does not see:
+# a read of memory that was never written (a branch, an address or a system
+# call that depends on it). memcheck.supp lists the reports of the system
+# libraries that are left out. A mode fails with exit 99 on a report and has
+# MEMCHECK_TIMEOUT seconds (1200), since valgrind runs it many times slower;
+# the tsan tests, the tests of the patch scripts and the modes of
+# MEMCHECK_SLOW are skipped. Use a work dir of its own. It needs valgrind
+# and the debug symbols of the C library (libc6-dbg), and takes about half
+# an hour.
 # The tests take about two minutes, most of it waiting on playback.
 #
 # Usage: bash verify/tests/native/run.sh [--reuse] <work dir> [test[:mode,...] ...]
@@ -65,6 +75,24 @@ WANT_DISABLED="${DISABLED_PATCHES:-}"
 SAN=()
 if [[ "${UBSAN:-0}" == 1 ]]; then
   SAN=(-fsanitize=signed-integer-overflow,float-cast-overflow -fno-sanitize-recover=all)
+fi
+# AddressSanitizer and valgrind do not run together.
+MEMCHECK="${MEMCHECK:-0}"
+ASAN=(-fsanitize=address) BSAN=address TIME=120 VG=()
+if [[ "$MEMCHECK" == 1 ]]; then
+  [[ "${UBSAN:-0}" == 1 ]] && { echo "MEMCHECK=1 and UBSAN=1 do not go together" >&2; exit 1; }
+  command -v valgrind > /dev/null || { echo "MEMCHECK=1 needs valgrind" >&2; exit 1; }
+  ASAN=() BSAN=none TIME="${MEMCHECK_TIMEOUT:-1200}"
+  SAN_TAG="memcheck"
+  # No leak check: LeakSanitizer does that in the default run. The origins
+  # name the allocation or the stack frame the unwritten bytes come from.
+  # nouserintercepts: a malloc(), calloc() or posix_memalign() that a test
+  # defines stays in the way of the libraries' calls (real_alloc.h); without
+  # it valgrind sends them straight to its own allocator.
+  VG=(valgrind --tool=memcheck --error-exitcode=99 --track-origins=yes --read-var-info=no
+      --num-callers=30 --leak-check=no --fair-sched=yes --gen-suppressions=all -q
+      --soname-synonyms=somalloc=nouserintercepts
+      "--suppressions=$HERE/memcheck.supp")
 fi
 
 # shellcheck source=/dev/null
@@ -152,6 +180,16 @@ CASES=(
 # named on the command line (wave_roll_test:stale). A fix of the defect
 # removes the row.
 OPEN_DEFECTS=()
+# <test> <mode> <reason>: modes that MEMCHECK=1 leaves out, as skipped with
+# the reason, unless the mode is named on the command line. They measure
+# time against playback or a download, and valgrind runs them too slowly:
+# each fails there with no report of memcheck and passes without valgrind.
+MEMCHECK_SLOW=(
+  "pcm_tap_test idle the output underruns under valgrind and the tap has no window to read"
+  "analysis_tail_test overcut the scan is slower than the download it is timed against"
+  "analysis_hint_test short the scan ends after the stream is cached, the test wants it before"
+  "af_command_args_test labels the command lands before the seek rebuilt the filter and is refused"
+)
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
 PATCH_TESTS=(
@@ -193,13 +231,20 @@ picked_modes() {
 }
 
 # open_defect <test> <mode>: prints the reason and returns 0 when the mode
-# is in OPEN_DEFECTS and the command line does not name it.
+# is in OPEN_DEFECTS, or in MEMCHECK_SLOW in a MEMCHECK=1 run, and the
+# command line does not name it.
 open_defect() {
   local d dt dm why
   [[ " ${SEL[$1]:-} " == *" $2 "* ]] && return 1
+  if [[ "$MEMCHECK" == 1 ]]; then
+    for d in "${MEMCHECK_SLOW[@]}"; do
+      read -r dt dm why <<< "$d"
+      if [[ "$dt" == "$1" && "$dm" == "$2" ]]; then echo "too slow under valgrind, $why"; return 0; fi
+    done
+  fi
   for d in "${OPEN_DEFECTS[@]}"; do
     read -r dt dm why <<< "$d"
-    if [[ "$dt" == "$1" && "$dm" == "$2" ]]; then echo "$why"; return 0; fi
+    if [[ "$dt" == "$1" && "$dm" == "$2" ]]; then echo "open defect, $why"; return 0; fi
   done
   return 1
 }
@@ -216,6 +261,7 @@ for p in "${PATCH_TESTS[@]}"; do
   [[ "$p" == *"{build}"* ]] && NEED_BUILD=1
   [[ "$p" == *"{ffmpeg}"* ]] && NEED_FFMPEG=1
 done
+[[ "$MEMCHECK" == 1 ]] && NEED_FFMPEG=0
 
 (( REUSE )) || rm -rf "$WORK"
 mkdir -p "$WORK/logs"
@@ -223,8 +269,8 @@ WORK="$(cd "$WORK" && pwd)"
 RUNS="$WORK/runs" BIN="$WORK/bin" FX="$WORK/fixtures"
 SRC="$WORK/src" BLD="$WORK/build"
 rm -rf "$RUNS"; mkdir -p "$RUNS" "$BIN"
-if [[ -f "$BLD/libmpv.so" && "$(cat "$WORK/san" 2> /dev/null)" != "${SAN[*]}" ]]; then
-  die "$WORK was built with other sanitizers (UBSAN): run without --reuse"
+if [[ -f "$BLD/libmpv.so" && "$(cat "$WORK/san" 2> /dev/null)" != "${SAN_TAG:-${SAN[*]}}" ]]; then
+  die "$WORK was built with other sanitizers (UBSAN, MEMCHECK): run without --reuse"
 fi
 
 # fetch <url> <local copy or ""> <dest dir> [path...]: the tarball, checked
@@ -256,7 +302,7 @@ echo "mpv $MPV_VERSION, libavcodec $(pkg-config --modversion libavcodec 2>/dev/n
 [[ -n "$DISABLED_PATCHES" ]] && echo "disabled patches: $DISABLED_PATCHES"
 
 if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
-  log "Patching and building mpv $MPV_VERSION with AddressSanitizer"
+  log "Patching and building mpv $MPV_VERSION with ${ASAN[0]:+AddressSanitizer}${VG[0]:+no sanitizer, for valgrind}"
   rm -rf "$SRC" "$BLD"
   cp -a "$WORK/mpv" "$SRC"
   # Not on the left of ||: bash ignores set -e there, also inside the
@@ -268,12 +314,12 @@ if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   (( $? == 0 )) || { tail -20 "$WORK/logs/apply.log"; die "the mpv patches failed"; }
   ( cd "$SRC" && meson setup "$BLD" -Dbuildtype=debug -Doptimization=1 -Dauto_features=disabled \
       -Dgpl=false -Dlibmpv=true -Dcplayer=false -Dbuild-date=false -Dtests=false -Dgl=disabled \
-      -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Dsdl2-audio=enabled -Db_sanitize=address -Db_lundef=false \
+      -Dplain-gl=disabled -Drubberband=disabled -Dzlib=enabled -Dsdl2-audio=enabled -Db_sanitize="$BSAN" -Db_lundef=false \
       ${SAN[0]:+-Dc_args="${SAN[*]}" -Dc_link_args="${SAN[*]}"}
   ) > "$WORK/logs/setup.log" 2>&1 || { tail -30 "$WORK/logs/setup.log"; die "meson setup failed"; }
   ninja -C "$BLD" -j"$JOBS" > "$WORK/logs/ninja.log" 2>&1 || {
     grep -B2 -A8 'error' "$WORK/logs/ninja.log" | head -60; die "the mpv build failed"; }
-  echo "${SAN[*]}" > "$WORK/san"
+  echo "${SAN_TAG:-${SAN[*]}}" > "$WORK/san"
   ok "built $BLD/libmpv.so"
 fi
 if (( NEED_FX )); then
@@ -294,7 +340,7 @@ report() {
   fi
   (( $2 == 124 )) && res="timed out, $res"
   echo "FAIL $1: exit $2, $res"
-  grep -E '^FAIL|ERROR: (Address|Leak)Sanitizer|WARNING: ThreadSanitizer|^SUMMARY|Assertion|runtime error' "$3" | head -8 | sed 's/^/     /'
+  grep -E '^FAIL|ERROR: (Address|Leak)Sanitizer|WARNING: ThreadSanitizer|^SUMMARY|Assertion|runtime error|^==[0-9]+== [A-Z]' "$3" | head -8 | sed 's/^/     /'
   FAILED+=("$1")
 }
 skip() { echo "skip $1"; SKIPPED=$((SKIPPED + 1)); }
@@ -317,11 +363,11 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # The FFmpeg headers for read_error_test, which stands in for an
       # libavutil function.
       # shellcheck disable=SC2046
-      "$CC" -g -O1 -fsanitize=address "${SAN[@]}" -I"$SRC/include" $(pkg-config --cflags libavutil) \
+      "$CC" -g -O1 "${ASAN[@]}" "${SAN[@]}" -I"$SRC/include" $(pkg-config --cflags libavutil) \
         "$HERE/$t.c" -o "$BIN/$t" -L"$BLD" -lmpv -Wl,-rpath,"$BLD" -ldl -lpthread -lm > "$log" 2>&1 ;;
     unit)
       # shellcheck disable=SC2046
-      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address "${SAN[@]}" \
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
         -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" \
         $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
@@ -344,7 +390,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # driver only, but the patch wants both files to apply.
       cp "$WORK/mpv/audio/out/ao_audiotrack.c" "$WORK/mpv/audio/out/buffer.c" "$o/audio/out/"
       python3 -B "$AUDIOTRACK_PATCH" "$o" > "$log" 2>&1 || return 1
-      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address "${SAN[@]}" \
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
         -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -idirafter "$o/jni" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
     tizen)
@@ -356,7 +402,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       cp "$WORK/mpv/audio/out/ao.c" "$o/audio/out/"
       cp "$WORK/mpv/meson.build" "$WORK/mpv/meson.options" "$o/"
       python3 -B "$TIZEN_PATCH" "$o" > "$log" 2>&1 || return 1
-      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=address "${SAN[@]}" \
+      "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
         -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -I"$HERE/tizen_sim" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
   esac
@@ -377,9 +423,9 @@ run_mode() {
     wait_port "$port" || echo "slow_http.py did not start on port $port" >> "$tmp.log"
   fi
   if [[ "$fx" == "-" ]]; then
-    timeout 120 "$BIN/$t" "$m" > "$tmp.log" 2>&1; r=$?
+    timeout "$TIME" "${VG[@]}" "$BIN/$t" "$m" > "$tmp.log" 2>&1; r=$?
   else
-    env ${port:+HTTP_PORT=$port} timeout 120 "$BIN/$t" "$m" "$FX/$fx" "$tmp" > "$tmp.log" 2>&1; r=$?
+    env ${port:+HTTP_PORT=$port} timeout "$TIME" "${VG[@]}" "$BIN/$t" "$m" "$FX/$fx" "$tmp" > "$tmp.log" 2>&1; r=$?
   fi
   if [[ -n "$srv" ]]; then kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null; fi
   report "$t $m" "$r" "$tmp.log"
@@ -395,6 +441,10 @@ for c in "${CASES[@]}"; do
   # shellcheck disable=SC2086
   read -r -a modes <<< "$(picked_modes "$t" $listed)"
   (( ${#modes[@]} )) || continue
+  if [[ "$kind" == tsan && "$MEMCHECK" == 1 ]]; then
+    skip "$t: built with ThreadSanitizer, not run under valgrind"
+    continue
+  fi
   if [[ -z "${BUILT[$t]:-}" ]]; then
     if compile "$kind" "$t"; then
       BUILT[$t]=1
@@ -407,7 +457,7 @@ for c in "${CASES[@]}"; do
   [[ "${BUILT[$t]}" == 1 ]] || continue
   for m in "${modes[@]}"; do
     if why="$(open_defect "$t" "$m")"; then
-      skip "$t $m: open defect, $why"
+      skip "$t $m: $why"
     else
       run_mode "$t" "$m" "$fx" "$http"
     fi
@@ -417,6 +467,7 @@ done
 for p in "${PATCH_TESTS[@]}"; do
   read -r t args <<< "$p"
   picked "$t" || continue
+  if [[ "$MEMCHECK" == 1 ]]; then skip "$t: a test of the patch scripts, nothing for valgrind"; continue; fi
   args="${args//\{mpv\}/$WORK/mpv}"; args="${args//\{ffmpeg\}/$WORK/ffmpeg}"
   args="${args//\{src\}/$SRC}"; args="${args//\{build\}/$BLD}"
   # shellcheck disable=SC2086

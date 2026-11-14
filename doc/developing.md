@@ -50,6 +50,7 @@ bash verify/tests/native/run.sh <work dir>                        # all
 bash verify/tests/native/run.sh --reuse <work dir> keep_open_park_test:unload
 DISABLED_PATCHES=keep_open_park bash verify/tests/native/run.sh --reuse <work dir> keep_open_park_test
 UBSAN=1 bash verify/tests/native/run.sh <work dir>                # with the overflow checks
+MEMCHECK=1 bash verify/tests/native/run.sh <memcheck work dir>    # under valgrind memcheck
 ```
 
 The first run downloads mpv and FFmpeg and builds libmpv, a few minutes;
@@ -59,6 +60,16 @@ UndefinedBehaviorSanitizer, a signed integer overflow and a float out of
 the range of the integer it is cast to: either stops the test. A work dir
 keeps the setting it was built with, so `--reuse` on one built the other
 way is refused. CI runs without it.
+
+`MEMCHECK=1` builds libmpv and the tests with no sanitizer and runs each
+mode under valgrind memcheck. It reports a read of memory that was never
+written, which AddressSanitizer does not see, and the mode fails with exit
+99. `memcheck.supp` lists the reports of the system libraries that are left
+out; a report in the patches is a defect, not a suppression. It needs
+valgrind and `libc6-dbg`, and a work dir of its own. The few modes that
+valgrind runs too slowly for what they time are skipped with the reason
+(`MEMCHECK_SLOW` in `run.sh`), and so are the `tsan` test and the tests of
+the patch scripts. CI runs without it.
 
 The `CASES` table at the top of `run.sh` lists each test, its kind and its
 modes:

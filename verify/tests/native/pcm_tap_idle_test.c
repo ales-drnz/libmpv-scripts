@@ -30,6 +30,7 @@
 //   bench  time of one write (480 stereo float frames) while a listener
 //          reads, and 10 s after it stopped (real clock for the timing,
 //          fake clock for the tap); prints, never fails
+#include "real_alloc.h"
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -42,8 +43,8 @@
 #include "osdep/threads.h"
 
 // The tap's lock, counted per thread, and the allocations made under it:
-// the test replaces malloc, calloc and realloc for the process (ASan's
-// underneath), which talloc calls.
+// the test replaces malloc, calloc and realloc for the process (the ones of
+// real_alloc.h underneath), which talloc calls.
 static _Thread_local int locks_held;
 static atomic_int allocs_locked;
 
@@ -75,29 +76,25 @@ static int t_unlock(pthread_mutex_t *m)
 #define mp_mutex_trylock(m) t_trylock(m)
 #define mp_mutex_unlock(m) t_unlock(m)
 
-extern void *__interceptor_malloc(size_t n);
-extern void *__interceptor_calloc(size_t nmemb, size_t n);
-extern void *__interceptor_realloc(void *p, size_t n);
-
 void *malloc(size_t n)
 {
     if (locks_held)
         atomic_fetch_add(&allocs_locked, 1);
-    return __interceptor_malloc(n);
+    return real_malloc(n);
 }
 
 void *calloc(size_t nmemb, size_t n)
 {
     if (locks_held)
         atomic_fetch_add(&allocs_locked, 1);
-    return __interceptor_calloc(nmemb, n);
+    return real_calloc(nmemb, n);
 }
 
 void *realloc(void *p, size_t n)
 {
     if (locks_held)
         atomic_fetch_add(&allocs_locked, 1);
-    return __interceptor_realloc(p, n);
+    return real_realloc(p, n);
 }
 
 #include "audio/out/mak_pcm_tap.c"

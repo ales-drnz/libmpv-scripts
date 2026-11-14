@@ -33,6 +33,7 @@ bash verify/tests/native/run.sh <work dir>
 It builds a debug libmpv with AddressSanitizer against the system FFmpeg, runs the C tests of the patched mpv, then the tests of the patch scripts. It needs meson, ninja, the `ffmpeg` command, the FFmpeg development files, those of libplacebo (mpv includes its headers) and those of SDL2 (`ao=sdl` on its dummy driver is the pull output of the tests), and takes a few minutes.
 
 - `UBSAN=1` also builds libmpv and the tests with two checks of UndefinedBehaviorSanitizer: a signed integer overflow, and a float out of the range of the integer it is cast to. A work dir keeps the setting it was built with. CI runs without it.
+- `MEMCHECK=1` builds libmpv and the tests with no sanitizer and runs each mode under valgrind memcheck, which reports a read of memory that was never written, something AddressSanitizer does not see. `memcheck.supp` holds the reports of the system libraries that are left out. It needs valgrind and `libc6-dbg`, and a work dir of its own. CI runs without it.
 - A test of the `tsan` kind is built with ThreadSanitizer instead of AddressSanitizer and fails on a data race (`tap_tsan_test.c`). libmpv itself is not built with it.
 - `audiotrack_test` needs `jni.h` of the NDK in `ANDROID_NDK_HOME`.
 
