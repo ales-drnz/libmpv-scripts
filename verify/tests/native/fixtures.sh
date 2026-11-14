@@ -29,6 +29,39 @@
 #   est.mp3   VBR MP3 without a Xing header, 3 s of loud white noise then
 #             27 s of a quiet sine: lavf estimates 13 s from the bitrate of
 #             its first frames
+# ebu/ (loudness_ebu_test): 1 kHz sines of a known level, 48 kHz stereo
+# 16-bit FLAC unless said, after the synthetic signals of EBU Tech 3341 and
+# Tech 3342 (levels in dBFS of the sine's peak, so a stereo file at -23 dBFS
+# measures -23.0 LUFS)
+#   s23.flac, s33.flac  20 s at -23 and at -33 (3341 cases 1 and 2)
+#   g3.flac   10 s at -36, 60 s at -23, 10 s at -36 (case 3)
+#   g4.flac   10 s at -72, 10 s at -36, 60 s at -23, 10 s at -36, 10 s at
+#             -72 (case 4)
+#   g5.flac   20 s at -26, 20.1 s at -20, 20 s at -26 (case 5)
+#   c50.wav   5.0(side), 20 s: -28 in L and R, -24 in C, -30 in Ls and Rs
+#             (case 6), 24-bit WAV
+#   c51.flac  the same in 5.1 with the surrounds as back channels and a
+#             60 Hz sine at -6 in the LFE
+#   m23.flac  mono at -23; r44.flac and r96.flac stereo at -23, at 44.1 and
+#             at 96 kHz
+#   tp15.flac to tp19.flac  5 s, a sine at a fraction of the rate and a
+#             phase that puts its crest between the samples, faded in and
+#             out over half a second (cases 15 to 19): rate/4 at 0 degrees,
+#             rate/4 at 45, rate/6 at 60, rate/8 at 67.5, all at 0.5, then
+#             rate/4 at 45 degrees at 1.41 (samples at 0.997)
+#   l1.flac to l4.flac  20 s a level (3342 cases 1 to 4): -20 then -30,
+#             -20 then -15, -40 then -20, and -50, -35, -20, -35, -50
+# hostile/ (analysis_declared_test): headers that say something else than
+# the data, written by hostile_files.py
+#   chg.flac  one FLAC stream, 48 kHz 16-bit: 10.24 s of a stereo sine at
+#             0.25, then 20.48 s of a mono sine at 0.5, the frames numbered
+#             on and both parts declared (30.72 s). FFmpeg seeks it by
+#             sample, so the bulk scan gives it four workers
+#   long.wav  3 s of a 1 kHz sine at -20 dBFS, 48 kHz stereo, in an RF64
+#             that declares 40 hours (a RIFF size past the file is cut to
+#             the file by FFmpeg, a ds64 one is not)
+#   short.flac  the same 3 s in a FLAC that declares 600 s; long.flac
+#             declares 30 hours, huge.flac 2^36 - 1 samples, 16 days
 # playback/ (pcm_*, chapter_list_test, af_command_args_test): constant (DC)
 # files, so a sample tells which file it came from, 3 s each unless said
 #   p_st48.flac   +0.25, stereo, 48 kHz     p_mono48.flac +0.25, mono, 48 kHz
@@ -109,6 +142,73 @@ fi
   -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=27" \
   -filter_complex "[1]volume=0.05[q];[0][q]concat=n=2:v=0:a=1" \
   -ac 2 -c:a libmp3lame -q:a 4 -write_xing 0 "$d/est.mp3"
+
+d="$D/ebu"; mkdir -p "$d"
+# amp <dBFS>: the linear amplitude, as an expression of aevalsrc.
+amp() { echo "pow(10\\,$1/20)"; }
+# steps <dBFS> <seconds> ... <dBFS>: the amplitude over time, each level
+# held for the seconds after it and the last one to the end.
+steps() {
+  local out="" close="" at=0
+  while (( $# > 1 )); do
+    at="$(awk "BEGIN { print $at + $2 }")"
+    out+="if(lt(t\\,$at)\\,$(amp "$1")\\,"; close+=")"
+    shift 2
+  done
+  echo "$out$(amp "$1")$close"
+}
+# ebu <file> <rate> <seconds> <layout> <expression per channel> [codec options]
+ebu() {
+  local f="$1" rate="$2" secs="$3" layout="$4" expr="$5"; shift 5
+  [[ -f "$d/$f" ]] && return
+  (( $# )) || set -- -c:a flac -sample_fmt s16
+  ff -f lavfi -i "aevalsrc=$expr:s=$rate:d=$secs:c=$layout" "$@" "$d/$f"
+}
+SIN="sin(2*PI*1000*t)"
+both() { echo "$1*$SIN|$1*$SIN"; }
+ebu s23.flac 48000 20 stereo "$(both "$(amp -23)")"
+ebu s33.flac 48000 20 stereo "$(both "$(amp -33)")"
+ebu g3.flac 48000 80 stereo "$(both "$(steps -36 10 -23 60 -36)")"
+ebu g4.flac 48000 100 stereo "$(both "$(steps -72 10 -36 10 -23 60 -36 10 -72)")"
+ebu g5.flac 48000 60.1 stereo "$(both "$(steps -26 20 -20 20.1 -26)")"
+ebu c50.wav 48000 20 "5.0(side)" \
+  "$(amp -28)*$SIN|$(amp -28)*$SIN|$(amp -24)*$SIN|$(amp -30)*$SIN|$(amp -30)*$SIN" -c:a pcm_s24le
+ebu c51.flac 48000 20 "5.1" \
+  "$(amp -28)*$SIN|$(amp -28)*$SIN|$(amp -24)*$SIN|$(amp -6)*sin(2*PI*60*t)|$(amp -30)*$SIN|$(amp -30)*$SIN"
+ebu m23.flac 48000 20 mono "$(amp -23)*$SIN"
+ebu r44.flac 44100 20 stereo "$(both "$(amp -23)")"
+ebu r96.flac 96000 20 stereo "$(both "$(amp -23)")"
+# peak <file> <rate divisor> <phase in degrees> <amplitude>
+peak() {
+  local e="$4*min(1\\,min(t\\,5-t)*2)*sin(2*PI*48000/$2*t+$3*PI/180)"
+  ebu "$1" 48000 5 stereo "$e|$e"
+}
+peak tp15.flac 4 0 0.5
+peak tp16.flac 4 45 0.5
+peak tp17.flac 6 60 0.5
+peak tp18.flac 8 67.5 0.5
+peak tp19.flac 4 45 1.41
+ebu l1.flac 48000 40 stereo "$(both "$(steps -20 20 -30)")"
+ebu l2.flac 48000 40 stereo "$(both "$(steps -20 20 -15)")"
+ebu l3.flac 48000 40 stereo "$(both "$(steps -40 20 -20)")"
+ebu l4.flac 48000 100 stereo "$(both "$(steps -50 20 -35 20 -20 20 -35 20 -50)")"
+
+d="$D/hostile"; mkdir -p "$d"
+HOSTILE="$(dirname "${BASH_SOURCE[0]}")/hostile_files.py"
+if [[ ! -f "$d/chg.flac" ]]; then
+  ff -f lavfi -i "aevalsrc=0.25*sin(2*PI*440*t)|0.25*sin(2*PI*440*t):s=48000:d=10.24" \
+     -c:a flac -sample_fmt s16 -frame_size 4096 "$d/stereo.flac"
+  ff -f lavfi -i "aevalsrc=0.5*sin(2*PI*660*t):s=48000:d=20.48" \
+     -c:a flac -sample_fmt s16 -frame_size 4096 "$d/mono.flac"
+  python3 -B "$HOSTILE" join "$d/stereo.flac" "$d/mono.flac" "$d/chg.flac"
+fi
+[[ -f "$d/long.wav" ]] || python3 -B "$HOSTILE" wav 144000 "$d/long.wav"
+if [[ ! -f "$d/huge.flac" ]]; then
+  ff -f lavfi -i "aevalsrc=$(amp -20)*$SIN|$(amp -20)*$SIN:s=48000:d=3" -c:a flac -sample_fmt s16 "$d/tone3.flac"
+  python3 -B "$HOSTILE" declare "$d/tone3.flac" $((600 * 48000)) "$d/short.flac"
+  python3 -B "$HOSTILE" declare "$d/tone3.flac" $((30 * 3600 * 48000)) "$d/long.flac"
+  python3 -B "$HOSTILE" declare "$d/tone3.flac" $(((1 << 36) - 1)) "$d/huge.flac"
+fi
 
 d="$D/playback"; mkdir -p "$d"
 dc() { [[ -f "$d/$1" ]] || ff -f lavfi -i "aevalsrc=$2:s=$3:d=$4" -c:a flac "$d/$1"; }
