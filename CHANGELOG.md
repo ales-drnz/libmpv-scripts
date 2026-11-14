@@ -7,6 +7,7 @@
 - NaN and infinite samples of a float file read as silence in the waveform, the loudness scan, the filter tap and the PCM tap. One such sample left NaN in the envelope and emptied the rest of the loudness.
 - A waveform grown from playback drops the audio past its axis, which went into its last bin, and a rolling one shows nothing old in a gap after its window moved.
 - The PCM tap never makes the thread of the audio output wait: it drops a chunk while a read copies its window.
+- The loudness scan copies its channel layout into a zeroed one. It read a layout left as the stack had it, which could free a wild pointer when a scan started.
 - The analysis of a file URL with percent escapes, set by a hook in `stream-open-filename`, reads the file it names. It failed while the file played.
 - An SMB close on a server that stopped answering returns after 5 s when no network timeout is set.
 - The filter tap finds a slot by a hash, with no read of a name being written, and clamps the distance to its ring before a cast.
