@@ -57,18 +57,26 @@ fi
 # they are). The mirror is one process that ends only when its last line is
 # written, and the script waits for it at exit: without that a container can
 # stop with the end of the log, the lines of the error, still unwritten.
+# The mirror itself. tee is gone at the end of the output while the loop of
+# the stamps may still be writing: bash 4.4 waits for that process, an
+# older one (the 3.2 of macOS) does not, and behaves as before. A function
+# of its own, and no quote in a comment: bash 3.2 does not parse a process
+# substitution inside another one when a comment in it holds a quote.
+_mirror_stamp() {
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
+  done >> "$1"
+}
+_mirror_tee() {
+  tee >(_mirror_stamp "$1")
+  wait
+}
 mirror_build_log() {
-  local file="$1" line
-  exec > >(
-    tee >(while IFS= read -r line || [[ -n "$line" ]]; do
-      printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-    done >> "$file")
-    # tee is gone at the end of the output; the loop above may still be
-    # writing. bash 4.4 waits here for a process substitution, older ones
-    # (macOS's own 3.2) do not, and behave as before.
-    wait
-  ) 2>&1
-  BUILD_LOG_PID=$!
+  local file="$1"
+  exec > >(_mirror_tee "$file") 2>&1
+  # Empty before bash 4.4, which gives a process substitution no $!.
+  BUILD_LOG_PID=${!:-}
   on_exit _finish_build_log
 }
 # Closes the two streams, which ends the mirror, and waits for it: 30 s at
@@ -79,6 +87,7 @@ mirror_build_log() {
 _finish_build_log() {
   exec >&- 2>&-
   local n=0
+  [[ -n "$BUILD_LOG_PID" ]] || return 0
   while kill -0 "$BUILD_LOG_PID" 2>/dev/null && (( n < 300 )); do
     sleep 0.1
     n=$((n + 1))
