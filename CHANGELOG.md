@@ -1,3 +1,48 @@
+## [0.4.1]
+
+### All platforms
+**Fixed**
+- The loudness scan no longer reports ready from part of a file: when a decode worker measured nothing it reports failed, and a file whose channel layout changes midway reports unavailable.
+- A file that declares a sample rate above 1 MHz or a length above 5,000,000 s fails both scans at once, and one that declares more than 48 hours gets its waveform and no loudness. The bulk scan allocated by the declared length.
+- NaN and infinite samples of a float file read as silence in the waveform, the loudness scan, the filter tap and the PCM tap. One such sample left NaN in the envelope and emptied the rest of the loudness.
+- A waveform grown from playback drops the audio past its axis, which went into its last bin, and a rolling one shows nothing old in a gap after its window moved.
+- The PCM tap never makes the thread of the audio output wait: it drops a chunk while a read copies its window.
+- The analysis of a file URL with percent escapes, set by a hook in `stream-open-filename`, reads the file it names. It failed while the file played.
+- An SMB close on a server that stopped answering returns after 5 s when no network timeout is set.
+- The filter tap finds a slot by a hash, with no read of a name being written, and clamps the distance to its ring before a cast.
+- The libraries say `mpv v0.41.0+r25`.
+
+**Changed**
+- The Mozilla CA bundle is the one of 5-11-2026, 118 roots, from the one of 14-05-2026. In: SECOM TLS ECC Root CA 2024, SECOM TLS RSA Root CA 2024, Telia EC TLS Root CA v3, Telia RSA TLS Root CA v3.
+- Out of the bundle: Atos TrustedRoot 2011, Entrust Root Certification Authority, SecureSign Root CA12, ePKI Root Certification Authority, emSign ECC Root CA C3, emSign ECC Root CA G3, emSign Root CA C1.
+- The message of an SMB timeout reads `SMB2 request timed out`, for connect and close alike.
+
+### Linux, Tizen, webOS
+**Changed**
+- The libraries are built with a stack canary and `_FORTIFY_SOURCE=2`, in mpv, FFmpeg and every dependency, and linked with full RELRO, `BIND_NOW` and a stack that is not executable. The TV libraries had none of it.
+- The Tizen and webOS armv7l libraries name `ld-linux.so.3` among their needed libraries, for the guard of the canary.
+
+### Web
+**Fixed**
+- The web build logs a URL without its user info and its query.
+
+### Build
+- `verify_binaries.sh` L16 asserts the hardening of every ELF library, Android included, and `DYNAMIC_BASE`, `HIGH_ENTROPY_VA` and `NX_COMPAT` on the Windows DLLs. L17 asserts that the DLLs import neither `timeBeginPeriod` nor `timeEndPeriod`.
+- The Docker base images are pulled by digest, and meson, ninja and cmake are one version each, with the hashes of their wheels. The Apple jobs select Xcode by version.
+- Each build record names its toolchain and the components it links, and the manifest lists both per target, as `toolchain` and `components`.
+- Android builds only with the pinned NDK, its zip checked by SHA-256, and the web build checks four more tools of emsdk. `ALLOW_ANY_NDK=1` takes another NDK.
+- libiconv is built and listed among the licenses only when libass is kept: the default Android and Windows libraries never linked it.
+- A failed strip, a leaking export list or an Apple framework without its headers stops the build. Archives are unpacked in a staging directory, and the build log is complete when a script exits.
+- `update_cacert.sh` checks the bundle against its published checksum and lists the roots that enter and leave. `--check` prints the list and writes nothing.
+- Every patch marker has a version: a source tree patched by an older release stops the build with a message. An anchor that changes a file writes it whole.
+- New native tests: loudness against the signals of EBU Tech 3341 and 3342, hostile inputs, the rolling window, an exit in the middle of a scan, and `playlist-prev-playlist` on the Windows DLL under Wine. `UBSAN=1` adds the overflow checks, and a `tsan` kind finds data races.
+- `checks.yml` runs the lint, the TUI tests and the native tests on every push and pull request, and Build calls it. Android builds one job per ABI, and every job has a timeout.
+- The check of the kit takes its Build run from the input or finds it, with no default, names its runners and Flutter by version, and its Summary job says whether the run counts for a release. A file that never started on a device makes it not green. `release_gate.sh` refuses a Build without a complete green check.
+- The TUI builds with Go 1.26.
+
+**Docs**
+- The README and `doc/developing.md` cover Tizen and webOS, the differences between platforms, the hardening flags and the steps of a release with its check and its tags.
+
 ## [0.4.0] - 10-11-2026
 
 ### All platforms
