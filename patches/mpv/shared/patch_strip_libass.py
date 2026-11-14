@@ -311,6 +311,11 @@ MESON_SOURCES = [
     "    'sub/ass_mp.c',\n",
     "    'sub/osd_libass.c',\n",
     "    'sub/sd_ass.c',\n",
+    # mpv 0.42: the bitmap packer of libass images moved from ass_mp.c to
+    # its own file, which includes <ass/ass.h>. Its users are
+    # osd_libass.c and sd_ass.c (removed above), sd_lavc.c (removed by
+    # strip_mpv_dead) and sd_sbr.c (subrandr only).
+    "    'sub/packer.c',\n",
 ]
 # (e) The replacement stub source, after a sibling sub/ source that always
 #     remains (sub/dec_sub.c) and is not touched above. Listed, it marks a

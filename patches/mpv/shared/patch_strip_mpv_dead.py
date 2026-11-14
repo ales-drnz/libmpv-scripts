@@ -72,7 +72,7 @@ Removals
    common/encode_lavc.c overwritten in place with a stub TU (kept in
    files()) providing the player-core encode ABI (common/encode.h:
    encode_lavc_init/free/discontinuity/showhelp/getstatus/stream_type_ok/
-   expect_stream/set_metadata/didfail), encoder_update_log, and the
+   expect_stream/set_metadata/didfail), mp_encoder_update_log, and the
    `encode_config` m_sub_options (reproduced verbatim — pure option data —
    so options/options.c's OPT_SUBSTRUCT keeps parsing identically).
    GC-root anchors cut:
@@ -457,7 +457,7 @@ bool image_writer_flexible_csp(const struct image_writer_opts *opts)
     return false;
 }
 
-int image_writer_format_from_ext(const char *ext)
+int image_writer_format_from_ext(bstr ext)
 {
     (void)ext;
     return 0;
@@ -612,7 +612,9 @@ bool encode_lavc_didfail(struct encode_lavc_context *ctx)
 
 /* Declared in common/encode_lavc.h; called from player/main.c at startup
  * to wire the global log. No encode log to install in the stub. */
-void encoder_update_log(struct mpv_global *global)
+/* mp_encoder_update_log since mpv 0.42 (encoder_update_log before). */
+void mp_encoder_update_log(struct mpv_global *global);
+void mp_encoder_update_log(struct mpv_global *global)
 {
     (void)global;
 }
