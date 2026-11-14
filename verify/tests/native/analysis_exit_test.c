@@ -70,6 +70,12 @@ int main(int argc, char **argv)
     int mid = 0;
     while (mt_now() - t0 < 20 && !mid) {
         mpv_wait_event(h, 0.005);
+        /* The most threads the scan had: a worker whose slice is short is
+         * gone by the middle of the decode, on a loaded machine above all,
+         * and the count taken there alone was one short. */
+        int now = mt_count_files("/proc/self/task");
+        if (now > threads_scanning)
+            threads_scanning = now;
         an_wave_read(h, &w);
         mid = !strcmp(w.state, "decoding") && w.coverage > 20;
         if (an_final_wave(w.state)) {
@@ -78,7 +84,6 @@ int main(int argc, char **argv)
         }
         an_wave_free(&w);
     }
-    threads_scanning = mt_count_files("/proc/self/task");
     mt_check(mid, "the scan is in the middle of its decode");
     g_h = h;
     t_exit = mt_now();
