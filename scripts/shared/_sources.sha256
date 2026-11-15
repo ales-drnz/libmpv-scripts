@@ -23,7 +23,7 @@ caab4b993dd7be6187c55623b789ed75dddefea6e65938af134637c732fe094a  https://github
 44e0139015f1c9908d0876b5516235136f16b14932d8f6634a16737a12742f53  https://github.com/libexpat/libexpat/releases/download/R_2_10_0/expat-2.10.0.tar.bz2
 02dd159783677a749c04adbdd02b55b8a2bcc7e054f51b76b549199a916ad584  https://github.com/madler/zlib/releases/download/v1.4/zlib-1.4.tar.gz
 bcfebbfa2b65a6d88dc97ea18117831072373e38b5785a2afb874ed4df5070dd  https://github.com/mpv-player/mpv/archive/refs/tags/v0.42.0.tar.gz
-deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz
+50c17baf54cb008f6ce42d50deb4b28050a1aad711636cabd4b241c7e90cc2fd  https://github.com/openssl/openssl/releases/download/openssl-4.1.0/openssl-4.1.0.tar.gz
 0014c7886930454fe8bd4228665b51af55eeae560ea135c9c4cd33f55b2591d9  https://github.com/tukaani-project/xz/releases/download/v5.8.4/xz-5.8.4.tar.gz
 d17ca363654556a4ff1d02cc13d9eb1fc5a8642c90b40bd54ce266c3807b91a7  https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-1.2.1.tar.gz
 ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269  https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz

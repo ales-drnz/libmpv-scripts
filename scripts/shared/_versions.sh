@@ -69,10 +69,9 @@ export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 # it's been deprecated by Apple since 10.15, doesn't support TLS 1.3, and
 # is on its way out of upstream curl/ffmpeg (curl removed it in June 2025).
 #
-# OpenSSL 3.5.6 is the current LTS patch (the 3.5 LTS line is supported
-# until 2030). License Apache 2.0 (OpenSSL 3.0+), GPL-compatible — no
-# --enable-nonfree needed on the ffmpeg side.
-export OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.6}"
+# OpenSSL 4.1.0 (2026-10) is the latest release. License Apache 2.0, GPL
+# compatible: no --enable-nonfree on the ffmpeg side.
+export OPENSSL_VERSION="${OPENSSL_VERSION:-4.1.0}"
 
 # ── libplacebo (every platform) ──────────────────────────────────────────────
 # mpv 0.42.0 needs 7.387.0 or later: video/csputils.c and video/mp_image.c,

@@ -5,7 +5,7 @@
 
 # Cross-compile OpenSSL statically into $prefix/.
 #
-# OpenSSL 3.5.x LTS is the TLS backend for FFmpeg (HTTPS/HLS/DASH/RTMPS/
+# OpenSSL is the TLS backend for FFmpeg (HTTPS/HLS/DASH/RTMPS/
 # RTSPS) and libsmb2 (SMB3 signing) on every platform.
 #
 # Caller exports:
@@ -71,7 +71,7 @@ build_openssl() {
     make clean 2>/dev/null || true
 
     # Static-only + minimal: no shared libs, no docs, no apps, no tests,
-    # no engines (deprecated in 3.x), no deprecated APIs we don't use.
+    # no engines (gone in 4.0, no-engine is kept for older trees), no deprecated APIs we do not use.
     # Threads stay on (libsmb2 needs them). The legacy and rarely used
     # algorithms are off (list below); what TLS 1.2/1.3 needs stays on.
     #
