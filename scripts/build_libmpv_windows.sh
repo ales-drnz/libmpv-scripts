@@ -194,7 +194,7 @@ fi
 # ── xz (liblzma) ──────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/liblzma.a" ]]; then
   log "Building xz $XZ_VERSION..."
-  XZ=$(fetch xz "https://tukaani.org/xz/xz-${XZ_VERSION}.tar.gz")
+  XZ=$(fetch xz "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz")
   tar -xf "$XZ" -C "$SRC"
   pushd "$SRC/xz-$XZ_VERSION"
     # xz 5.8.x's configure aborts if its `-Werror`-usability probe trips

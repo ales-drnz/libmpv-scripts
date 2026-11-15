@@ -582,11 +582,11 @@ assert (d / "libmpv-scripts/NOTICE").read_bytes() == (root / "NOTICE").read_byte
 PY
 check $? "licenses: linux has THIRD_PARTY_LICENSES.txt, every component with its version, SPDX id and texts"
 
-# Windows: the .tar.xz of FFmpeg, xz from tukaani, speexdsp from GitHub, and
+# Windows: the .tar.xz of FFmpeg, xz and speexdsp from GitHub, and
 # the texts of mingw-w64's winpthreads and CRT.
 fw="$L/fetched-windows"
 for u in "https://ffmpeg.org/releases/ffmpeg-$FFV.tar.xz" \
-         "https://tukaani.org/xz/xz-$XZV.tar.gz" \
+         "https://github.com/tukaani-project/xz/releases/download/v$XZV/xz-$XZV.tar.gz" \
          "https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-$SPV.tar.gz"; do
   printf '%s  %s\n' "$(pin "$u")" "$u" >> "$fw"
 done
@@ -597,7 +597,7 @@ d, ffv, xzv, spv = sys.argv[1:]
 d = pathlib.Path(d)
 r = (d / "README.txt").read_text()
 src = [l.split()[1] for l in r.split("patches/ of that commit:\n")[1].splitlines() if "  https://" in l]
-assert src == [f"https://ffmpeg.org/releases/ffmpeg-{ffv}.tar.xz", f"https://tukaani.org/xz/xz-{xzv}.tar.gz",
+assert src == [f"https://ffmpeg.org/releases/ffmpeg-{ffv}.tar.xz", f"https://github.com/tukaani-project/xz/releases/download/v{xzv}/xz-{xzv}.tar.gz",
                f"https://github.com/xiph/speexdsp/archive/refs/tags/SpeexDSP-{spv}.tar.gz"], src
 assert "(not pinned)" not in r, r
 c = (d / "winpthreads/COPYING").read_text()
