@@ -125,7 +125,7 @@ jobs:
   # The native tests of the patches, with AddressSanitizer: a debug libmpv
   # with every mpv patch, built against Ubuntu's FFmpeg 6.1, runs the C and
   # white-box tests of verify/tests/native and the patch script tests of
-  # verify/tests/patches (run.sh); then, each on a minimal FFmpeg 8.1.1, the
+  # verify/tests/patches (run.sh); then, each on a minimal FFmpeg 9.0.2, the
   # filter bounds check, and the SMB and TLS checks against impacket's server
   # with the read errors of http, HLS and DASH (network_test.sh). In the
   # needs of Build's release, unlike tui. A failure uploads the logs as

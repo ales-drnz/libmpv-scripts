@@ -144,6 +144,7 @@ detect_version_in_binary() {
       found=$(grep -oE 'FFmpeg version [0-9]+\.[0-9]+(\.[0-9]+)?'  <<<"$str" | head -1 | awk '{print $3}')
       [[ -z "$found" ]] && found=$(grep -oE 'Lavc[0-9]+\.[0-9]+\.[0-9]+' <<<"$str" | head -1 | sed 's/^Lavc//' | (
         read v; case "$v" in
+          63.1.102)  echo "9.0.2" ;;
           62.28.101) echo "8.1.1" ;;
           61.19.100) echo "7.1.1" ;;
           61.3.100)  echo "7.0.0" ;;

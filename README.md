@@ -4,7 +4,7 @@
 
 [![](https://img.shields.io/badge/libmpv--scripts-0.4.1-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
 [![](https://img.shields.io/badge/mpv-v0.42.0-orange.svg?style=for-the-badge)]()
-[![](https://img.shields.io/badge/FFmpeg-8.1.1-green.svg?style=for-the-badge)]()
+[![](https://img.shields.io/badge/FFmpeg-9.0.2-green.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg?style=for-the-badge)](LICENSE)
 [![](https://img.shields.io/github/stars/ales-drnz/libmpv-scripts?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ales-drnz/libmpv-scripts)
 [![](https://img.shields.io/discord/1485588004029333516?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/g2Qf4Mq9MP)

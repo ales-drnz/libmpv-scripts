@@ -12,14 +12,14 @@
 # it directly.
 
 # ── Player core ──────────────────────────────────────────────────────────────
-# mpv 0.42.0 (2026-11) is the latest release. Its meson floor is FFmpeg 6.1
-# (libavcodec >= 60.31.102) and libplacebo 7.387.0.
+# mpv 0.42.0 (2026-11) and FFmpeg 9.0.2 are the latest releases. The meson
+# floor of mpv is FFmpeg 6.1 (libavcodec >= 60.31.102) and libplacebo 7.387.0.
 export MPV_VERSION="${MPV_VERSION:-0.42.0}"
 # The mpv_audio_kit release these binaries ship as (GitHub release
 # libmpv-<release>). Baked into mpv's own version string, so a running app
 # can tell which build it loaded: mpv-version reads "mpv v0.42.0+r26".
 export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r26}"
-export FFMPEG_VERSION="${FFMPEG_VERSION:-8.1.1}"
+export FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.2}"
 
 # ── Subtitle / font / text shaping (libass + pulls) ──────────────────────────
 # Built only when libass is kept (strip_libass and strip_mpv_dead both

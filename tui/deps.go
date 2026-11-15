@@ -37,7 +37,7 @@ func dependencyCatalog() []Dep {
 		{
 			Name:     "FFmpeg",
 			EnvVar:   "FFMPEG_VERSION",
-			Version:  "8.1.1",
+			Version:  "9.0.2",
 			License:  "LGPL-3.0+",
 			Category: "Player core",
 			Purpose:  "Audio demux/decode/filter engine (libav*), --enable-version3",
