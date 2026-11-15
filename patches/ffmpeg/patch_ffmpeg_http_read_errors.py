@@ -26,6 +26,13 @@ The same happens to a chunked body from a server that says Accept-Ranges
 (a transcode or a live stream of a media server): the reconnect asks for a
 range, and the failed reply leaves filesize 0 and chunksize unset.
 
+From FFmpeg 8.1.3 http_seek_internal() goes on with the old connection
+only if it kept one: a short seek near the end of a range drains the old
+connection and keeps none, and with no connection http_buf_read() answers
+EIO, which needs no state put back. The same state is put back in both
+forms, inside the block that restores the old connection (8.1.3, 9.0) or
+after it (8.1.1).
+
 The patch saves that state with the old buffer, and puts it back with it
 when the new request fails, if the old response announced its size or was
 chunked and had not reached its last chunk: then the cut body stays short
@@ -52,7 +59,9 @@ of the three places: a close inside a chunk is EIO only without
 Connection: close (the willclose test of http_buf_read() is for bodies
 delimited by the close, not for chunked ones), and a close between two
 chunks, where http_get_line() reads the size of the next one, comes back
-as AVERROR_EOF. A live stream sent chunked (an internet radio, a transcode)
+as AVERROR_EOF. FFmpeg 9.0 sets willclose for every request that asks for
+Connection: close, every one without multiple_requests, so there a close
+inside a chunk is never EIO upstream. A live stream sent chunked (an internet radio, a transcode)
 that drops ended as a normal end. The patch answers both with EIO and an
 error in the log; a body closed by its last chunk ends as before.
 
@@ -102,29 +111,56 @@ SAVE_NEW = SAVE + (
     '#endif\n'
 )
 
+# The state goes back with the old connection. FFmpeg 8.1.3 puts the old
+# connection back only when there was one (the soft seek of a short seek
+# drains it and keeps no old one), in a block of its own; 8.1.1 put it back
+# in any case.
+RESTORE_STATE = (
+    '/* ' + MARKER + ': a body of known size, or chunked and before\n'
+    ' * its last chunk, can be cut short. */\n'
+    'if (old_filesize != UINT64_MAX ||\n'
+    '    (old_chunksize != UINT64_MAX && !s->chunkend)) {\n'
+    '    s->filesize         = old_filesize;\n'
+    '    s->chunksize        = old_chunksize;\n'
+    '    s->icy_data_read    = old_icy_data_read;\n'
+    '    s->willclose        = old_willclose;\n'
+    '    s->end_header       = old_end_header;\n'
+    '    s->end_chunked_post = old_end_chunked_post;\n'
+    '#if CONFIG_ZLIB\n'
+    '    s->compressed       = old_compressed;\n'
+    '#endif\n'
+    '}\n'
+)
+
+
+def indent(text, n):
+    return ''.join((' ' * n + line if line and not line.startswith('#') else line)
+                   for line in text.splitlines(True))
+
+
 RESTORE = (
+    '            s->hd      = old_hd;\n'
+    '            s->off     = old_off;\n'
+    '        }\n'
+)
+
+RESTORE_NEW = (
+    '            s->hd      = old_hd;\n'
+    '            s->off     = old_off;\n'
+    + indent(RESTORE_STATE, 12) +
+    '        }\n'
+)
+
+RESTORE_811 = (
     '        s->hd      = old_hd;\n'
     '        s->off     = old_off;\n'
     '        return ret;\n'
 )
 
-RESTORE_NEW = (
+RESTORE_811_NEW = (
     '        s->hd      = old_hd;\n'
     '        s->off     = old_off;\n'
-    '        /* ' + MARKER + ': a body of known size, or chunked and before\n'
-    '         * its last chunk, can be cut short. */\n'
-    '        if (old_filesize != UINT64_MAX ||\n'
-    '            (old_chunksize != UINT64_MAX && !s->chunkend)) {\n'
-    '            s->filesize         = old_filesize;\n'
-    '            s->chunksize        = old_chunksize;\n'
-    '            s->icy_data_read    = old_icy_data_read;\n'
-    '            s->willclose        = old_willclose;\n'
-    '            s->end_header       = old_end_header;\n'
-    '            s->end_chunked_post = old_end_chunked_post;\n'
-    '#if CONFIG_ZLIB\n'
-    '            s->compressed       = old_compressed;\n'
-    '#endif\n'
-    '        }\n'
+    + indent(RESTORE_STATE, 8) +
     '        return ret;\n'
 )
 
@@ -173,12 +209,13 @@ BODY_READ_NEW = (
 
 
 def apply(p):
-    p.edits(HTTP, [
+    if p.edits(HTTP, [
         ('http_seek_internal saves the old context', SAVE, SAVE_NEW),
-        ('http_seek_internal failed request', RESTORE, RESTORE_NEW),
         ('http_buf_read size line of a chunk', CHUNK_SIZE_LINE, CHUNK_SIZE_LINE_NEW),
         ('http_buf_read read of the body', BODY_READ, BODY_READ_NEW),
-    ])
+    ]):
+        p.optional(HTTP, [(RESTORE, RESTORE_NEW), (RESTORE_811, RESTORE_811_NEW)],
+                   'http_seek_internal failed request')
 
 
 anchor.main(apply, 'patch_ffmpeg_http_read_errors', marker=MARKER,
