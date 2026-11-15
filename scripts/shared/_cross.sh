@@ -399,14 +399,13 @@ cross_build_rubberband() {
   cross_ok rubberband
 }
 
-# libplacebo at v$LIBPLACEBO_VERSION, which each platform pins itself.
+# libplacebo at v$LIBPLACEBO_VERSION (_versions.sh).
 cross_build_libplacebo() {
   [[ -f "$CROSS_PREFIX_DIR/lib/libplacebo.a" ]] && return 0
   log "Building libplacebo $LIBPLACEBO_VERSION${CROSS_LABEL:+ ($CROSS_LABEL)}..."
   local gitdir="$CROSS_BUILD_DIR/src/libplacebo-git"
   download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
   git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
   local bdir; bdir="$(cross_bdir libplacebo)"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
   meson setup "$gitdir" --cross-file "$CROSS_MESON_FILE" \

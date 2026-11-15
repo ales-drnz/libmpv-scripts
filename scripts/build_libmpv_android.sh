@@ -6,7 +6,7 @@
 # =============================================================================
 # build_libmpv_android.sh
 #
-# Compiles mpv 0.41.0 as a shared library for Android.
+# Compiles mpv 0.42.0 as a shared library for Android.
 #
 # === OUTPUT FORMATS AND LOCATIONS ===
 # Target Dir:  builds/release/
@@ -28,7 +28,7 @@
 # Options (environment variables):
 #   ANDROID_NDK_ROOT=/path/to/ndk   (else searched in known SDK locations; NDK r28c auto-downloaded if absent)
 #   ANDROID_API=24                   (default: 24 — minSdkVersion)
-#   MPV_VERSION=0.41.0              (default: 0.41.0)
+#   MPV_VERSION=0.42.0              (default: 0.42.0)
 #   ABIS="arm64-v8a armeabi-v7a x86_64"      (default: arm64-v8a x86_64; x86 is accepted, never built in CI)
 #   JOBS=N
 #   FORCE_DOWNLOAD=1                 (redownload sources even if cached)
@@ -75,7 +75,6 @@ fi
 
 # Android-only dependency versions (centralised ones live in _versions.sh)
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
 NDK_VERSION="r28c"

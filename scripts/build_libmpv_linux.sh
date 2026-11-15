@@ -26,7 +26,7 @@
 #
 # Options (env vars):
 #   ARCH=x86_64|aarch64     (default: x86_64; --arch=… overrides)
-#   MPV_VERSION=0.41.0      (default: 0.41.0)
+#   MPV_VERSION=0.42.0      (default: 0.42.0)
 #   JOBS=N                  (default: nproc)
 #   FORCE_DOWNLOAD=1        (redownload sources even if cached)
 #   KEEP_BUILD=1            (preserve all of BUILD_DIR for inspection)
@@ -71,7 +71,6 @@ export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # ── Linux-only dependency versions (centralised ones live in _versions.sh) ────
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="7.349.0"
 LIBUNIBREAK_VERSION="6.1"
 
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Linux/$ARCH}"

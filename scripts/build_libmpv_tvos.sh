@@ -6,7 +6,7 @@
 # =============================================================================
 # build_libmpv_tvos.sh
 #
-# Compiles mpv 0.41.0 as a DYNAMIC library for tvOS: build_libmpv_ios.sh with
+# Compiles mpv 0.42.0 as a DYNAMIC library for tvOS: build_libmpv_ios.sh with
 # the tvOS SDKs (APPLE_OS=tvos). It takes the same options.
 #
 # Final artifact: builds/release/libmpv_tvos.xcframework.zip, with the slices

@@ -84,9 +84,6 @@ done
 
 # ── Web-only pins (centralised ones live in _versions.sh) ────────────────────
 EMSDK_VERSION="${EMSDK_VERSION:-6.0.12}"
-# The desktop libplacebo. mpv only keeps its colour helpers after
-# strip_mpv_dead, and the 7.x line builds clean under emcc.
-LIBPLACEBO_VERSION="7.349.0"
 
 # The browser has no sockets, no TLS store and no SMB: the protocol patches
 # that need them stay out (the per-user DISABLED_PATCHES is kept).
@@ -289,7 +286,6 @@ build_libplacebo() {
   download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
   git -C "$gitdir" submodule update --init 3rdparty/jinja 3rdparty/markupsafe \
     3rdparty/fast_float 3rdparty/glad 3rdparty/Vulkan-Headers
-  apply_libplacebo_patches "$gitdir"
   local bdir="$BUILD_DIR/build/libplacebo"; rm -rf "$bdir"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
   meson setup "$gitdir" "${MESON_CROSS[@]}" \

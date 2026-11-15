@@ -115,7 +115,6 @@ shared. What differs:
 
 | What | Where | Decided in |
 | :--- | :--- | :--- |
-| libplacebo | 7.349.0 on macOS, Linux, Tizen, webOS and the web. 6.338.2 on iOS, tvOS, Android and Windows | `LIBPLACEBO_VERSION` at the top of each `build_libmpv_<platform>.sh`, the reason in `scripts/shared/_versions.sh` |
 | Network | The web has no sockets and no OpenSSL: http, https and `blob:` URLs go through the `webio` protocols, on the browser's fetch. Every other platform has FFmpeg's network protocols on OpenSSL | `ffmpeg_web_args` and `patch_ffmpeg_webio.py` in `scripts/build_libmpv_web.sh`, the `web` case of `verify_ffmpeg_config` |
 | SMB | Not on the web. libsmb2 everywhere else | `DISABLED_PATCHES` in `scripts/build_libmpv_web.sh` |
 | Kerberos for SMB | The GSS framework is linked on macOS and iOS only. tvOS has no GSS framework, and the other builds add no Kerberos library | `apply_libsmb2_post_install_fixes` in `scripts/shared/_audio_only.sh` |

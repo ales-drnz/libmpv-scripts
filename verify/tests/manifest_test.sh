@@ -144,7 +144,7 @@ python3 - "$d/build_linux-x86_64.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
 r["toolchain"] = {"compiler": "gcc (Ubuntu 10.5.0) 10.5.0", "meson": "1.7.2"}
-r["components"] = {"mpv": "0.41.0", "libplacebo": "7.349.0"}
+r["components"] = {"mpv": "0.42.0", "libplacebo": "7.387.0"}
 json.dump(r, open(sys.argv[1], "w"))
 PY
 manifest "$d"; check $? "sbom: write_manifest.sh succeeds with one record from before the fields"
@@ -152,7 +152,7 @@ python3 - "$d/manifest.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))
 assert m["toolchain"] == {"linux-x86_64": {"compiler": "gcc (Ubuntu 10.5.0) 10.5.0", "meson": "1.7.2"}}, m["toolchain"]
-assert m["components"] == {"linux-x86_64": {"mpv": "0.41.0", "libplacebo": "7.349.0"}}, m["components"]
+assert m["components"] == {"linux-x86_64": {"mpv": "0.42.0", "libplacebo": "7.387.0"}}, m["components"]
 # The fields a consumer already reads are where they were.
 assert list(m)[:9] == ["release", "mpv", "ffmpeg", "license", "audioFilters", "patches",
                        "source", "assets", "licenses"], list(m)
@@ -494,14 +494,14 @@ licenses() {
     source "$ROOT/scripts/shared/_helpers.sh"
     source "$ROOT/scripts/shared/_versions.sh"
     source "$ROOT/scripts/shared/_audio_only.sh"
-    SOURCES_FETCHED="$fetched" GITHUB_SHA=feedc0de LIBPLACEBO_VERSION=6.338.2 \
+    SOURCES_FETCHED="$fetched" GITHUB_SHA=feedc0de LIBPLACEBO_VERSION=7.387.0 \
       RELEASE_DIR="$L/out" write_licenses "$target" "$L/src" "$@"
   ) > "$L/$target.log" 2>&1
 }
 V="$(bash -c "source '$ROOT/scripts/shared/_versions.sh'; echo \"\$FFMPEG_VERSION \$XZ_VERSION \$SPEEXDSP_VERSION \$OPENSSL_VERSION\"")"
 read -r FFV XZV SPV OSV <<<"$V"
 mkdir -p "$L/src"; trees "$L/src"
-LP="https://code.videolan.org/videolan/libplacebo.git#v6.338.2"
+LP="https://code.videolan.org/videolan/libplacebo.git#v7.387.0"
 UNPINNED="https://example.invalid/openssl-$OSV.tar.gz"
 
 # Linux: the .tar.gz of FFmpeg, xz from GitHub, speexdsp from xiph, a
@@ -522,7 +522,7 @@ d = pathlib.Path(d)
 r = (d / "README.txt").read_text()
 src = [l.split()[1] for l in r.split("patches/ of that commit:\n")[1].splitlines() if "  https://" in l]
 assert src == [f"https://ffmpeg.org/releases/ffmpeg-{ffv}.tar.gz", unpinned,
-               "https://code.videolan.org/videolan/libplacebo.git#v6.338.2",
+               "https://code.videolan.org/videolan/libplacebo.git#v7.387.0",
                f"https://github.com/tukaani-project/xz/releases/download/v{xzv}/xz-{xzv}.tar.gz",
                f"https://downloads.xiph.org/releases/speex/speexdsp-{spv}.tar.gz"], src
 assert "  mpv: no source checked against" in r, r
@@ -545,7 +545,7 @@ e = os.environ
 at = re.search(r"at commit `([0-9a-f]+)`", open(sys.argv[2] + "/tools/implib/README.md").read()).group(1)
 assert r == {"release": sys.argv[3], "target": "windows-x86_64", "components": {
     "mpv": e["MPV_VERSION"], "ffmpeg": e["FFMPEG_VERSION"], "openssl": e["OPENSSL_VERSION"],
-    "libplacebo": "6.338.2", "xz": e["XZ_VERSION"], "implib": f"commit {at}",
+    "libplacebo": "7.387.0", "xz": e["XZ_VERSION"], "implib": f"commit {at}",
     "mozilla-ca": r["components"]["mozilla-ca"]}}, r
 assert r["components"]["mozilla-ca"].startswith("as of "), r
 PY
@@ -566,7 +566,7 @@ assert heads == [
     (f"mpv {v['MPV_VERSION']}", "LGPL-2.1-or-later"),
     (f"ffmpeg {v['FFMPEG_VERSION']}", "LGPL-3.0-or-later"),
     (f"openssl {v['OPENSSL_VERSION']}", "Apache-2.0"),
-    ("libplacebo 6.338.2", "LGPL-2.1-or-later"),
+    ("libplacebo 7.387.0", "LGPL-2.1-or-later"),
     (f"xz {v['XZ_VERSION']}", "0BSD"),
     (f"speexdsp {v['SPEEXDSP_VERSION']}", "BSD-3-Clause"),
     ("Implib.so commit a3e167cf978a5b8a38ec0f710d8c4331e8dcdd9a", "MIT"),

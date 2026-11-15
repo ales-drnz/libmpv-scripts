@@ -24,7 +24,7 @@
 #
 # Options (env vars):
 #   ARCH=x86_64|aarch64     (default: x86_64; --arch=… overrides)
-#   MPV_VERSION=0.41.0      (default: 0.41.0)
+#   MPV_VERSION=0.42.0      (default: 0.42.0)
 #   JOBS=N                  (default: nproc)
 #   FORCE_DOWNLOAD=1        (redownload sources even if cached)
 #   KEEP_BUILD=1            (preserve all of BUILD_DIR for inspection)
@@ -59,7 +59,6 @@ esac
 
 # ── Windows-only dependency versions (centralised ones live in _versions.sh) ──
 EXPAT_VERSION="${EXPAT_VERSION:-${LIBEXPAT_VERSION}}"
-LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-v6.338.2}"
 LIBSMB2_TAG="${LIBSMB2_TAG:-v${LIBSMB2_VERSION}}"
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
@@ -397,9 +396,8 @@ fi
 if [[ ! -f "$DIST/lib/libplacebo.a" ]]; then
   log "Building libplacebo $LIBPLACEBO_VERSION..."
   LP_DIR="$SRC/libplacebo-git"
-  download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_DIR" "$LIBPLACEBO_VERSION"
+  download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_DIR" "v$LIBPLACEBO_VERSION"
   git -C "$LP_DIR" submodule update --init --recursive
-  apply_libplacebo_patches "$LP_DIR"
   pushd "$LP_DIR"
     rm -rf build
     # `-DPL_STATIC` mutes the `PL_API` macro so it doesn't expand to

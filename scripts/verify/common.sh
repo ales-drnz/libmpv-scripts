@@ -120,12 +120,7 @@ expected_version_for() {
     rubberband)     if gpl_build; then echo "$RUBBERBAND_VERSION"; fi ;;
     libsmb2)        echo "$LIBSMB2_VERSION" ;;
     openssl)        echo "$OPENSSL_VERSION" ;;
-    libplacebo)
-      # macOS / Linux desktop tracks 7.x; iOS / Android / Windows track 6.x.
-      case "$platform" in
-        macos|linux|tizen|webos) echo "7.349.0" ;;
-        *)           echo "6.338.2" ;;
-      esac ;;
+    libplacebo)     echo "$LIBPLACEBO_VERSION" ;;
     *) echo "" ;;
   esac
 }

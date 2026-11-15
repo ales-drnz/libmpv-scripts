@@ -6,7 +6,7 @@
 # =============================================================================
 # build_libmpv_macos.sh
 #
-# Compiles mpv 0.41.0 as a Universal dynamic library for macOS, wrapped in
+# Compiles mpv 0.42.0 as a Universal dynamic library for macOS, wrapped in
 # a single-slice xcframework so SwiftPM consumers can pick it up via
 # `.binaryTarget` (same shape as iOS).
 #
@@ -31,7 +31,7 @@
 #   ./scripts/build_libmpv_macos.sh
 #
 # Options (environment variables):
-#   MPV_VERSION=0.41.0            (default: 0.41.0)
+#   MPV_VERSION=0.42.0            (default: 0.42.0)
 #   ARCHS="arm64 x86_64"          (target architectures, space-separated)
 #   JOBS=N                        (default: number of cores)
 #   FORCE_DOWNLOAD=1              (redownload sources even if cached)
@@ -76,7 +76,6 @@ HOST_ARCH="$(uname -m)"
 
 # macOS-only dependency versions (centralised ones live in _versions.sh)
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="7.349.0"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
 # ── Build directory ──────────────────────────────────────────────────────────

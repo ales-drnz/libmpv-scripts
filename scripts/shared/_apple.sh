@@ -188,7 +188,7 @@ apple_build_speexdsp() {
 }
 
 # apple_build_libplacebo <meson machine args...>: libplacebo at
-# v$LIBPLACEBO_VERSION, which each platform pins itself. Its headers are
+# v$LIBPLACEBO_VERSION (_versions.sh). Its headers are
 # required by mpv's csputils.h; built minimal (no vulkan, shaderc, d3d11,
 # opengl).
 apple_build_libplacebo() {
@@ -197,7 +197,6 @@ apple_build_libplacebo() {
   local gitdir="$CROSS_BUILD_DIR/src/libplacebo-git"
   download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
   git -C "$gitdir" submodule update --init --recursive
-  apply_libplacebo_patches "$gitdir"
   local bdir; bdir="$(cross_bdir libplacebo)"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
   PKG_CONFIG_PATH="$CROSS_PREFIX_DIR/lib/pkgconfig" \

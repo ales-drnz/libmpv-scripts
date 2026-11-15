@@ -4,7 +4,7 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 # A build stamps LIBMPV_RELEASE of scripts/shared/_versions.sh in the
-# version of its binaries ("mpv v0.41.0+rN"), which the kit reads back: on
+# version of its binaries ("mpv v0.42.0+rN"), which the kit reads back: on
 # any branch it must be of the form rN. A build of a release/rN branch must
 # also stamp rN, or the binaries would say another release than the one they
 # ship as, and a release branch not named rN fails.

@@ -82,7 +82,7 @@ _pe_imports() {
 # Layer 17 on Windows: the timer resolution (mpv_audio_kit #12). A request
 # for a 1 ms system timer from inside the library slows the host's own
 # rendering, and what a DLL can ask for is in its import table:
-#   timeBeginPeriod, timeEndPeriod  never imported: mpv 0.41 and FFmpeg do
+#   timeBeginPeriod, timeEndPeriod  never imported: mpv 0.42 and FFmpeg do
 #       not call them, so one of them means a dependency or a new mpv
 #       brought the multimedia timer back, outside what
 #       patch_timer_resolution.py governs. That fails.

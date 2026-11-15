@@ -12,14 +12,13 @@
 # it directly.
 
 # ── Player core ──────────────────────────────────────────────────────────────
-# mpv 0.41.0 (2025-12) is the latest release. FFmpeg 8.1.1 ("Hoare",
-# 2026-05) — mpv 0.41's meson floor is libavcodec >= 60.31.102, which
-# the 8.x line clears comfortably.
-export MPV_VERSION="${MPV_VERSION:-0.41.0}"
+# mpv 0.42.0 (2026-11) is the latest release. Its meson floor is FFmpeg 6.1
+# (libavcodec >= 60.31.102) and libplacebo 7.387.0.
+export MPV_VERSION="${MPV_VERSION:-0.42.0}"
 # The mpv_audio_kit release these binaries ship as (GitHub release
 # libmpv-<release>). Baked into mpv's own version string, so a running app
-# can tell which build it loaded: mpv-version reads "mpv v0.41.0+r25".
-export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r25}"
+# can tell which build it loaded: mpv-version reads "mpv v0.42.0+r26".
+export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r26}"
 export FFMPEG_VERSION="${FFMPEG_VERSION:-8.1.1}"
 
 # ── Subtitle / font / text shaping (libass + pulls) ──────────────────────────
@@ -60,7 +59,7 @@ export LIBSMB2_VERSION="${LIBSMB2_VERSION:-6.0.0}"
 # libmpv does not link PipeWire: its AO goes through a lazily loaded stub (see
 # patches/mpv/linux/patch_optional_audio_libs.py). This version supplies the
 # headers and the symbol set, so it is also the oldest PipeWire the AO works
-# with at run time. 0.3.57 is mpv 0.41's own floor, and building against it
+# with at run time. 0.3.57 is mpv's own floor (still so in 0.42.0), and building against it
 # keeps mpv on the code paths every later PipeWire supports.
 export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 
@@ -76,17 +75,16 @@ export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 # --enable-nonfree needed on the ffmpeg side.
 export OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.6}"
 
+# ── libplacebo (every platform) ──────────────────────────────────────────────
+# mpv 0.42.0 needs 7.387.0 or later: video/csputils.c and video/mp_image.c,
+# which stay in the audio-only build, use symbols the older releases lack
+# (PL_ALPHA_NONE, pl_map_avdovi_metadata). One version on every platform, built
+# minimal (no vulkan, shaderc, d3d11, opengl). Its meson floor is 1.3.0.
+export LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-7.387.0}"
+
 # ── Platform-specific (only sourced where used) ──────────────────────────────
-# Some libraries are pinned per-platform because desktop/mobile track
-# different upstream branches — those stay in the per-platform script and
-# are NOT centralised here:
+# Pinned in the script of the one platform that uses them:
 #
-# - libplacebo: macOS / Linux / Tizen / webOS / web pin v7.349.0; iOS (and
-#   tvOS, the same script) / Android / Windows pin v6.338.2. Reason:
-#   libplacebo 7.x dropped some symbols mpv 0.41.0's
-#   csputils.h still references when building under the cross-compile
-#   cross files used on mobile/Windows. Once mpv ships a release that
-#   uses the 7.x API on those platforms too, they can all converge
-#   (libplacebo 7.360.1 is the current latest).
-# - Android NDK: pinned in build_libmpv_android.sh (NDK_VERSION).
-# - libunibreak: pinned in build_libmpv_linux.sh (Linux libass dep).
+# - Android NDK: build_libmpv_android.sh (NDK_VERSION).
+# - emsdk: build_libmpv_web.sh (EMSDK_VERSION).
+# - libunibreak: build_libmpv_linux.sh (Linux libass dep).

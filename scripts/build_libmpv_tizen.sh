@@ -81,8 +81,6 @@ esac
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
-export LIBPLACEBO_VERSION="7.349.0"
-
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Tizen/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
 SYSROOT="$BUILD_DIR/sysroot"

@@ -68,8 +68,6 @@ FFMPEG_ARCH_ARGS="--arch=arm --cpu=cortex-a9"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
-export LIBPLACEBO_VERSION="7.349.0"
-
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/webOS/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
 SYSROOT="$WEBOS_NDK/sysroots/ca9v1-webosmllib32-linux-gnueabi"
