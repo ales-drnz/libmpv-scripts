@@ -24,9 +24,13 @@
 #
 # Needs gcc, meson, ninja, pkg-config, python3, curl, the ffmpeg command
 # with the libopus, libmp3lame and libvorbis encoders, and the FFmpeg
-# development files (mpv 0.41 wants libavcodec 60.31.102 or later),
-# libplacebo's (mpv includes its headers even with libplacebo optional), and
-# SDL2's for ao=sdl, the pull output of gapless_tail_test (its dummy driver).
+# development files (mpv 0.42 wants libavcodec 60.31.102 or later), git, a
+# C++ compiler, and SDL2's for ao=sdl, the pull output of gapless_tail_test
+# (its dummy driver). mpv includes the libplacebo headers even with
+# libplacebo optional and wants 7.387.0 or later, newer than any distribution
+# ships with that FFmpeg: run.sh clones the tag, checks its commit against
+# _sources.sha256 and builds it static, with the options of the release
+# builds, into the work dir, and libmpv and the tests use that one.
 # audiotrack_test needs jni.h from the NDK in ANDROID_NDK_HOME.
 #
 # The work dir is wiped first; --reuse keeps its downloads, build and
@@ -301,6 +305,35 @@ echo "mpv $MPV_VERSION, libavcodec $(pkg-config --modversion libavcodec 2>/dev/n
   "$("$CC" --version | head -1), meson $(meson --version 2>/dev/null || echo '?')"
 [[ -n "$DISABLED_PATCHES" ]] && echo "disabled patches: $DISABLED_PATCHES"
 
+# libplacebo, static, with the options of cross_build_libplacebo and its
+# automatic dependencies off, so that what the host has installed does not
+# change it. Kept by --reuse. A system libplacebo stays out: its pkg-config
+# file comes after this one, and the tests take its headers from here.
+LP_VERSION="${LIBPLACEBO_VERSION:-7.387.0}"
+LP_SRC="$WORK/libplacebo" LP_PREFIX="$WORK/libplacebo-prefix"
+build_libplacebo() {
+  [[ "$(cat "$LP_PREFIX/version" 2> /dev/null)" == "$LP_VERSION" ]] && return 0
+  log "Building libplacebo $LP_VERSION"
+  rm -rf "$LP_PREFIX" "$WORK/libplacebo-build"
+  ( set -e
+    download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_SRC" "v$LP_VERSION"
+    git -C "$LP_SRC" submodule update --init --recursive
+    apply_libplacebo_patches "$LP_SRC"
+    meson setup "$WORK/libplacebo-build" "$LP_SRC" --prefix="$LP_PREFIX" --libdir=lib \
+      --buildtype=release --default-library=static -Dvulkan=disabled -Dshaderc=disabled \
+      -Dglslang=disabled -Dopengl=disabled -Dd3d11=disabled -Ddemos=false -Dtests=false \
+      -Dlcms=disabled -Dlibdovi=disabled -Dunwind=disabled -Dxxhash=disabled
+    ninja -C "$WORK/libplacebo-build" -j"$JOBS" install
+  ) > "$WORK/logs/libplacebo.log" 2>&1
+  (( $? == 0 )) || { tail -30 "$WORK/logs/libplacebo.log"; die "the libplacebo build failed"; }
+  echo "$LP_VERSION" > "$LP_PREFIX/version"
+}
+if (( NEED_BUILD )); then
+  build_libplacebo
+  export PKG_CONFIG_PATH="$LP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  echo "libplacebo $(pkg-config --modversion libplacebo)"
+fi
+
 if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   log "Patching and building mpv $MPV_VERSION with ${ASAN[0]:+AddressSanitizer}${VG[0]:+no sanitizer, for valgrind}"
   rm -rf "$SRC" "$BLD"
@@ -368,7 +401,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
     unit)
       # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
-        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
+        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil libplacebo) \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" \
         $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
     tsan)
@@ -376,7 +409,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # AddressSanitizer, which does not link with ThreadSanitizer.
       # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=thread \
-        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
+        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil libplacebo) \
         "$HERE/$t.c" "$SRC"/ta/ta.c "$SRC"/ta/ta_talloc.c "$SRC"/ta/ta_utils.c -o "$BIN/$t" \
         $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
     audiotrack)
@@ -390,8 +423,9 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # driver only, but the patch wants both files to apply.
       cp "$WORK/mpv/audio/out/ao_audiotrack.c" "$WORK/mpv/audio/out/buffer.c" "$o/audio/out/"
       python3 -B "$AUDIOTRACK_PATCH" "$o" > "$log" 2>&1 || return 1
+      # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
-        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -idirafter "$o/jni" \
+        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libplacebo) -idirafter "$o/jni" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
     tizen)
       # The patch adds ao_tizen.c and edits ao.c and the meson files, so it
@@ -402,8 +436,9 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       cp "$WORK/mpv/audio/out/ao.c" "$o/audio/out/"
       cp "$WORK/mpv/meson.build" "$WORK/mpv/meson.options" "$o/"
       python3 -B "$TIZEN_PATCH" "$o" > "$log" 2>&1 || return 1
+      # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
-        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -I"$HERE/tizen_sim" \
+        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libplacebo) -I"$HERE/tizen_sim" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
   esac
 }

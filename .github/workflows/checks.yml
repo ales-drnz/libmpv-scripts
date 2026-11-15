@@ -138,13 +138,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # mpv includes the libplacebo headers (video/csputils.h) even with
-      # libplacebo optional: the release builds have them from source.
-      - name: Install meson, ninja, cmake, FFmpeg, libplacebo and OpenSSL
+      # libplacebo optional, and mpv 0.42 wants 7.387.0, newer than Ubuntu's:
+      # run.sh builds the pinned tag from source, as the release builds do.
+      - name: Install meson, ninja, cmake, FFmpeg and OpenSSL
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
             libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
-            libswscale-dev libplacebo-dev libsdl2-dev zlib1g-dev libssl-dev libxml2-dev openssl python3-venv
+            libswscale-dev libsdl2-dev zlib1g-dev libssl-dev libxml2-dev openssl python3-venv g++ git
       # The ASan runtime of gcc 13 can crash at start with the 32 bits of
       # mmap randomness of newer kernels.
       - name: Fewer mmap random bits for ASan
