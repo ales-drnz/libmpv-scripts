@@ -127,7 +127,8 @@ untested = [(s, False) for s, _ in shared]
 BUILDS = {
     'linux': (MPV, shared + [('mpv/linux/patch_optional_audio_libs.py', True)]),
     'android': (MPV, untested + [('mpv/android/patch_audiotrack.py', True)]),
-    'web': (MPV, untested + [('mpv/web/patch_ao_webaudio.py', True)]),
+    'web': (MPV, untested + [('mpv/web/patch_ao_webaudio.py', True),
+                         ('mpv/web/patch_web_subprocess.py', True)]),
     'windows': (MPV, [('mpv/windows/patch_windows_deps.py', True),
                       ('mpv/windows/patch_timer_resolution.py', True)]),
     'ios': (MPV, [('mpv/ios/patch_ios_platform.py', True),

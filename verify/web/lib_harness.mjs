@@ -259,7 +259,7 @@ export async function runLibHarness(factory, files, log, record = null, opts = {
   measure('hook_add_ms', performance.now() - t);
 
   const ver = await getAsync('mpv-version', FMT.STRING);
-  check(ver.err >= 0 && /^mpv v0\.41\.0/.test(ver.v ?? ''), 'mpv-version', String(ver.v));
+  check(ver.err >= 0 && /^mpv v0\.42\.0/.test(ver.v ?? ''), 'mpv-version', String(ver.v));
 
   const decode = async (f, tag) => {
     state.loaded = false;

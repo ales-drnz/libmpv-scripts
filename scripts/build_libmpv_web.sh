@@ -362,6 +362,8 @@ build_mpv() {
   apply_mpv_patches_common "$dir"
   # The browser's audio output. Not a toggle: without it there is no sound.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/web/patch_ao_webaudio.py" "$dir"
+  # No child processes in a browser: the dummy subprocess, not clone().
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/web/patch_web_subprocess.py" "$dir"
 
   local bdir="$BUILD_DIR/build/mpv"; rm -rf "$bdir"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -414,9 +416,12 @@ WEB_LIBS+=(-lxml2 -lz -lm)
 #                             initial pages (32 MB, 512 pages), or the
 #                             factory rejects; the heap then grows up to its
 #                             maximum, and an allocation past it fails.
-#   MIN_<browser>_VERSION     the floors of the kit's doc/web.md (Chrome 92,
-#                             Firefox 79, Safari 15.2): Emscripten 7 raised
-#                             its defaults above them (93, 92 and 15.4).
+#   MIN_<browser>_VERSION     the browsers the module runs in: Chrome 92 and
+#                             Safari 15.2, the floors of the kit's
+#                             doc/web.md, below the defaults of Emscripten 7
+#                             (93 and 15.4), and Firefox 114, the first with
+#                             the module workers an EXPORT_ES6 module with
+#                             pthreads starts (emcc warns below it).
 WEB_INCOMING_API=ENVIRONMENT,arguments,canvas,dynamicLibraries,elementPointerLock
 WEB_INCOMING_API+=,instantiateWasm,locateFile,monitorRunDependencies,noExitRuntime
 WEB_INCOMING_API+=,noInitialRun,onAbort,onExit,onRuntimeInitialized,postRun,preInit
@@ -430,7 +435,7 @@ web_link_common() {
     -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sSTACK_SIZE=1MB \
     -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY" -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
     -sINCOMING_MODULE_JS_API="$WEB_INCOMING_API" \
-    -sMIN_CHROME_VERSION=92 -sMIN_FIREFOX_VERSION=79 -sMIN_SAFARI_VERSION=150200 \
+    -sMIN_CHROME_VERSION=92 -sMIN_FIREFOX_VERSION=114 -sMIN_SAFARI_VERSION=150200 \
     -sWASMFS -sFORCE_FILESYSTEM
 }
 
