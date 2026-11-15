@@ -2,7 +2,7 @@ module libmpv-tui
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 // Dependencies are resolved by `go mod tidy` / `go mod download` (run
 // automatically by `./build`). Only two direct deps: Bubble Tea (the TUI
