@@ -804,6 +804,12 @@ EOF
 # \$(mpv_common_args). \`auto_features=disabled\` flips every \`auto\` feature
 # off; the optional-deps patch makes libplacebo / libass not-required so
 # unbuilt deps don't fail configure.
+# Two are set off by name. lua is a combo, not a feature, so auto_features
+# does not reach it: its `auto` takes any lua or luajit pkg-config finds,
+# and with it the scripting a client could load. libcurl (mpv 0.42.0) is a
+# second HTTP and TLS stack, which would bypass FFmpeg's protocol whitelist
+# and its patches (embed_cacert, read_error): off by name, whatever a
+# platform's sysroot holds.
 mpv_common_args() {
   # License (see gpl_build). -Dgpl=false does not turn rubberband off (mpv's
   # rubberband feature does not depend on gpl), so both are set.
@@ -825,6 +831,8 @@ mpv_common_args() {
 -Dplain-gl=disabled
 -Drubberband=${_rubberband}
 -Dzlib=enabled
+-Dlua=disabled
+-Dlibcurl=disabled
 EOF
 }
 
