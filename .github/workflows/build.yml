@@ -370,17 +370,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The version build_libmpv_web.sh pins (EMSDK_VERSION): it stops on
       # another emcc, or on a clang or an emcc.py whose SHA-256 is not the
-      # one in _sources.sha256. emsdk itself at the commit of its tag 6.0.12.
+      # one in _sources.sha256. emsdk itself at the commit of its tag 7.0.0.
       - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
-          version: 6.0.12
-          emsdk-version: 35ff8a6d150541276abbc6bae512ca90bcfbe220
+          version: 7.0.0
+          emsdk-version: 1693ce7359fc9694f198694f902a2cc061239b86
           actions-cache-folder: builds/emsdk-cache
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: builds/em-cache
-          key: em-cache-6.0.12-${{ hashFiles('scripts/build_libmpv_web.sh') }}
-          restore-keys: em-cache-6.0.12-
+          key: em-cache-7.0.0-${{ hashFiles('scripts/build_libmpv_web.sh') }}
+          restore-keys: em-cache-7.0.0-
       # meson and ninja at the versions of the local builds; ffmpeg makes the
       # fixtures of the checks, brotli measures the module.
       - name: Install meson, ninja, ffmpeg and brotli
@@ -525,15 +525,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
         with:
-          version: 6.0.12
-          emsdk-version: 35ff8a6d150541276abbc6bae512ca90bcfbe220
+          version: 7.0.0
+          emsdk-version: 1693ce7359fc9694f198694f902a2cc061239b86
           actions-cache-folder: builds/emsdk-cache
       # The sanitized system libraries in a cache of their own.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: builds/em-cache
-          key: em-cache-asan-6.0.12-${{ hashFiles('scripts/build_libmpv_web.sh') }}
-          restore-keys: em-cache-asan-6.0.12-
+          key: em-cache-asan-7.0.0-${{ hashFiles('scripts/build_libmpv_web.sh') }}
+          restore-keys: em-cache-asan-7.0.0-
       - name: Install meson, ninja and ffmpeg
         run: |
           sudo apt-get update

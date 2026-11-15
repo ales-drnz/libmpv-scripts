@@ -83,7 +83,7 @@ for arg in "$@"; do
 done
 
 # ── Web-only pins (centralised ones live in _versions.sh) ────────────────────
-EMSDK_VERSION="${EMSDK_VERSION:-6.0.12}"
+EMSDK_VERSION="${EMSDK_VERSION:-7.0.0}"
 
 # The browser has no sockets, no TLS store and no SMB: the protocol patches
 # that need them stay out (the per-user DISABLED_PATCHES is kept).
@@ -414,6 +414,9 @@ WEB_LIBS+=(-lxml2 -lz -lm)
 #                             initial pages (32 MB, 512 pages), or the
 #                             factory rejects; the heap then grows up to its
 #                             maximum, and an allocation past it fails.
+#   MIN_<browser>_VERSION     the floors of the kit's doc/web.md (Chrome 92,
+#                             Firefox 79, Safari 15.2): Emscripten 7 raised
+#                             its defaults above them (93, 92 and 15.4).
 WEB_INCOMING_API=ENVIRONMENT,arguments,canvas,dynamicLibraries,elementPointerLock
 WEB_INCOMING_API+=,instantiateWasm,locateFile,monitorRunDependencies,noExitRuntime
 WEB_INCOMING_API+=,noInitialRun,onAbort,onExit,onRuntimeInitialized,postRun,preInit
@@ -427,6 +430,7 @@ web_link_common() {
     -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sSTACK_SIZE=1MB \
     -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY" -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
     -sINCOMING_MODULE_JS_API="$WEB_INCOMING_API" \
+    -sMIN_CHROME_VERSION=92 -sMIN_FIREFOX_VERSION=79 -sMIN_SAFARI_VERSION=150200 \
     -sWASMFS -sFORCE_FILESYSTEM
 }
 
