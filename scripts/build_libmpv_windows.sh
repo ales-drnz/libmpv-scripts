@@ -330,7 +330,7 @@ ok "freetype r2 ✓"
 # final mpv link. Matches the Linux script's approach.
 if [[ ! -f "$DIST/lib/libfontconfig.a" ]]; then
   log "Building fontconfig $FONTCONFIG_VERSION..."
-  FC=$(fetch fontconfig "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz")
+  FC=$(fetch fontconfig "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz")
   tar -xf "$FC" -C "$SRC"
   pushd "$SRC/fontconfig-$FONTCONFIG_VERSION"
     rm -rf build

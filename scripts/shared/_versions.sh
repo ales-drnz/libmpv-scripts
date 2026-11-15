@@ -25,27 +25,26 @@ export FFMPEG_VERSION="${FFMPEG_VERSION:-8.1.1}"
 # Built only when libass is kept (strip_libass and strip_mpv_dead both
 # disabled in Settings > Patches, see libass_stripped in _audio_only.sh).
 # By default patch_strip_libass.py removes libass and this chain is skipped.
-export LIBASS_VERSION="${LIBASS_VERSION:-0.17.4}"
-export FREETYPE_VERSION="${FREETYPE_VERSION:-2.14.3}"
-export FRIBIDI_VERSION="${FRIBIDI_VERSION:-1.0.16}"
-export HARFBUZZ_VERSION="${HARFBUZZ_VERSION:-14.2.0}"
-# 2.16.0 is the newest fontconfig with a dist tarball on the standard
-# freedesktop release mirror; 2.17.x ships only as git tags.
-export FONTCONFIG_VERSION="${FONTCONFIG_VERSION:-2.16.0}"
+export LIBASS_VERSION="${LIBASS_VERSION:-0.17.5}"
+export FREETYPE_VERSION="${FREETYPE_VERSION:-2.15.0}"
+export FRIBIDI_VERSION="${FRIBIDI_VERSION:-1.0.18}"
+export HARFBUZZ_VERSION="${HARFBUZZ_VERSION:-15.1.0}"
+# Since 2.17 the dist tarballs are GitLab generic packages, no longer on the
+# freedesktop release mirror.
+export FONTCONFIG_VERSION="${FONTCONFIG_VERSION:-2.18.3}"
 
 # ── Compression / system libraries ───────────────────────────────────────────
-# xz 5.8.3 is on the post-backdoor clean line and fixes CVE-2026-34743.
-export ZLIB_VERSION="${ZLIB_VERSION:-1.3.2}"
-export XZ_VERSION="${XZ_VERSION:-5.8.3}"
-export LIBEXPAT_VERSION="${LIBEXPAT_VERSION:-2.8.1}"
-# libxml2 stays on the mature 2.14 line (2.15.x carries build/API
-# regressions); only pulled in transitively by ffmpeg's DASH/IMF demuxers.
-export LIBXML2_VERSION="${LIBXML2_VERSION:-2.14.6}"
-export LIBPNG_VERSION="${LIBPNG_VERSION:-1.6.58}"
+# xz stays on the post-backdoor clean line (5.8.x).
+export ZLIB_VERSION="${ZLIB_VERSION:-1.4}"
+export XZ_VERSION="${XZ_VERSION:-5.8.4}"
+export LIBEXPAT_VERSION="${LIBEXPAT_VERSION:-2.10.0}"
+# libxml2: only pulled in by ffmpeg's DASH and IMF demuxers.
+export LIBXML2_VERSION="${LIBXML2_VERSION:-2.15.4}"
+export LIBPNG_VERSION="${LIBPNG_VERSION:-1.6.59}"
 export BZIP2_VERSION="${BZIP2_VERSION:-1.0.8}"
 # libiconv: built only where the platform lacks a system iconv that
 # ffmpeg/libxml2 can link (Android, Windows).
-export LIBICONV_VERSION="${LIBICONV_VERSION:-1.18}"
+export LIBICONV_VERSION="${LIBICONV_VERSION:-1.19.1}"
 
 # ── Audio DSP ─────────────────────────────────────────────────────────────────
 # rubberband 4.0.0 backs ffmpeg's `arubberband` filter. Its source uses an

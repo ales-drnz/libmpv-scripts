@@ -438,7 +438,7 @@ slice_fontconfig() {
   [[ -f "$prefix/lib/libfontconfig.a" ]] && return
   log "fontconfig ($sdk/$arch)..."
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null

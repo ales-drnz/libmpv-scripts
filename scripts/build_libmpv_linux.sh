@@ -71,7 +71,7 @@ export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # ── Linux-only dependency versions (centralised ones live in _versions.sh) ────
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBUNIBREAK_VERSION="6.1"
+LIBUNIBREAK_VERSION="8.0"
 
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Linux/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
@@ -234,7 +234,7 @@ build_freetype_round2() {
 build_fontconfig() {
   [[ -f "$PREFIX/lib/libfontconfig.a" ]] && return
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null

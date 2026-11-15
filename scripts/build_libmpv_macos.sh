@@ -343,7 +343,7 @@ build_fontconfig() {
   [[ -f "$prefix/lib/libfontconfig.a" ]] && { ok "fontconfig already compiled"; return; }
   log "Build fontconfig $FONTCONFIG_VERSION..."
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig"
   mkdir -p "$bdir"
