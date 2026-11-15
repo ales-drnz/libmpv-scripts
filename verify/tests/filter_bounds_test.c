@@ -49,12 +49,14 @@ static const struct testcase cases[] = {
     // F194: NaN and values out of the domain.
     {"chorus-negative-depth", "chorus", "0.5:0.9:40:0.4:0.25:-2", REFUSED},
     {"chorus-speed-above-rate", "chorus", "0.5:0.9:40:0.4:50000:2", REFUSED},
+    // Upstream from FFmpeg 8.1.3, kept to see it stay so.
     {"aecho-nan-delay", "aecho", "delays=1000|nan:decays=0.5|0.5", REFUSED},
     {"mcompand-nan-crossover", "mcompand", "args=0.005,0.1 6 -47/-40,-34/-34,-17/-33 nan", REFUSED},
     {"anequalizer-nan-band", "anequalizer", "c0 f=nan w=100 g=6 t=0", FINITE},
     {"anequalizer-nan-change", "anequalizer", "c0 f=1000 w=100 g=6 t=0", CMD_REFUSED,
      "change", {"0|f=nan|w=100|g=6"}},
-    // F192: an input channel with no slot.
+    // F192: an input channel with no slot. Upstream from FFmpeg 8.1.3, kept
+    // to see it stay so.
     {"pan-unk-input", "pan", "stereo|FL=UNK|FR=FR", REFUSED},
     {"pan-ambisonic-input", "pan", "stereo|FL=AMBI1|FR=FR", REFUSED},
     // F193: an empty attack or decay rate.
