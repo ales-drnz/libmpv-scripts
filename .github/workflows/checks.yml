@@ -1,7 +1,8 @@
 name: Checks
 
 # The checks that need no release binary: lint, the TUI with the tests of
-# verify/tests, and the native tests with AddressSanitizer. They run on a
+# verify/tests, and the native tests with AddressSanitizer, under valgrind
+# memcheck and with UndefinedBehaviorSanitizer. They run on a
 # push to any branch but release/ and ci/, on every pull request, and from
 # the workflows that call them: Build on a release branch, and Check
 # mpv_audio_kit for its '[native]' tag. A commit that changes only the
@@ -31,8 +32,9 @@ on:
     inputs:
       only:
         description: >-
-          'static' for lint and tui, 'native' for the native tests, empty
-          for all three
+          'static' for lint and tui, 'native' for the native tests,
+          'sanitizers' for the native tests under valgrind memcheck and
+          UndefinedBehaviorSanitizer, empty for all
         type: string
         default: ''
 
@@ -183,4 +185,57 @@ jobs:
             builds/filter-bounds/*.err
             builds/network/logs/
             builds/network/runs/*.log*
+          if-no-files-found: ignore
+
+  # The native tests again, under valgrind memcheck (MEMCHECK=1, no
+  # sanitizer: a read of memory never written, which AddressSanitizer does
+  # not see, as the one libmpv-r25 shipped) and with the overflow checks of
+  # UndefinedBehaviorSanitizer on top of AddressSanitizer (UBSAN=1). Not in
+  # the needs of Build's release: memcheck takes about an hour on a runner,
+  # more than the whole release, and runs here on the push of every branch
+  # and pull request the release branch comes from. Build can call it with
+  # only 'sanitizers'. A failure uploads the logs as <mode>-test-logs.
+  sanitizers:
+    name: Native tests (${{ matrix.name }})
+    if: ${{ !inputs.only || inputs.only == 'sanitizers' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: memcheck
+            env: MEMCHECK=1
+            extra: valgrind libc6-dbg
+            timeout: 150
+          - name: UBSan
+            env: UBSAN=1
+            extra: ''
+            timeout: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install meson, ninja, FFmpeg and the tools
+        env:
+          EXTRA: ${{ matrix.extra }}
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends meson ninja-build cmake pkg-config ffmpeg \
+            libavcodec-dev libavfilter-dev libavformat-dev libavutil-dev libswresample-dev \
+            libswscale-dev libsdl2-dev zlib1g-dev libssl-dev libxml2-dev openssl g++ git $EXTRA
+      - name: Fewer mmap random bits for ASan
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+      # memcheck skips the tests of the patch scripts and the tsan tests
+      # (run.sh); the UBSan run has them all.
+      - name: mpv patches
+        env:
+          SAN_ENV: ${{ matrix.env }}
+        run: env "$SAN_ENV" JOBS=4 bash verify/tests/native/run.sh builds/native-san
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.name }}-test-logs
+          path: |
+            builds/native-san/logs/
+            builds/native-san/runs/*.log
           if-no-files-found: ignore
