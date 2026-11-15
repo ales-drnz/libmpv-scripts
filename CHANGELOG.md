@@ -18,6 +18,10 @@
 **Changed**
 - NDK r30, from r28c. minSdk stays 24.
 
+### Tizen
+**Fixed**
+- A seek no longer plays audio from before it: a reset waits for a write that has not reached the device yet, which it used to flush ahead of.
+
 ### Web
 **Changed**
 - Emscripten 7.0.0, from 6.0.12. The module targets Chrome 92, Firefox 114 and Safari 15.2: Firefox 114 is the first with the module workers an ES6 module with pthreads starts.
@@ -30,6 +34,7 @@
 - The FFmpeg patches follow 9.0.2. `filter_bounds` leaves to upstream the checks of `af_aecho.c` and `af_pan.c`, and `read_error` takes libavformat 63.
 - The native tests build libplacebo 7.387.0 from its pinned tag, `ao_close_test` sees the file `mp_fopen` opens, and the `sanitizers` job of `checks.yml` runs them under valgrind memcheck and with UBSan on every push.
 - `verify_mpv_config` asserts lua, libcurl and dvda off.
+- The threads of the analysis are named `mak/scan`, `mak/scan-work` and `mak/scan-feed`.
 
 ## [0.4.1] - 15-11-2026
 
