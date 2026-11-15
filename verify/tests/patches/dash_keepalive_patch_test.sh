@@ -9,6 +9,7 @@
 # ff_http_do_new_request2 returns EINVAL for a segment on another host or
 # protocol, which every segment redirected to a CDN is: there the new
 # connection is the expected path, and a warning every few seconds was noise.
+# The fresh connection is opened with the call upstream's open_url() makes.
 #
 # Usage: bash verify/tests/patches/dash_keepalive_patch_test.sh <pristine ffmpeg source dir> <work dir>
 
@@ -46,6 +47,20 @@ level = ' '.join(m.group(1).split())
 assert level == 'ret == AVERROR(EINVAL) ? AV_LOG_VERBOSE : AV_LOG_WARNING', level
 PY
 check $? "pristine: EINVAL logs at VERBOSE, other failures at WARNING"
+# s->io_open() from FFmpeg 8.1.3 on, so that the caller's io_open and
+# io_close2 see every segment; ffio_open_whitelist() before.
+python3 - "$REF/$F" "$T/ok/$F" <<'PY'
+import re, sys
+def opens(path):
+    t = open(path).read()
+    body = t[t.index('static int open_url(AVFormatContext *s'):]
+    body = body[:body.index('\n}\n')]
+    return re.findall(r'ret = (s->io_open|ffio_open_whitelist)\(', body)
+up, ours = opens(sys.argv[1]), opens(sys.argv[2])
+assert len(up) == 1, up
+assert ours == up * 2, (up, ours)
+PY
+check $? "pristine: the fresh connection is opened with upstream's call"
 cp -a "$T/ok" "$T/ok.before"
 python3 -B "$P" "$T/ok" > /dev/null 2>&1; check $? "pristine: a second run applies"
 diff -r "$T/ok.before" "$T/ok" > /dev/null; check $? "pristine: a second run changes nothing"
