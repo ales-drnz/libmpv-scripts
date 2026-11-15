@@ -44,7 +44,7 @@ find() {
   local name="$1"; shift
   mkdir -p "$TMP/$name/home" "$TMP/$name/build"
   env -u ANDROID_NDK_ROOT -u ALLOW_ANY_NDK HOME="$TMP/$name/home" TMPDIR="$TMP/$name" \
-      STRICT_SOURCES=0 "$@" bash -c "
+      NDK_SYSTEM_SDK="${SYSTEM_SDK:-$TMP/$name/system}" STRICT_SOURCES=0 "$@" bash -c "
     set -euo pipefail
     source '$ROOT/scripts/shared/_helpers.sh'
     SOURCES_SHA256_FILE='$TMP/pins'

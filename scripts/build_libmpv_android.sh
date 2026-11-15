@@ -134,14 +134,16 @@ find_or_download_ndk() {
     ok "NDK found: $ANDROID_NDK_ROOT"
     return
   fi
+  # The SDK of the GitHub runners (NDK_SYSTEM_SDK moves it, for the tests).
+  local sys_sdk="${NDK_SYSTEM_SDK:-/usr/local/lib/android/sdk}"
   local candidates=(
     "$BUILD_DIR/ndk/android-ndk-${NDK_VERSION}"
     "$HOME/Library/Android/sdk/ndk/${NDK_SEMVER}"
     "$HOME/Android/Sdk/ndk/${NDK_SEMVER}"
-    "/usr/local/lib/android/sdk/ndk/${NDK_SEMVER}"
+    "$sys_sdk/ndk/${NDK_SEMVER}"
     "$HOME/Library/Android/sdk/ndk/${NDK_VERSION}"
     "$HOME/Android/Sdk/ndk/${NDK_VERSION}"
-    "/usr/local/lib/android/sdk/ndk/${NDK_VERSION}"
+    "$sys_sdk/ndk/${NDK_VERSION}"
     "$HOME/Library/Android/sdk/ndk-bundle"
     "${TMPDIR:-/tmp}/mpv_android_build/ndk/android-ndk-${NDK_VERSION}"
   )
@@ -158,7 +160,7 @@ find_or_download_ndk() {
   # 2.5 Dynamic search in common bases: the newest NDK of the SDK, which is
   # another version by definition, so only with ALLOW_ANY_NDK=1.
   if [[ "${ALLOW_ANY_NDK:-0}" == "1" ]]; then
-    for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "/usr/local/lib/android/sdk/ndk"; do
+    for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "$sys_sdk/ndk"; do
       if [[ -d "$base" ]]; then
         local latest_ndk
         latest_ndk="$(ls -d "$base"/* 2>/dev/null | grep -Ev 'ndk-bundle' | sort -V | tail -1)"
