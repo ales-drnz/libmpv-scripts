@@ -125,6 +125,12 @@ int main(int argc, char **argv)
     if (!range && !known && !est && stat(path, &st) == 0)
         chunked_size = st.st_size;
     mpv_handle *h = an_create();
+    // The modes that end on a cut pass keep mpv's verbose log next to the
+    // server's: it shows how the pass ended when one of them fails.
+    if (grown) {
+        snprintf(path, sizeof path, "%s.mpv.log", argv[3]);
+        mpv_set_option_string(h, "log-file", path);
+    }
     if (!strcmp(mode, "full"))
         mpv_set_option_string(h, "demuxer-max-bytes", "100KiB");
     if (!strcmp(mode, "nocache"))
