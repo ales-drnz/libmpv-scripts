@@ -4,7 +4,7 @@
 # This file holds C sources reproduced from mpv: like mpv, it is under the GNU
 # Lesser General Public License, version 2.1 or later (see NOTICE).
 
-"""Strip dead/unused subsystems from an audio-only libmpv build (mpv 0.41.0).
+"""Strip dead/unused subsystems from an audio-only libmpv build (mpv 0.42.0).
 
 Background
 ==========
@@ -97,7 +97,7 @@ Removals
    meson files(...) dropped: sub/sd_lavc.c, sub/draw_bmp.c (overwritten in
      place — see below), sub/img_convert.c, sub/lavc_conv.c, sub/filter_sdh.c.
    (sub/filter_regex.c and sub/filter_jsre.c are NOT in the unconditional
-    files() list in 0.41.0 — they are conditional sources — so they are
+    files() list since 0.41.0 — they are conditional sources — so they are
     left untouched.)
    GC-root anchor cut:
      sub/dec_sub.c:  `&sd_lavc,` from sd_list[].
@@ -119,6 +119,36 @@ Removals
    string (#include "etc/input.conf.inc") with "" (empty). The command
    parser is untouched; with an empty builtin string the default-bindings
    loop simply iterates zero times.
+
+7) VIDEO, DISC AND WINDOW CODE NEW IN mpv 0.42.0
+   Five unconditional sources that 0.42.0 adds and that no audio path
+   reaches. Four are overwritten in place with stub TUs (kept in files(),
+   their headers unchanged), one is dropped:
+     player/discnav.c      DVD and Blu-ray menu navigation. Every entry
+       point acts only when disc_nav_get_stream() finds a dvdnav or
+       bluray stream, which exist only with HAVE_DVDNAV or HAVE_LIBBLURAY
+       (both auto features, off with auto_features=disabled). The stub
+       keeps player/main.c, loadfile.c, playloop.c and command.c linking:
+       no stream, no state, no still frame, no mouse mapping. It refuses
+       to compile if either feature is on.
+     input/dnd.c           the built-in drag and drop client: a thread and
+       a weak client per mpv instance, waiting for dropped-files. Only a
+       VO window drops files (x11, wayland, the win32 droptarget, the
+       macOS Swift helpers), and the build has none. The stub releases the
+       client as mpv does when the thread cannot start: no thread.
+     demux/dovi_split.c    the Dolby Vision profile 7 enhancement layer
+       splitter of HEVC video tracks. It needs FFmpeg's dovi_split
+       bitstream filter, which the FFmpeg build does not have
+       (--disable-bsfs, AUDIO_BSFS only), so upstream already returns NULL
+       there; the stub returns NULL without asking FFmpeg.
+     filters/f_enhancement_pair.c  pairs decoded enhancement layer frames
+       with the base layer in the video output chain. The FFmpeg build has
+       no video decoders, so no video frame reaches it; the stub reports a
+       failed setup, which f_output_chain.c already handles (base layer
+       only).
+   meson files(...) dropped:
+     video/out/terminal_swapchain.c, used only by vo_tct and vo_kitty
+       (dropped above) and vo_sixel (an auto feature, off).
 
 Idempotency
 ===========
@@ -707,6 +737,219 @@ struct mp_image *mp_draw_sub_overlay(struct mp_draw_sub_cache *cache,
 '''
 
 
+# ─── overwrite: player/discnav.c ────────────────────────────────────────
+
+DISCNAV_REL = 'player/discnav.c'
+
+DISCNAV_STUB = r'''/*
+ * ''' + MARKER + r'''
+ *
+ * No-op stub of player/discnav.c (mpv 0.42.0) for an audio-only build. The
+ * real file drives the menus of a dvdnav or bluray stream; neither exists
+ * without HAVE_DVDNAV or HAVE_LIBBLURAY, so disc_nav_get_stream() never
+ * finds one and every other entry point returns at once. core.h is kept
+ * UNCHANGED; this TU provides every symbol of it that discnav.c defined,
+ * called from player/main.c, loadfile.c, playloop.c and command.c.
+ *
+ * This file is part of mpv.
+ *
+ * mpv is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * mpv is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <stddef.h>
+#include <stdbool.h>
+
+#include "config.h"
+#include "core.h"
+
+#if HAVE_DVDNAV || HAVE_LIBBLURAY
+#error "patch_strip_mpv_dead: the disc navigation stub needs dvdnav and libbluray off"
+#endif
+
+void disc_nav_update(struct MPContext *mpctx)
+{
+    (void)mpctx;
+}
+
+void disc_nav_reset(struct MPContext *mpctx)
+{
+    (void)mpctx;
+}
+
+void disc_nav_destroy(struct MPContext *mpctx)
+{
+    (void)mpctx;
+}
+
+struct stream *disc_nav_get_stream(struct MPContext *mpctx)
+{
+    (void)mpctx;
+    return NULL;
+}
+
+bool disc_nav_mouse_pos_to_src(struct MPContext *mpctx, int src_w, int src_h,
+                               int *out_x, int *out_y)
+{
+    (void)mpctx; (void)src_w; (void)src_h; (void)out_x; (void)out_y;
+    return false;
+}
+'''
+
+
+# ─── overwrite: input/dnd.c ─────────────────────────────────────────────
+
+DND_REL = 'input/dnd.c'
+
+DND_STUB = r'''/*
+ * ''' + MARKER + r'''
+ *
+ * Stub of input/dnd.c (mpv 0.42.0) for an audio-only build. The real
+ * mp_dnd_init() starts a thread on the weak client player/main.c hands it,
+ * to turn the dropped-files of a VO window into loadfile and sub-add
+ * commands. The build has no VO window to drop files on, so the stub
+ * releases the client at once, as the real one does when the thread cannot
+ * start. dnd.h is kept UNCHANGED.
+ *
+ * This file is part of mpv.
+ *
+ * mpv is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * mpv is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include "dnd.h"
+
+void mp_dnd_init(mpv_handle *mpv)
+{
+    mpv_destroy(mpv);
+}
+'''
+
+
+# ─── overwrite: demux/dovi_split.c ──────────────────────────────────────
+
+DOVI_SPLIT_REL = 'demux/dovi_split.c'
+
+DOVI_SPLIT_STUB = r'''/*
+ * ''' + MARKER + r'''
+ *
+ * Stub of demux/dovi_split.c (mpv 0.42.0) for an audio-only build. The real
+ * splitter runs FFmpeg's dovi_split bitstream filter on Dolby Vision
+ * profile 7 HEVC video tracks, and returns NULL when FFmpeg does not have
+ * it. This build's FFmpeg has only the audio bitstream filters, so the stub
+ * returns NULL as upstream would; demux_lavf.c and demux_mkv.c then keep
+ * the base layer only. dovi_split.h is kept UNCHANGED.
+ *
+ * This file is part of mpv.
+ *
+ * mpv is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * mpv is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <stddef.h>
+
+#include "dovi_split.h"
+
+struct mp_dovi_split *mp_dovi_split_create(struct demuxer *demuxer,
+                                           struct sh_stream *bl)
+{
+    (void)demuxer; (void)bl;
+    return NULL;
+}
+
+void mp_dovi_split_reset(struct mp_dovi_split *s)
+{
+    (void)s;
+}
+
+struct sh_stream *mp_dovi_split_el_stream(struct mp_dovi_split *s)
+{
+    (void)s;
+    return NULL;
+}
+
+struct demux_packet *mp_dovi_split_dispatch(struct mp_dovi_split *s,
+                                            struct demux_packet *bl_dp)
+{
+    (void)s; (void)bl_dp;
+    return NULL;
+}
+'''
+
+
+# ─── overwrite: filters/f_enhancement_pair.c ────────────────────────────
+
+ENHANCEMENT_PAIR_REL = 'filters/f_enhancement_pair.c'
+
+ENHANCEMENT_PAIR_STUB = r'''/*
+ * ''' + MARKER + r'''
+ *
+ * Stub of filters/f_enhancement_pair.c (mpv 0.42.0) for an audio-only
+ * build. The real filter decodes an enhancement layer video track and
+ * attaches its frames to the base layer frames of the video output chain.
+ * This build's FFmpeg has no video decoders, so no video frame reaches the
+ * chain; the stub reports a failed setup, which f_output_chain.c handles
+ * by keeping the base layer only. f_enhancement_pair.h is kept UNCHANGED.
+ *
+ * This file is part of mpv.
+ *
+ * mpv is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * mpv is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#include <stddef.h>
+
+#include "f_enhancement_pair.h"
+
+struct mp_filter *mp_enhancement_pair_create(struct mp_filter *parent,
+                                             struct sh_stream *el_sh)
+{
+    (void)parent; (void)el_sh;
+    return NULL;
+}
+'''
+
+
 # ─── meson.build: drop removed sources + add the new gpu stub ───────────
 
 # Sources removed entirely (no surviving reference → no stub needed).
@@ -739,6 +982,8 @@ MESON_REMOVE_SRC = [
     # is gone after --disable-swscale, so they MUST be dropped.
     "    'video/out/vo_tct.c',\n",
     "    'video/out/vo_kitty.c',\n",
+    # Their frame queue (mpv 0.42.0); vo_sixel, its other user, is off.
+    "    'video/out/terminal_swapchain.c',\n",
     # Sub bitmap decode/render (draw_bmp.c is stubbed in place, not removed)
     "    'sub/sd_lavc.c',\n",
     "    'sub/img_convert.c',\n",
@@ -842,6 +1087,10 @@ def apply(p):
     p.replace_file(IMAGE_WRITER_REL, IMAGE_WRITER_STUB)
     p.replace_file(ENCODE_REL, ENCODE_STUB)
     p.replace_file(DRAW_BMP_REL, DRAW_BMP_STUB)
+    p.replace_file(DISCNAV_REL, DISCNAV_STUB)
+    p.replace_file(DND_REL, DND_STUB)
+    p.replace_file(DOVI_SPLIT_REL, DOVI_SPLIT_STUB)
+    p.replace_file(ENHANCEMENT_PAIR_REL, ENHANCEMENT_PAIR_STUB)
 
     # meson source list.
     drop_lines('meson.build', MESON_REMOVE_SRC, 'removed sources')
