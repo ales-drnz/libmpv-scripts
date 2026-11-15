@@ -9,7 +9,8 @@
 //   ab    ab-loop-a=0.2 ab-loop-b=0.6 (ab-loop-count inf), loop-file=no:
 //         the entry plays on past B to its real end (1 s)
 //   next  loop-file=inf and a second entry (p_st48.flac) after the PCM one
-//   abnext the A-B loop and the second entry
+//   abnext the A-B loop and the second entry: the PCM entry still ends at
+//         its real end, past B
 //   off   no loop (control: parks at the end, no warning)
 //   afdrop no loop, 3 s of PCM, af=dynaudnorm, then af="" 0.5 s after
 //         the source drained, while dynaudnorm holds the EOF (F61): the
@@ -149,6 +150,9 @@ int main(int argc, char **argv)
                  "the PCM entry ended and the next one loaded "
                  "(end-file %d, reason %d, file-loaded %d)", ev.end_files,
                  ev.end_reason, ev.loaded);
+        if (m_ab)
+            mt_check(ev.first_end_pos > 0.95, "the PCM entry ended past B "
+                     "(position %.3f)", ev.first_end_pos);
     } else {
         int p = flag(h, "pause"), eof = flag(h, "eof-reached");
         double pos = -1;

@@ -52,6 +52,8 @@ struct pb_ev {
     const char *needle[5];
     int hits[4];
     int end_files, end_reason, loaded;
+    // The position the first END_FILE reports (mak_position).
+    double first_end_pos;
 };
 
 // Drains the event queue for up to ms (0: what is there now) into ev.
@@ -74,6 +76,8 @@ static void pb_pump(mpv_handle *h, int ms, struct pb_ev *ev)
         }
         if (e->event_id == MPV_EVENT_END_FILE) {
             mpv_event_end_file *ef = e->data;
+            if (!ev->end_files)
+                ev->first_end_pos = ef->mak_position;
             ev->end_files++;
             ev->end_reason = ef->reason;
         }
