@@ -3,8 +3,112 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 # shellcheck shell=bash
 
-# The Windows layer of verify_binaries.sh: the L13 LoadLibrary test under
-# Wine. Sourced by verify_binaries.sh. Do not run directly.
+# The Windows layers of verify_binaries.sh: the L13 LoadLibrary test under
+# Wine, the L16 DllCharacteristics and the L17 timer imports. Sourced by
+# verify_binaries.sh. Do not run directly.
+
+# _pe_dll_characteristics <dll> prints the DllCharacteristics flags of the
+# optional header, one name a line (DYNAMIC_BASE, NX_COMPAT, ...). Read with
+# llvm-readobj (llvm-mingw's in the verify image, else the one on PATH),
+# which names them, else from the hex value objdump -p prints. Returns 1 when
+# no tool reads the header.
+_pe_dll_characteristics() {
+  local dll="$1" readobj="${LLVM_MINGW_DIR:-/opt/llvm-mingw}/bin/llvm-readobj" out
+  [[ -x "$readobj" ]] || readobj="$(command -v llvm-readobj 2>/dev/null || true)"
+  if [[ -n "$readobj" ]]; then
+    out="$("$readobj" --file-headers "$dll" 2>/dev/null)" || return 1
+    grep -q 'ImageOptionalHeader' <<<"$out" || return 1
+    grep -oE 'IMAGE_DLL_CHARACTERISTICS_[A-Z_]+' <<<"$out" | sed 's/^IMAGE_DLL_CHARACTERISTICS_//'
+    return 0
+  fi
+  local hex
+  hex="$(objdump -p "$dll" 2>/dev/null | awk '$1 == "DllCharacteristics" { print $2; exit }')"
+  [[ "$hex" =~ ^[0-9a-fA-F]+$ ]] || return 1
+  (( 16#$hex & 0x20 ))  && echo HIGH_ENTROPY_VA
+  (( 16#$hex & 0x40 ))  && echo DYNAMIC_BASE
+  (( 16#$hex & 0x100 )) && echo NX_COMPAT
+  return 0
+}
+
+# Layer 16 on Windows: the loader's mitigations a DLL opts into with its
+# DllCharacteristics. binutils and llvm-mingw set all three by default, and
+# this keeps a toolchain change from dropping one unseen:
+#   DYNAMIC_BASE     ASLR, the DLL may be loaded at any base
+#   HIGH_ENTROPY_VA  64-bit ASLR, the base may be anywhere in the address space
+#   NX_COMPAT        DEP, its data pages are never executable
+# Args: $1 = artifact path
+layer16_pe_hardening() {
+  local artifact="$1" flags flag missing=""
+  if ! flags="$(_pe_dll_characteristics "$artifact")"; then
+    fail "L16: the DllCharacteristics could not be read (tool failure)"
+    return 0
+  fi
+  for flag in DYNAMIC_BASE HIGH_ENTROPY_VA NX_COMPAT; do
+    grep -qx "$flag" <<<"$flags" || missing+="$flag "
+  done
+  if [[ -z "$missing" ]]; then
+    pass "L16 DllCharacteristics: DYNAMIC_BASE, HIGH_ENTROPY_VA, NX_COMPAT"
+  else
+    fail "L16 DllCharacteristics lack: $missing"
+  fi
+  return 0
+}
+
+# _pe_imports <dll> prints the functions the DLL imports by name, one
+# "library function" a line, delay-loaded ones included. Read with
+# llvm-readobj (llvm-mingw's in the verify image, else the one on PATH), else
+# from the import tables objdump -p prints. Returns 1 when no tool reads
+# them or when they list no function: every libmpv imports some.
+_pe_imports() {
+  local dll="$1" readobj="${LLVM_MINGW_DIR:-/opt/llvm-mingw}/bin/llvm-readobj" out list
+  [[ -x "$readobj" ]] || readobj="$(command -v llvm-readobj 2>/dev/null || true)"
+  if [[ -n "$readobj" ]]; then
+    out="$("$readobj" --coff-imports "$dll" 2>/dev/null)" || return 1
+    list="$(awk '$1 == "Name:" { lib = $2 } $1 == "Symbol:" && NF >= 2 { print lib, $2 }' <<<"$out")"
+  else
+    out="$(objdump -p "$dll" 2>/dev/null)" || return 1
+    # A member line is an address, a hint and maybe an ordinal, then the
+    # name; binutils before 2.41 has no ordinal column.
+    list="$(awk '
+      /DLL Name:/ { lib = $NF; next }
+      lib != "" && NF == 0 { lib = "" }
+      lib != "" && NF >= 3 && $1 ~ /^[0-9a-fA-F]+$/ && $NF ~ /^[A-Za-z_?@$][A-Za-z0-9_?@$.]*$/ { print lib, $NF }
+    ' <<<"$out")"
+  fi
+  [[ -n "$list" ]] || return 1
+  printf '%s\n' "$list"
+}
+
+# Layer 17 on Windows: the timer resolution (mpv_audio_kit #12). A request
+# for a 1 ms system timer from inside the library slows the host's own
+# rendering, and what a DLL can ask for is in its import table:
+#   timeBeginPeriod, timeEndPeriod  never imported: mpv 0.41 and FFmpeg do
+#       not call them, so one of them means a dependency or a new mpv
+#       brought the multimedia timer back, outside what
+#       patch_timer_resolution.py governs. That fails.
+#   NtSetTimerResolution  imported, and only reported: mpv keeps the call
+#       for MPV_HRT=always and perwait, and the patch makes never the
+#       default, which the import table cannot tell from a build without it.
+# CreateWaitableTimerExW stays: its high resolution timers belong to one
+# wait each and leave the system's resolution alone.
+# Args: $1 = artifact path
+layer17_pe_timer_imports() {
+  local artifact="$1" imports found
+  if ! imports="$(_pe_imports "$artifact")"; then
+    fail "L17: the import table could not be read (tool failure)"
+    return 0
+  fi
+  found="$(awk '$2 == "timeBeginPeriod" || $2 == "timeEndPeriod" { printf "%s (%s) ", $2, $1 }' <<<"$imports")"
+  if [[ -n "$found" ]]; then
+    fail "L17 timer resolution: the DLL imports $found"
+    return 0
+  fi
+  pass "L17 timer resolution: timeBeginPeriod and timeEndPeriod are not imported"
+  if grep -q ' NtSetTimerResolution$' <<<"$imports"; then
+    info "L17: NtSetTimerResolution is imported, for MPV_HRT=always and perwait (never is the default of patch_timer_resolution)"
+  fi
+  return 0
+}
 
 # Wine state for L13. Set once per run.
 WINE_PREFIX_READY=0

@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── shared min/max/energy-per-bin kernel.
+/* MAK_WAVEFORM_PATCH_V2 ─── shared min/max/energy-per-bin kernel.
  *
  * Used by the bulk parallel decode AND the progressive pre-DSP fold, so
  * the two envelopes are produced by identical math (same downmix, same
@@ -59,7 +59,9 @@ static inline float mak_bin_rms(double sq, uint32_t n)
 
 /* Canonical absolute-sample -> bin mapping. Identical denominator for both
  * paths (total_samples derived once from the container), so a given sample
- * lands in the same bin regardless of who folds it. Clamped to [0,bins). */
+ * lands in the same bin regardless of who folds it. Clamped to [0,bins):
+ * the caller drops the samples at or past total_samples, which have no bin
+ * (and whose product with [bins] is not bounded). */
 static inline int64_t mak_sample_to_bin(int64_t abs_sample, int bins,
                                         int64_t total_samples)
 {
@@ -71,6 +73,18 @@ static inline int64_t mak_sample_to_bin(int64_t abs_sample, int bins,
     if (b >= bins)
         b = bins - 1;
     return b;
+}
+
+/* Silences the samples of [s] that are not finite. A float file can hold
+ * NaN or infinities (a corrupt or badly exported one), and swresample copies
+ * them through: one would stay in a bin's min, max and energy for good, and
+ * in the state of the loudness filters to the end of the decode. */
+static inline void mak_scrub_samples(float *s, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (!isfinite(s[i]))
+            s[i] = 0.0f;
+    }
 }
 
 /* Average-downmix [n_per_ch] frames of INTERLEAVED float ([ch] channels)

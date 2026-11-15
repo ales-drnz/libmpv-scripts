@@ -274,12 +274,20 @@ _l13_linux_dlopen() {
 #   alignment  every LOAD segment aligned to >= 0x4000 on arm64-v8a and
 #              x86_64, which Android 15+ devices with 16 KB pages require.
 #   glibc      no GLIBC_x.y symbol version above LINUX_GLIBC_FLOOR.
+#   hardening  elf_hardening_gaps of _audio_only.sh finds nothing missing: a
+#              non-executable GNU_STACK, GNU_RELRO, BIND_NOW (full RELRO),
+#              __stack_chk_fail among the undefined symbols (the canary) and
+#              no TEXTREL. The fortified __*_chk calls are counted too, as
+#              information: how many there are depends on the compiler.
+# A Windows DLL gets its DllCharacteristics checked instead
+# (layer16_pe_hardening in windows.sh).
 # Args: $1 = platform, $2 = arch, $3 = artifact path, $4 = readelf
 layer16_elf_invariants() {
   local platform="$1" arch="$2" artifact="$3" readelf="${4:-readelf}"
   phase l16
   case "$platform" in
     linux|android|tizen|webos) ;;
+    windows) layer16_pe_hardening "$artifact"; return 0 ;;
     *) na "ELF loader invariants; $platform binaries are not ELF."; return 0 ;;
   esac
   local floor="$LINUX_GLIBC_FLOOR"
@@ -339,5 +347,21 @@ layer16_elf_invariants() {
       fail "L16 glibc floor: needs $newest, above $floor"
     fi
   fi
+
+  local gaps gap rc=0
+  gaps="$(elf_hardening_gaps "$artifact" "$readelf")" || rc=$?
+  if (( rc != 0 )); then
+    fail "L16 hardening: readelf read no segments or symbols (tool failure)"
+  elif [[ -z "$gaps" ]]; then
+    pass "L16 hardening: NX stack, full RELRO, BIND_NOW, stack canary, no TEXTREL"
+  else
+    while IFS= read -r gap; do
+      fail "L16 hardening: $gap"
+    done <<<"$gaps"
+  fi
+  local fortified
+  fortified="$(LC_ALL=C "$readelf" -W --dyn-syms "$artifact" 2>/dev/null \
+    | awk '$7 == "UND" && $8 ~ /^__[a-z0-9_]+_chk[0-9]*(@|$)/ { n++ } END { print n + 0 }')"
+  info "L16 fortified libc calls (__*_chk): $fortified"
   return 0
 }

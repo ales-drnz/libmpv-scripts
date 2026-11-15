@@ -296,8 +296,8 @@ slice_libpng() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4"
   [[ -f "$prefix/lib/libpng.a" ]] && return
   log "libpng ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   make distclean 2>/dev/null || make clean 2>/dev/null || true
@@ -314,8 +314,8 @@ slice_freetype() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4"
   [[ -f "$prefix/lib/libfreetype.a" ]] && return 0
   log "freetype r1 ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   cmake_static "$sdk" "$arch" "$prefix" "$dir" \
     -DFT_DISABLE_HARFBUZZ=ON \
@@ -333,7 +333,7 @@ slice_fribidi() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4"
   [[ -f "$prefix/lib/libfribidi.a" ]] && return
   log "fribidi ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi-${sdk}-${arch}"; mkdir -p "$bdir"
@@ -352,8 +352,10 @@ slice_harfbuzz() {
   local sdk="$1" arch="$2" prefix="$3" cf="$4"
   [[ -f "$prefix/lib/libharfbuzz.a" ]] && return
   log "harfbuzz ($sdk/$arch)..."
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -402,7 +404,7 @@ EOF
   fi
 
   log "freetype r2 ($sdk/$arch)..."
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   rm -rf "$BUILD_DIR/build/freetype-${sdk}-${arch}"
   local bdir="$BUILD_DIR/build/freetype-r2-${sdk}-${arch}"; mkdir -p "$bdir"
@@ -638,7 +640,8 @@ assemble_xcframework() {
     # clash with other Flutter plugins linking the same symbols.
     if [[ "${VIS_HIDDEN:-1}" != "0" ]]; then
       local _total_syms
-      _total_syms="$(nm -gU "$fw/libmpv" 2>/dev/null | grep -c ' T ' || echo 0)"
+      # || true, not || echo 0: grep -c already prints its 0 when it fails.
+      _total_syms="$(nm -gU "$fw/libmpv" 2>/dev/null | grep -c ' T ' || true)"
       ok "$OS_LABEL slice symbols: $_total_syms total ($(basename "$fw"))"
       if [[ "$_total_syms" -gt 200 ]]; then
         die "Export-filter regression: expected ~60 exported symbols but" \
@@ -647,7 +650,9 @@ assemble_xcframework() {
       fi
     fi
 
-    cp -r "$headers_src"/* "$fw/Headers/" 2>/dev/null || true
+    # Not masked: a framework without its headers is not one to publish
+    # (the tvOS package compiles against them).
+    cp -r "$headers_src"/* "$fw/Headers/"
     apple_write_modulemap "$fw/Modules/module.modulemap"
     apple_write_info_plist "$fw/Info.plist" MinimumOSVersion "$IOS_MIN"
     apple_write_privacy_manifest "$fw/PrivacyInfo.xcprivacy"
@@ -727,6 +732,7 @@ main() {
   echo "║   build_libmpv_ios.sh — mpv $MPV_VERSION (dynamic xcframework) ║"
   echo "╚══════════════════════════════════════════════════════════════╝"
   apple_check_tools meson ninja nasm cmake pkg-config python3 autoconf automake libtool git xcodebuild
+  apple_toolchain_notes "$DEVICE_SDK" "$SIM_SDK"
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
   for slice in "${SLICES[@]}"; do

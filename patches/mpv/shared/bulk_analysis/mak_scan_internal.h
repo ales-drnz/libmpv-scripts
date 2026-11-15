@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── the parts of the bulk-analysis scan engine.
+/* MAK_WAVEFORM_PATCH_V2 ─── the parts of the bulk-analysis scan engine.
  *
  * mak_scan.c is the coordinator and the public entry points, mak_scan_worker.c
  * the decode of one worker's slice, mak_scan_source.c the opening of a source

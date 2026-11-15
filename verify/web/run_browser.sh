@@ -23,6 +23,12 @@
 # browser's remote protocol (gesture.mjs), cpu-start and cpu-end sample the
 # CPU time of the browser's processes (proc_cpu.py).
 #
+# A run with no result (the time is up, the browser exited) prints what the
+# page sent meanwhile (serve_coi.py, <result>.progress): its lines in order,
+# each with the page's clock, the steps of the harness and a line every 5 s
+# while the page's main thread runs. The last ones say where it stopped, and
+# whether the page waited (the alive lines go on) or stood still.
+#
 # CHROME=<binary> picks the Chrome (default: chrome-headless-shell of Chrome
 # for Testing on PATH; a full Chrome runs with --headless=new). TIMEOUT=<s>
 # (default 300).
@@ -110,6 +116,16 @@ browser_group_check "$bpid"
 
 start=$SECONDS
 cpu_note=""
+# The lines the page sent, in the order it wrote them (the POSTs can arrive
+# out of order).
+progress() {
+  if [[ -s "$result.progress" ]]; then
+    echo "run_browser: the page got this far (line, seconds since it loaded):" >&2
+    sort -n -s -k1,1 "$result.progress" | awk -F'\t' 'NF >= 3 { printf "  [%s %6.1f s] %s\n", $1, $2, $3 }' >&2
+  else
+    echo "run_browser: the page sent no line" >&2
+  fi
+}
 signals() {
   if [[ -f "$result.click" ]]; then
     rm -f "$result.click"
@@ -134,11 +150,13 @@ until [[ -s "$result" ]]; do
   if (( SECONDS - start > timeout_s )); then
     echo "run_browser: no result after ${timeout_s}s" >&2
     tail -20 "$build/browser.log" >&2 || true
+    progress
     exit 3
   fi
   if ! kill -0 "$bpid" 2>/dev/null; then
     echo "run_browser: the browser exited" >&2
     tail -20 "$build/browser.log" >&2 || true
+    progress
     exit 3
   fi
   sleep 0.1

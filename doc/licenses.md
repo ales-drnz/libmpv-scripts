@@ -50,11 +50,11 @@ It is published with the libraries, with one folder per target. Each folder hold
 
 Not included, because their licenses ask for no notice:
 
-- GCC's libgcc and libstdc++ (Windows x86_64, Linux), under the GCC Runtime Library Exception;
+- GCC's libgcc and libstdc++ (Windows x86_64, Linux, Tizen, webOS), under the GCC Runtime Library Exception;
 - glibc's static start files, under the LGPL's linking exception;
 - the compiler-rt builtins of Apple's clang, under the LLVM exception.
 
-glibc on Linux and libc++ on Apple are system libraries, linked dynamically.
+glibc on Linux, Tizen and webOS and libc++ on Apple are system libraries, linked dynamically.
 
 ## The GPL build
 

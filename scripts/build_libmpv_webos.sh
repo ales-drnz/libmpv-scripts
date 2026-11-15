@@ -190,7 +190,8 @@ EOF
   VIS_EXTRA="$(vis_deps_cflags)"
   SEC_EXTRA="$(section_gc_cflags)"
   UNWIND_EXTRA="$(dep_unwind_cflags)"
-  export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
+  HARD_EXTRA="$(hardening_cflags)"   # stack canary and fortify, see _audio_only.sh
+  export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA $HARD_EXTRA"
   export CXXFLAGS="$CFLAGS"
   export CPPFLAGS="-I$PREFIX/include"
   export LDFLAGS="-L$PREFIX/lib $LTO_EXTRA"
@@ -221,7 +222,7 @@ build_ffmpeg() {
     --disable-libxcb-shm \
     --disable-libxcb-xfixes \
     --disable-libxcb-shape \
-    --extra-cflags="$(eh_frame_cflags)" \
+    --extra-cflags="$(eh_frame_cflags) $HARD_EXTRA" \
     --extra-libs="-lm -lpthread -ldl"
 }
 
@@ -233,7 +234,7 @@ build_mpv() {
   # As on Linux (see build_libmpv_linux.sh), with libgcc linked in: the
   # library needs glibc, ALSA and the system's libstdc++ (libplacebo).
   local ld_args
-  ld_args="-static-libgcc -Wl,--gc-sections,--exclude-libs=ALL,--no-undefined,--as-needed$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
+  ld_args="-static-libgcc $(hardening_ldflags) -Wl,--gc-sections,--exclude-libs=ALL,--no-undefined,--as-needed$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
   [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
     ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
   local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"
@@ -248,7 +249,7 @@ build_mpv() {
     -Dalsa=enabled \
     -Dpulse=disabled \
     -Dpipewire=disabled \
-    -Dc_args="$(eh_frame_cflags)" \
+    -Dc_args="$(eh_frame_cflags) $HARD_EXTRA" \
     "-Dc_link_args=$ld_args $extra_libs" \
     "-Dcpp_link_args=$ld_args $extra_libs"
 }
@@ -271,6 +272,7 @@ finalize() {
   "$STRIP" --strip-unneeded "$out"
   assert_soname "$out" "$READELF"
   assert_no_relr "$out" "$READELF"
+  assert_hardening "$out" "$READELF"
   assert_glibc_floor "$out" "$WEBOS_GLIBC_FLOOR" "$READELF"
   # Only glibc, ALSA and libstdc++ of the system: anything else would be
   # missing on the TV.
@@ -303,7 +305,7 @@ main() {
   mkdir -p "$BUILD_DIR/src" "$BUILD_DIR/build"
 
   CFLAGS="$CFLAGS -Os" cross_build_zlib
-  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64 $HARD_EXTRA" cross_build_bzip2
   CFLAGS="$CFLAGS -Os" cross_build_xz
   cross_build_speexdsp
   cross_build_libplacebo

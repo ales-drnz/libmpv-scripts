@@ -1,4 +1,4 @@
-/* MAK_TAP_PATCH_V4 ─── public API for the per-filter audio tap.
+/* MAK_TAP_PATCH_V5 ─── public API for the per-filter audio tap.
  *
  * mak_tap maintains a fixed-size table of "active taps" (a tap
  * being a combination of chain label + side). For each active
@@ -44,7 +44,7 @@ bool mak_tap_label_active(const char *name);
 void mak_tap_write(const char *name, bool is_post,
                    struct mp_aframe *aframe);
 
-/* MAK_TAP_PATCH_V4 ─── pre-DSP waveform fold. Called from the af chain
+/* MAK_TAP_PATCH_V5 ─── pre-DSP waveform fold. Called from the af chain
  * user_wrapper_process PRE hook for every audio frame; self-gates to
  * the "in" filter and to an active progressive analysis. Converts +
  * mono-downmixes the source frame and folds it into the progressive

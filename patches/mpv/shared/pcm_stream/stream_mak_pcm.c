@@ -1,4 +1,4 @@
-/* MAK_PCM_STREAM_PATCH ─── live PCM input: the mak-pcm://<id> protocol.
+/* MAK_PCM_STREAM_PATCH_V2 ─── live PCM input: the mak-pcm://<id> protocol.
  * See mak_pcm.h, and patches/mpv/shared/patch_pcm_stream.py in
  * libmpv-scripts for the rationale.
  *

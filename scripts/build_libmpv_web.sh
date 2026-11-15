@@ -127,6 +127,35 @@ if ! command -v emcc >/dev/null 2>&1 && [[ -n "${EMSDK:-}" ]]; then
   source "$EMSDK/emsdk_env.sh" >/dev/null 2>&1
 fi
 
+# check_emsdk_files <upstream dir>: the files of the emsdk release that end
+# up in the module or decide what does, against their pins in
+# _sources.sha256: emsdk downloads its binaries with no checksum, and the
+# version string alone does not tell them apart. The compiler (clang), the
+# linker (wasm-ld), Binaryen's optimizer and the finalizer that rewrite the
+# module after the link (wasm-opt, wasm-emscripten-finalize) and the archiver
+# (llvm-ar) are native binaries, pinned per host
+# ("emsdk:<version>/<os>-<arch>/upstream/bin/<tool>"); emcc.py, the driver,
+# is the same file on every host ("emsdk:<version>/upstream/...").
+# Not covered: the system libraries, which emcc compiles from the sources of
+# the release into EM_CACHE, and node, which runs the JS tools.
+EMSDK_NATIVE=(bin/clang bin/wasm-ld bin/wasm-opt bin/wasm-emscripten-finalize bin/llvm-ar)
+check_emsdk_files() {
+  local upstream="$1" f key want have host
+  host="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
+  for f in "${EMSDK_NATIVE[@]}" emscripten/emcc.py; do
+    key="emsdk:$EMSDK_VERSION/upstream/$f"
+    [[ "$f" == bin/* ]] && key="emsdk:$EMSDK_VERSION/$host/upstream/$f"
+    [[ -f "$upstream/$f" ]] || die "$key: no $upstream/$f"
+    have="$(sha256_of "$(readlink -f "$upstream/$f")")"
+    want="$(pinned_source "$key")"
+    if [[ -z "$want" ]]; then
+      unpinned_source "$have" "$key"
+    elif [[ "$have" != "$want" ]]; then
+      die "$key: SHA-256 $have, pinned $want"
+    fi
+  done
+}
+
 check_toolchain() {
   local missing=() t
   for t in emcc em++ emar emranlib emnm emconfigure emmake meson ninja \
@@ -138,25 +167,7 @@ check_toolchain() {
   got="$(emcc --version | sed -n '1s/.* \([0-9][0-9.]*\) (.*/\1/p')"
   [[ "$got" == "$EMSDK_VERSION" ]] || \
     die "emcc $got found, the web build pins $EMSDK_VERSION (./emsdk activate $EMSDK_VERSION)"
-  # The compiler and the driver of the release, against their pins in
-  # _sources.sha256: emsdk downloads its binaries with no checksum, and the
-  # version string alone does not tell them apart. clang is a native binary,
-  # pinned per host ("emsdk:<version>/<os>-<arch>/upstream/bin/clang");
-  # emcc.py is the same file on every host ("emsdk:<version>/upstream/...").
-  local upstream f key want have host
-  host="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
-  upstream="$(cd "$(dirname "$(readlink -f "$(command -v emcc)")")/.." && pwd)"
-  for f in bin/clang emscripten/emcc.py; do
-    key="emsdk:$EMSDK_VERSION/upstream/$f"
-    [[ "$f" == bin/clang ]] && key="emsdk:$EMSDK_VERSION/$host/upstream/$f"
-    have="$(sha256_of "$(readlink -f "$upstream/$f")")"
-    want="$(pinned_source "$key")"
-    if [[ -z "$want" ]]; then
-      unpinned_source "$have" "$key"
-    elif [[ "$have" != "$want" ]]; then
-      die "$key: SHA-256 $have, pinned $want"
-    fi
-  done
+  check_emsdk_files "$(cd "$(dirname "$(readlink -f "$(command -v emcc)")")/.." && pwd)"
   ok "Toolchain OK (emcc $got)"
 }
 
@@ -205,9 +216,7 @@ LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR" "$BUILD_DIR"
 ls -t "$LOG_DIR"/build_web-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 LOG_FILE="$LOG_DIR/build_web-${WEB_VARIANT}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
+mirror_build_log "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo "Build started: $(date)"
 echo "Log file:      $LOG_FILE"
@@ -560,13 +569,18 @@ main() {
     link_web
     # The record of the patches and filters the archives were built with,
     # next to the module (write_build_record in shared/_audio_only.sh).
-    RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
+    # The compiler of the record's "toolchain" is emcc (no $CC here); emsdk
+    # itself is in "module" (record_web_module).
+    BUILD_TOOLCHAIN_CC=emcc RELEASE_DIR="$RELEASE_DIR" write_build_record web "$PREFIX"
     # The license texts go next to libmpv_web.zip, not into it.
     # The module also holds Emscripten's JS glue and system libraries, its
     # musl libc and the LLVM libc++ and compiler-rt (write_licenses).
     local licenses=(mpv ffmpeg libplacebo libxml2 zlib emscripten musl llvm-runtimes)
     gpl_build && licenses+=(rubberband)
-    RELEASE_DIR="$PACKAGE_DIR" write_licenses web "$BUILD_DIR/src" "${licenses[@]}"
+    # BUILD_RECORD: the "components" go into the record above, which is not
+    # in the directory the texts go to.
+    BUILD_RECORD="$RELEASE_DIR/build_web.json" \
+      RELEASE_DIR="$PACKAGE_DIR" write_licenses web "$BUILD_DIR/src" "${licenses[@]}"
     record_web_module
     package_web
     report_sizes

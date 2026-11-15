@@ -93,9 +93,7 @@ LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
 mkdir -p "$LOG_DIR"
 ls -t "$LOG_DIR"/build_linux-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
 LOG_FILE="$LOG_DIR/build_linux-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
+mirror_build_log "$LOG_FILE"
 echo "════════════════════════════════════════════════════════════"
 echo "Build started: $(date)"
 echo "Log file:      $LOG_FILE"
@@ -116,8 +114,9 @@ LTO_EXTRA="$(lto_deps_cflags)"
 VIS_EXTRA="$(vis_deps_cflags)"
 SEC_EXTRA="$(section_gc_cflags)"
 UNWIND_EXTRA="$(dep_unwind_cflags)"   # C++-safe .eh_frame trim, shared by all deps
-export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
-export CXXFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA"
+HARD_EXTRA="$(hardening_cflags)"      # stack canary and fortify, see _audio_only.sh
+export CFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA $HARD_EXTRA"
+export CXXFLAGS="-O2 -fPIC -I$PREFIX/include $LTO_EXTRA $VIS_EXTRA $SEC_EXTRA $UNWIND_EXTRA $HARD_EXTRA"
 export CPPFLAGS="-I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib -L$PREFIX/lib/${CROSS_TRIPLE} -L$PREFIX/lib64 -L/usr/lib/${CROSS_TRIPLE} $LTO_EXTRA"
 
@@ -146,8 +145,8 @@ check_toolchain() {
 
 build_libpng() {
   [[ -f "$PREFIX/lib/libpng.a" ]] && return
-  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/libpng/libpng16/${LIBPNG_VERSION}/libpng-${LIBPNG_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/libpng-$LIBPNG_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/libpng/libpng-${LIBPNG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   pushd "$dir" >/dev/null
   ./configure $CROSS_AUTOTOOLS_HOST --prefix="$PREFIX" --enable-static --disable-shared
@@ -158,8 +157,8 @@ build_libpng() {
 
 build_freetype() {
   [[ -f "$PREFIX/lib/libfreetype.a" && ! -f "$PREFIX/.ft_round2" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
-  download "https://downloads.sourceforge.net/project/freetype/freetype2/${FREETYPE_VERSION}/freetype-${FREETYPE_VERSION}.tar.gz" "$src"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
+  download "https://downloads.sourceforge.net/freetype/freetype-${FREETYPE_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
 
   # Round 1: without HarfBuzz
@@ -181,7 +180,7 @@ build_freetype() {
 
 build_fribidi() {
   [[ -f "$PREFIX/lib/libfribidi.a" ]] && return
-  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/fribidi-$FRIBIDI_VERSION.tar.xz"
   download "https://github.com/fribidi/fribidi/releases/download/v${FRIBIDI_VERSION}/fribidi-${FRIBIDI_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fribidi"; mkdir -p "$bdir"
@@ -196,8 +195,10 @@ build_fribidi() {
 
 build_harfbuzz() {
   [[ -f "$PREFIX/lib/libharfbuzz.a" ]] && return
+  # The archive of the tag, as on Windows: the pin of _sources.sha256. Its
+  # tree is the one of the release tarball (compared for 14.2.0).
   local src="$BUILD_DIR/src/harfbuzz-$HARFBUZZ_VERSION.tar.gz"
-  download "https://github.com/harfbuzz/harfbuzz/releases/download/${HARFBUZZ_VERSION}/harfbuzz-${HARFBUZZ_VERSION}.tar.xz" "$src"
+  download "https://github.com/harfbuzz/harfbuzz/archive/refs/tags/${HARFBUZZ_VERSION}.tar.gz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/harfbuzz"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -212,7 +213,7 @@ build_harfbuzz() {
 
 build_freetype_round2() {
   [[ -f "$PREFIX/.ft_round2" ]] && return
-  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.gz"
+  local src="$BUILD_DIR/src/freetype-$FREETYPE_VERSION.tar.xz"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/freetype-r2"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -292,7 +293,7 @@ build_ffmpeg() {
     --disable-libxcb-shm \
     --disable-libxcb-xfixes \
     --disable-libxcb-shape \
-    --extra-cflags="$(eh_frame_cflags)" \
+    --extra-cflags="$(eh_frame_cflags) $HARD_EXTRA" \
     --extra-libs="-lm -lpthread -ldl"
 }
 
@@ -403,7 +404,11 @@ build_mpv() {
   #     --static by default, so Libs.private is never emitted. Without
   #     these explicit -l flags the symbols become UND in libmpv.so and
   #     fail at runtime on systems without those .so installed (e.g. WSL).
-  local link_extra=()
+  # hardening_ldflags (full RELRO, BIND_NOW, NX stack) goes here and not in
+  # LDFLAGS: -Dc_link_args makes meson drop the environment's. The audio
+  # stubs do not mind BIND_NOW, see hardening_cflags in _audio_only.sh.
+  local link_extra=() hard_ld
+  hard_ld="$(hardening_ldflags)"
   if [[ "${VIS_HIDDEN:-1}" != "0" || "${SECTION_GC:-1}" != "0" ]]; then
     # Shared ELF flags from _audio_only.sh: -Bsymbolic without relocation packing
     # (`none`): RELR would need glibc 2.36 on the user's machine, see
@@ -412,12 +417,14 @@ build_mpv() {
     # See the note in build_libmpv_android.sh: `local x="$(cmd)"` would mask a
     # failure inside the command substitution from set -e.
     local ld_args
-    ld_args="-Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
+    ld_args="$hard_ld -Wl,--gc-sections,--exclude-libs=ALL,--no-undefined$(mpv_elf_size_ldflags none)$(mpv_soname_ldflags)"
     [[ "${VIS_HIDDEN:-1}" != "0" ]] && \
       ld_args="$ld_args,--version-script=${SCRIPT_DIR}/shared/mpv.ver"
     local extra_libs="-lssl -lcrypto -lxml2 -lbz2 -llzma"
     link_extra+=("-Dc_link_args=$ld_args $extra_libs")
     link_extra+=("-Dcpp_link_args=$ld_args $extra_libs")
+  else
+    link_extra+=("-Dc_link_args=$hard_ld" "-Dcpp_link_args=$hard_ld")
   fi
 
   # The stub .pc files come first, so libpipewire-0.3 and libpulse resolve to
@@ -431,7 +438,7 @@ build_mpv() {
     -Dalsa=enabled \
     -Dpulse=enabled \
     -Dpipewire=enabled \
-    -Dc_args="$(eh_frame_cflags)" \
+    -Dc_args="$(eh_frame_cflags) $HARD_EXTRA" \
     "${link_extra[@]}"
 }
 
@@ -469,6 +476,7 @@ finalize() {
   "$STRIP" --strip-unneeded "$out"
   assert_soname "$out"
   assert_no_relr "$out"
+  assert_hardening "$out"
   assert_no_needed "$out" 'libpipewire|libpulse'
   assert_glibc_floor "$out" "$LINUX_GLIBC_FLOOR"
   write_build_record "linux-$ARCH" "$PREFIX"
@@ -486,8 +494,13 @@ finalize() {
   total_syms="$("$READELF" -W --dyn-syms "$out" 2>/dev/null | awk '$5=="GLOBAL" && $4=="FUNC" && $7!="UND" {n++} END{print n+0}')"
   mpv_syms="$("$READELF"   -W --dyn-syms "$out" 2>/dev/null | awk '$5=="GLOBAL" && $4=="FUNC" && $7!="UND" && $8 ~ /^mpv_/ {n++} END{print n+0}')"
   ok "Symbols: $total_syms total, $mpv_syms mpv_*"
+  # 63 in libmpv-r24. More than 200: the version script was not bound into
+  # the link; none: readelf could not read the library. Both stop the build,
+  # as on macOS.
+  [[ "$mpv_syms" -gt 0 ]] || die "No mpv_* symbol exported by $out"
   if [[ "${VIS_HIDDEN:-1}" != "0" && "$total_syms" -gt 200 ]]; then
-    warn "Expected ~60 symbols with VIS_HIDDEN=1 but got $total_syms"
+    die "Export-filter regression: expected ~60 exported symbols with" \
+        "VIS_HIDDEN=1 but got $total_syms"
   fi
 
   ok "Output: $out"
@@ -522,7 +535,7 @@ main() {
   # configure and takes its whole CFLAGS. DSP and crypto deps (openssl,
   # rubberband in the GPL build) keep -O2.
   CFLAGS="$CFLAGS -Os" cross_build_zlib
-  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64" cross_build_bzip2
+  CFLAGS="-Os -fPIC -D_FILE_OFFSET_BITS=64 $HARD_EXTRA" cross_build_bzip2
   CFLAGS="$CFLAGS -Os" cross_build_xz
   build_audio_stubs
 

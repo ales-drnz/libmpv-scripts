@@ -1,0 +1,4 @@
+# What valgrind memcheck does not report in the MEMCHECK=1 run of run.sh.
+# Only reports whose frames are all in the system libraries or in upstream
+# mpv go here, each with the reason. No entry may match a frame of the
+# patches (mak_*, the inserts): a report there is a defect to fix.

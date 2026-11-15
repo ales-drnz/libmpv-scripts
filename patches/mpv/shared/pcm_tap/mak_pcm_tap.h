@@ -1,4 +1,4 @@
-/* MAK_PCM_TAP_PATCH_V1 ─── public API for the PCM tap.
+/* MAK_PCM_TAP_PATCH_V2 ─── public API for the PCM tap.
  *
  * The tap is a process-wide ring buffer of the most recent
  * post-DSP audio samples (256 KiB, ~680 ms at 48 kHz stereo).

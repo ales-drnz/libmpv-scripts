@@ -81,7 +81,7 @@ import anchor  # noqa: E402
 import property_seam as seam  # noqa: E402
 
 
-MARKER = 'MAK_LOUDNESS_PATCH'
+MARKER = 'MAK_LOUDNESS_PATCH_V2'
 
 # Every anchor must be present and unique; a missing one means bulk_analysis
 # didn't run first (or its output drifted). A file that already carries
@@ -107,6 +107,9 @@ def patch_mak_scan_c(p):
          '    struct mak_loud_worker *loud;\n'
          '    struct mak_loud_slice   loud_slice;\n'
          '    int      loud_done;\n'
+         '    /* Why the worker has no slice although the scan is on (see\n'
+         '     * enum mak_loud_miss): the merge then publishes no result. */\n'
+         '    int      loud_miss;\n'
          '    int      status;             /* 0 = ok */\n'
          '};'),
 
@@ -119,10 +122,16 @@ def patch_mak_scan_c(p):
          '     * converts what the decoder outputs: the probe\'s format can be\n'
          '     * another decoder\'s (MP2 probes as float, decodes as s16). */\n'
          '    a->codecpar->format = dec->sample_fmt;\n'
-         '    if (mak_loudness_is_enabled())\n'
+         '    if (mak_loudness_is_enabled()) {\n'
          '        a->loud = mak_loud_worker_create(a->codecpar, a->sample_rate,\n'
          '                                         a->sample_start, a->sample_end,\n'
-         '                                         a->total_samples);'),
+         '                                         a->total_samples);\n'
+         '        /* No accumulator for a slice that owns sub-blocks: its part\n'
+         '         * of the measure will be missing. */\n'
+         '        if (!a->loud)\n'
+         '            a->loud_miss = mak_loud_slice_miss(a->sample_rate,\n'
+         '                a->sample_start, a->sample_end, a->total_samples);\n'
+         '    }'),
 
         ('worker decode-end grid extension',
          '    int64_t emitted_samples = 0;\n'
@@ -168,6 +177,7 @@ def patch_mak_scan_c(p):
          '    /* ' + MARKER + ' ─── detach the finished slice for the\n'
          '     * coordinator\'s merge; failure paths destroy it in cleanup. */\n'
          '    if (a->loud) {\n'
+         '        a->loud_miss = mak_loud_worker_miss(a->loud);\n'
          '        a->loud_done = mak_loud_worker_finish(a->loud, &a->loud_slice);\n'
          '        a->loud = NULL;\n'
          '    }\n'
@@ -203,17 +213,30 @@ def patch_mak_scan_c(p):
          '    }\n'
          '\n'
          '    /* ' + MARKER + ' ─── merge the per-worker slices and publish\n'
-         '     * the loudness result (generation- and flag-checked inside). */\n'
+         '     * the loudness result (generation- and flag-checked inside).\n'
+         '     * Nothing is published when a worker that owns a part of the\n'
+         '     * grid has no slice (its accumulator failed, or met a frame of\n'
+         '     * another layout): the others would give the loudness of a\n'
+         '     * part of the file as the file\'s. The slices left unmerged are\n'
+         '     * freed in cleanup. */\n'
          '    {\n'
          '        struct mak_loud_slice lslices[MAK_WAVEFORM_WORKERS];\n'
-         '        int ln = 0;\n'
+         '        int ln = 0, miss = MAK_LOUD_MISS_NONE;\n'
          '        for (int w = 0; w < spawned; w++) {\n'
+         '            if (chunks[w].loud_miss > miss)\n'
+         '                miss = chunks[w].loud_miss;\n'
+         '        }\n'
+         '        for (int w = 0; w < spawned && miss == MAK_LOUD_MISS_NONE; w++) {\n'
          '            if (chunks[w].loud_done) {\n'
          '                lslices[ln++] = chunks[w].loud_slice;\n'
          '                chunks[w].loud_done = 0;\n'
          '            }\n'
          '        }\n'
-         '        if (ln > 0)\n'
+         '        if (miss == MAK_LOUD_MISS_UNAVAILABLE)\n'
+         '            mak_loudness_mark_unavailable(my_gen);\n'
+         '        else if (miss == MAK_LOUD_MISS_FAILED)\n'
+         '            mak_loudness_mark_failed(my_gen);\n'
+         '        else if (ln > 0)\n'
          '            mak_loudness_publish(lslices, ln, sample_rate, my_gen);\n'
          '        else if (mak_loudness_is_enabled())\n'
          '            mak_loudness_mark_failed(my_gen);\n'
@@ -302,7 +325,7 @@ def patch_mak_waveform_c(p):
 # ─── the property seam of player/command.c (bulk-emitted anchors) ────
 
 def patch_command_c(p):
-    getter_anchor = ('/* MAK_WAVEFORM_PATCH ─── read-only property: '
+    getter_anchor = ('/* MAK_WAVEFORM_PATCH_V2 ─── read-only property: '
                      'bulk waveform analyser')
     insert = p.asset('bulk_analysis/loudness_command_insert.c').rstrip('\n')
     if not insert.endswith(getter_anchor):
@@ -335,9 +358,9 @@ def patch_command_c(p):
 def patch_meson(p):
     edits = [
         ('source list',
-         "    # MAK_WAVEFORM_PATCH\n"
+         "    # MAK_WAVEFORM_PATCH_V2\n"
          "    'audio/mak_waveform.c',",
-         "    # MAK_WAVEFORM_PATCH\n"
+         "    # MAK_WAVEFORM_PATCH_V2\n"
          "    'audio/mak_waveform.c',\n"
          "    # " + MARKER + "\n"
          "    'audio/mak_loudness.c',"),

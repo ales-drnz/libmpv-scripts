@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── read-only property: bulk waveform analyser
+/* MAK_WAVEFORM_PATCH_V2 ─── read-only property: bulk waveform analyser
  * snapshot. Returns a MAP_NODE { state, duration_us, min, max, filled,
  * range_start_us, range_end_us, coverage_bins, total_bins, progress, rms }.
  * "min"/"max"/"rms" are Float32 byte arrays, one entry per bin
@@ -51,7 +51,7 @@ static int mp_property_waveform_data(void *ctx, struct m_property *prop,
 #define MAK_WAVEFORM_SETTER_LOUDNESS 0
 #endif
 
-/* MAK_WAVEFORM_PATCH ─── read-write FLAG: gates the bulk waveform
+/* MAK_WAVEFORM_PATCH_V2 ─── read-write FLAG: gates the bulk waveform
  * analyser. OFF by default. Setting it true also kicks the scan
  * engine for the already-loaded file so enabling mid-track works;
  * mak_scan_start null-checks the url. While a file is still opening
@@ -103,7 +103,7 @@ static int mp_property_waveform_enabled(void *ctx, struct m_property *prop,
     return M_PROPERTY_NOT_IMPLEMENTED;
 }
 
-/* MAK_WAVEFORM_PATCH ─── read-only property: yes when lavf estimated the
+/* MAK_WAVEFORM_PATCH_V2 ─── read-only property: yes when lavf estimated the
  * duration from the bitrate (an MP3 without a Xing header, ADTS AAC, a
  * length a server guessed), so a client holding the real length can prefer
  * it. Unavailable without a duration, as duration is. Notified with

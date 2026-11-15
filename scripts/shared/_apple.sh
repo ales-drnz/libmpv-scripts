@@ -31,9 +31,7 @@ apple_start_log() {
   mkdir -p "$LOG_DIR"
   ls -t "$LOG_DIR"/build_"$1"_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
   LOG_FILE="$LOG_DIR/build_$1_$(date +%Y%m%d_%H%M%S).log"
-  exec > >(tee >(while IFS= read -r line; do
-    printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-  done >> "$LOG_FILE")) 2>&1
+  mirror_build_log "$LOG_FILE"
   echo "════════════════════════════════════════════════════════════"
   echo "Build started: $(date)"
   echo "Log file:      $LOG_FILE"
@@ -42,7 +40,11 @@ apple_start_log() {
 }
 
 # ── Requirements ─────────────────────────────────────────────────────────────
-# apple_check_tools <tool...>: install the missing ones with Homebrew.
+# apple_check_tools <tool...>: stop when one is missing, naming them. The
+# script installs nothing on its own: BREW_INSTALL=1 lets it run
+# `brew install` for the missing ones, and a failed install stops the build
+# (it used to install without asking, and to say "Tools OK" whatever brew
+# answered).
 apple_check_tools() {
   log "Checking tools..."
   local missing=() tool
@@ -50,11 +52,32 @@ apple_check_tools() {
     command -v "$tool" &>/dev/null || missing+=("$tool")
   done
   if [[ ${#missing[@]} -gt 0 ]]; then
-    warn "Missing tools: ${missing[*]}"
+    [[ "${BREW_INSTALL:-0}" == "1" ]] ||
+      fail "Missing tools: ${missing[*]}. Install them (brew install ${missing[*]})," \
+           "or run again with BREW_INSTALL=1 to let this script do it"
     command -v brew &>/dev/null || fail "Homebrew required to install: ${missing[*]}"
-    brew install "${missing[@]}" 2>/dev/null || true
+    warn "Missing tools, installing with Homebrew: ${missing[*]}"
+    brew install "${missing[@]}" || fail "brew install failed: ${missing[*]}"
+    for tool in "${missing[@]}"; do
+      command -v "$tool" &>/dev/null || fail "$tool is still missing after brew install"
+    done
   fi
   ok "Tools OK"
+}
+
+# apple_toolchain_notes <sdk>...: Xcode and the version of each SDK the build
+# compiles against, for the "toolchain" of the build record (toolchain_note
+# of _audio_only.sh). The compiler line comes from $CC. Nothing here stops a
+# build: a tool that does not answer leaves its entry out.
+apple_toolchain_notes() {
+  local xcode sdk version
+  xcode="$(xcodebuild -version 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')" || true
+  [[ -n "$xcode" ]] && toolchain_note xcode "$xcode"
+  for sdk in "$@"; do
+    version="$(xcrun --sdk "$sdk" --show-sdk-version 2>/dev/null)" || true
+    [[ -n "$version" ]] && toolchain_note "sdk-$sdk" "$version"
+  done
+  return 0
 }
 
 # apple_host <arch>: the autoconf host triple. autoconf picks arch-specific

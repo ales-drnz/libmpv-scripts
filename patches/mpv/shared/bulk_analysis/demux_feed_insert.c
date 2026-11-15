@@ -1,5 +1,5 @@
 
-/* MAK_WAVEFORM_PATCH ─── attach the bulk analysis packet feed (see
+/* MAK_WAVEFORM_PATCH_V2 ─── attach the bulk analysis packet feed (see
  * demux/mak_demux_feed.h). The attach only marks where the cached packets
  * of [sh] end in the range the demuxer is filling and leaves the feed on the
  * demuxer, so add_packet_locked() queues every new one; the consumer copies

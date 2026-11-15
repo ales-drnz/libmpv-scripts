@@ -19,6 +19,17 @@
 //   race   a writer changing format, three readers of audio-tap-frames and
 //          the taps turned on and off, on five threads for 4 s: no use after
 //          free of a reallocated ring (AddressSanitizer)
+//   nan    a float frame with NaN and infinite samples (F5-4): the ring
+//          holds zeros in their place. r24 keeps them, for the reader and
+//          for the waveform that grows from playback.
+//   stale  a ring whose last frame ended at 1e15 s, read at time 0 (F5-9):
+//          the read falls back to the latest window. r24 casts the distance
+//          in bytes to a size_t it does not fit (UBSAN=1 stops there; on a
+//          32-bit size_t three hours at 48 kHz stereo are enough).
+// tap_tsan_test.c builds this file with ThreadSanitizer and runs rearm and
+// race (F5-8): r24 reads a slot's name in find_slot with no lock while
+// set_active writes it.
+#include <math.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdatomic.h>
@@ -156,7 +167,7 @@ static void *toggler(void *arg)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s grow|free|flip|rearm|race\n", argv[0]);
+        fprintf(stderr, "usage: %s grow|free|flip|rearm|race|nan|stale\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
@@ -226,6 +237,51 @@ int main(int argc, char **argv)
         atomic_store(&stop, true);
         pthread_join(w, NULL);
         check(!dirty, "the slot of X holds no audio of A (%d rounds)", rounds);
+        mak_tap_set_active("");
+    } else if (!strcmp(mode, "nan")) {
+        mak_tap_set_active("t");
+        struct mp_aframe *f = frame(48000, 2, 1024, 0);
+        float *v = (float *)f->planes[0];
+        for (int i = 0; i < 2048; i++)
+            v[i] = 0.25f;
+        for (int i = 100; i < 200; i++)
+            v[i] = i % 3 == 0 ? NAN : i % 3 == 1 ? INFINITY : -INFINITY;
+        mak_tap_write("t", true, f);
+        drop(f);
+        const float *r = (const float *)ring->buf;
+        int bad = 0, zero = 0, kept = 0;
+        for (size_t i = 0; r && i < ring->valid_bytes / sizeof(float); i++) {
+            bad += !isfinite(r[i]);
+            zero += r[i] == 0.0f;
+            kept += r[i] == 0.25f;
+        }
+        check(ring->valid_bytes == 2048 * sizeof(float), "the frame is in the ring");
+        check(bad == 0, "no sample of the ring is NaN or infinite (%d are)", bad);
+        check(zero == 100 && kept == 1948, "they are silence, the others as "
+              "written (%d zeros, %d kept)", zero, kept);
+        mak_tap_set_active("");
+    } else if (!strcmp(mode, "stale")) {
+        mak_tap_set_active("t");
+        write_one(48000, 2, 1e15);
+        struct mpv_node node;
+        int r = mak_tap_read_all(&node, NULL, 0.0);
+        size_t bytes = 0;
+        if (r == 0) {
+            struct mpv_node_list *slot = node.u.list->num > 0
+                ? node.u.list->values[0].u.list : NULL;
+            for (int i = 0; slot && i < slot->num; i++) {
+                if (strcmp(slot->keys[i], "post"))
+                    continue;
+                struct mpv_node_list *side = slot->values[i].u.list;
+                for (int k = 0; k < side->num; k++)
+                    if (!strcmp(side->keys[k], "samples"))
+                        bytes = side->values[k].u.ba->size;
+            }
+            talloc_free(node.u.list);
+        }
+        check(bytes == 1024 * 2 * sizeof(float),
+              "a read far behind the ring returns its latest window (%zu bytes)",
+              bytes);
         mak_tap_set_active("");
     } else if (!strcmp(mode, "race")) {
         mak_tap_set_active("t");

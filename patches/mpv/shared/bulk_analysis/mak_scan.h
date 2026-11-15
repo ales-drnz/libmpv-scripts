@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── bulk-analysis scan engine.
+/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine.
  *
  * The decode engine shared by the waveform analyzer and the offline loudness
  * scan: ONE pass over the source. On mak_scan_start() it spawns a detached

@@ -22,7 +22,13 @@ main():
 Idempotence comes from the marker that the patched text carries: edits()
 leaves a file that has it, so a second run changes nothing. New files
 carry it too, which lets a second run refresh them and refuse a file of
-someone else.
+someone else. A marker ends with its version (_V1, _V2, ...), raised with
+every change to what the patch writes: a file that carries another version
+of it was patched by another revision of the script, and edits() fails on
+it instead of leaving old hooks under new sources.
+
+commit() writes each file to a temporary one next to it and renames it
+over the old: an interruption leaves a file whole, old or new.
 
 Command line of every script: <source> [arguments] [--check]
 [--list-anchors]. --check runs every check and writes nothing;
@@ -35,7 +41,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -45,6 +53,10 @@ FIRST = 'first'
 ALL = 'all'
 # times= of edit() and regex(): found any number of times, all replaced.
 ANY = 'any'
+
+
+# A versioned marker: its family, then _V and the version.
+_VERSIONED = re.compile(r'^(.*)_V(\d+)$')
 
 
 def _label(anchor) -> str:
@@ -113,6 +125,20 @@ class Patch:
             raise ValueError(f'{self.name}: marked() needs a marker')
         return self.exists(rel) and marker in self._file(rel).text
 
+    def other_versions(self, rel, marker=None) -> list:
+        """The markers of rel that are another version of marker (the
+        patch's by default): the same family with another number, or with
+        none, as the markers were before they had one. Empty for a marker
+        without a version."""
+        marker = marker or self.marker
+        m = _VERSIONED.match(marker or '')
+        if not m or not self.exists(rel):
+            return []
+        family = re.compile(r'(?<![A-Za-z0-9_])' + re.escape(m.group(1)) +
+                            r'(?:_V\d+)?(?![A-Za-z0-9_])')
+        found = set(family.findall(self._file(rel).text))
+        return sorted(found - {marker})
+
     def asset(self, name) -> str:
         """A file shipped next to the script, such as a C source it copies
         or splices in."""
@@ -169,6 +195,12 @@ class Patch:
         rel already carries the marker. Returns whether it edited."""
         if self.marked(rel, marker):
             print(f'Already patched: {rel}')
+            return False
+        stale = self.other_versions(rel, marker)
+        if stale:
+            self.fail(f'{rel} carries {", ".join(stale)}, another version of '
+                      f'{marker or self.marker}: it was patched by another '
+                      f'revision of this script. Extract the source again.')
             return False
         for e in edits:
             label, anchor, new = e if len(e) == 3 else (None,) + tuple(e)
@@ -252,11 +284,28 @@ class Patch:
                 continue
             path = self.path(rel)
             path.parent.mkdir(parents=True, exist_ok=True)
-            # In place, so the file keeps its mode (configure is executable).
-            with open(path, 'w', encoding='utf-8') as fh:
-                fh.write(f.text)
+            self._replace(path, f.text)
             print(f'{"Created" if f.disk is None else "Patched"}: {path}')
         return 0
+
+    @staticmethod
+    def _replace(path, text) -> None:
+        """Writes text to path through a temporary file renamed over it, so
+        the file is never seen half written. It keeps its mode (configure
+        is executable)."""
+        tmp = path.with_name(path.name + '.mak-tmp')
+        try:
+            with open(tmp, 'w', encoding='utf-8') as fh:
+                fh.write(text)
+            if path.exists():
+                shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            raise
 
 
 def main(apply, name, marker=None, usage='<source dir>', nargs=1,

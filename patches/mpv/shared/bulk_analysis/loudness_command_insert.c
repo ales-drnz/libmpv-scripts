@@ -1,4 +1,4 @@
-/* MAK_LOUDNESS_PATCH ─── read-only property: offline loudness scan
+/* MAK_LOUDNESS_PATCH_V2 ─── read-only property: offline loudness scan
  * result. Returns a MAP_NODE { state, integrated_lufs, lra_lu,
  * sample_peak, true_peak, gated_block_count }. The wrapper polls this
  * on its own cadence while a scan is pending — no mp_notify_property,
@@ -22,7 +22,7 @@ static int mp_property_loudness_scan_data(void *ctx, struct m_property *prop,
     return M_PROPERTY_NOT_IMPLEMENTED;
 }
 
-/* MAK_LOUDNESS_PATCH ─── read-write FLAG: gates the offline loudness
+/* MAK_LOUDNESS_PATCH_V2 ─── read-write FLAG: gates the offline loudness
  * scan. OFF by default. The scan rides the bulk-analysis decode pass, so
  * enabling it kicks mak_scan_start for the already-loaded file (the
  * start gate admits either flag) — UNLESS a playback-grown PROGRESSIVE/
@@ -94,4 +94,4 @@ static int mp_property_loudness_scan_enabled(void *ctx,
     return M_PROPERTY_NOT_IMPLEMENTED;
 }
 
-/* MAK_WAVEFORM_PATCH ─── read-only property: bulk waveform analyser
+/* MAK_WAVEFORM_PATCH_V2 ─── read-only property: bulk waveform analyser

@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH ─── demuxer packet feed for the bulk analysis.
+/* MAK_WAVEFORM_PATCH_V2 ─── demuxer packet feed for the bulk analysis.
  *
  * A side consumer of mpv's demuxer cache, modelled on `dump-cache`: when the
  * analysis of a seekable network file attaches, it copies the cached

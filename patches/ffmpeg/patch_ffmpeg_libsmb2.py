@@ -27,7 +27,7 @@ import anchor  # noqa: E402
 
 # Idempotency marker — re-running the build pipeline against the same
 # extracted ffmpeg tree is safe.
-MARKER = 'MAK_LIBSMB2_PATCH_V1'
+MARKER = 'MAK_LIBSMB2_PATCH_V2'
 
 CONFIGURE = 'configure'
 MAKEFILE = 'libavformat/Makefile'

@@ -136,6 +136,38 @@ assert m["source"] == {"commit": sys.argv[2], "run": None}, m["source"]
 PY
 check $? "local: source has the commit of the checkout and no run"
 
+# ── components and toolchain, from the records that have them ──────────────
+d="$(release_dir sbom)"
+record "$d" linux-x86_64 'volume' 'pcm_tap'
+record "$d" android-arm64-v8a 'volume' 'pcm_tap'
+python3 - "$d/build_linux-x86_64.json" <<'PY'
+import json, sys
+r = json.load(open(sys.argv[1]))
+r["toolchain"] = {"compiler": "gcc (Ubuntu 10.5.0) 10.5.0", "meson": "1.7.2"}
+r["components"] = {"mpv": "0.41.0", "libplacebo": "7.349.0"}
+json.dump(r, open(sys.argv[1], "w"))
+PY
+manifest "$d"; check $? "sbom: write_manifest.sh succeeds with one record from before the fields"
+python3 - "$d/manifest.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert m["toolchain"] == {"linux-x86_64": {"compiler": "gcc (Ubuntu 10.5.0) 10.5.0", "meson": "1.7.2"}}, m["toolchain"]
+assert m["components"] == {"linux-x86_64": {"mpv": "0.41.0", "libplacebo": "7.349.0"}}, m["components"]
+# The fields a consumer already reads are where they were.
+assert list(m)[:9] == ["release", "mpv", "ffmpeg", "license", "audioFilters", "patches",
+                       "source", "assets", "licenses"], list(m)
+PY
+check $? "sbom: components and toolchain per target, after the fields a consumer reads"
+grep -q 'WARNING: build_android-arm64-v8a.json has no toolchain' "$d.log" &&
+  grep -q 'WARNING: build_android-arm64-v8a.json has no components' "$d.log"
+check $? "sbom: a record without the fields is named, and left out"
+python3 - "$TMP/local/manifest.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))
+assert "toolchain" not in m and "components" not in m, list(m)
+PY
+check $? "sbom: no empty components or toolchain when no record has them"
+
 # refused <name> <what>: write_manifest.sh fails on <name> and leaves no
 # manifest.json nor SHA256SUMS.
 refused() {
@@ -340,11 +372,56 @@ build_record "$w/out" macos "$w/arm64" "$w/x86_64"; check $? "write: two slices 
 python3 - "$w/out/build_macos.json" "$RELEASE" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
+toolchain = r.pop("toolchain")
 assert r == {"release": sys.argv[2], "target": "macos", "license": "LGPL-3.0-or-later",
              "patches": ["chain_eof", "dash_keepalive", "libsmb2", "pcm_tap"],
              "audioFilters": ["equalizer", "volume"]}, r
+assert isinstance(toolchain, dict), toolchain
 PY
 check $? "write: the record has the license, the patches of both trees and the filters FFmpeg was configured with"
+
+# The toolchain of the record: the first line of $CC --version ($CC with a
+# launcher in front, as with ccache), the build tools on PATH, the notes of
+# the platform script. A tool that is not there is left out.
+mkdir -p "$w/bin" "$w/empty"
+printf '#!/bin/sh\necho "fakecc (Test) 1.2.3"\necho "second line"\n' > "$w/bin/fakecc"
+printf '#!/bin/sh\nexec "$@"\n' > "$w/bin/launcher"
+printf '#!/bin/sh\necho 9.8.7\n' > "$w/bin/meson"
+printf '#!/bin/sh\necho "cmake version 3.31.10"\necho\necho "CMake suite"\n' > "$w/bin/cmake"
+chmod +x "$w/bin"/*
+(
+  source "$ROOT/scripts/shared/_helpers.sh"
+  source "$ROOT/scripts/shared/_versions.sh"
+  source "$ROOT/scripts/shared/_audio_only.sh"
+  PYTHON3="$(dirname "$(command -v python3)")"
+  export PATH="$w/bin:$w/empty:$PYTHON3:/usr/bin:/bin" CC="launcher fakecc"
+  hash -r
+  ninja() { return 127; }   # whatever the machine has, the record sees none
+  toolchain_note ndk 1.0
+  toolchain_note xcode "Xcode 26.6 Build version 17F42"
+  toolchain_note ndk 28.2.13676358
+  RELEASE_DIR="$w/out-tc" write_build_record macos "$w/arm64" "$w/x86_64"
+) > "$w/out-tc.log" 2>&1; check $? "write: a record with a compiler, tools and notes"
+python3 - "$w/out-tc/build_macos.json" <<'PY'
+import json, sys
+t = json.load(open(sys.argv[1]))["toolchain"]
+assert t == {"compiler": "fakecc (Test) 1.2.3", "meson": "9.8.7", "cmake": "3.31.10",
+             "xcode": "Xcode 26.6 Build version 17F42", "ndk": "28.2.13676358"}, t
+PY
+check $? "write: toolchain has the first line of the compiler, meson, cmake and the last note of each name"
+(
+  source "$ROOT/scripts/shared/_helpers.sh"
+  source "$ROOT/scripts/shared/_versions.sh"
+  source "$ROOT/scripts/shared/_audio_only.sh"
+  unset CC BUILD_TOOLCHAIN_CC
+  meson() { return 127; }; ninja() { return 127; }; cmake() { return 127; }
+  RELEASE_DIR="$w/out-none" write_build_record macos "$w/arm64" "$w/x86_64"
+) > "$w/out-none.log" 2>&1; check $? "write: no compiler and no tool does not stop the record"
+python3 - "$w/out-none/build_macos.json" <<'PY'
+import json, sys
+assert json.load(open(sys.argv[1]))["toolchain"] == {}
+PY
+check $? "write: toolchain is empty then"
 
 # A stage built again starts its record afresh.
 stage "$w/x86_64" mpv chain_eof
@@ -456,6 +533,24 @@ assert (d / "implib/LICENSE.txt").is_file() and not (d / "winpthreads").exists()
 assert not (d / "rubberband").exists()
 PY
 check $? "licenses: linux lists the sources it checked, once each, and marks an unpinned one"
+[[ ! -e "$L/out/build_linux-x86_64.json" ]]; check $? "licenses: no record next to the texts, none made"
+# With the record of the build next to the texts, its components go in.
+printf '{"release": "%s", "target": "windows-x86_64"}\n' "$RELEASE" > "$L/out/build_windows-x86_64.json"
+licenses windows-x86_64 "$fl" mpv ffmpeg openssl libplacebo xz implib winpthreads mingw-w64-crt
+check $? "licenses: windows-x86_64 with a record"
+(source "$ROOT/scripts/shared/_versions.sh"; python3 - "$L/out/build_windows-x86_64.json" "$ROOT" "$RELEASE") <<'PY'
+import json, os, re, sys
+r = json.load(open(sys.argv[1]))
+e = os.environ
+at = re.search(r"at commit `([0-9a-f]+)`", open(sys.argv[2] + "/tools/implib/README.md").read()).group(1)
+assert r == {"release": sys.argv[3], "target": "windows-x86_64", "components": {
+    "mpv": e["MPV_VERSION"], "ffmpeg": e["FFMPEG_VERSION"], "openssl": e["OPENSSL_VERSION"],
+    "libplacebo": "6.338.2", "xz": e["XZ_VERSION"], "implib": f"commit {at}",
+    "mozilla-ca": r["components"]["mozilla-ca"]}}, r
+assert r["components"]["mozilla-ca"].startswith("as of "), r
+PY
+check $? "licenses: the record gets the components with their versions, not the toolchain runtimes"
+rm -rf "$L/out/licenses_windows-x86_64" "$L/out/build_windows-x86_64.json"
 (source "$ROOT/scripts/shared/_versions.sh"; python3 - "$L/out/licenses_linux-x86_64" "$ROOT") <<'PY'
 import os, pathlib, re, sys
 d, root = map(pathlib.Path, sys.argv[1:])

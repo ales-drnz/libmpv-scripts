@@ -20,7 +20,9 @@ Modifies:
     playlist reload leaked a stream (mpv: "Leaking 3 nested connections").
     fetch keeps the connections alive by itself.
 
-Copies webio/webio.c into libavformat/.
+Copies webio/webio.c and webio/webio_log.h into libavformat/. webio_log.h
+cuts the URLs webio.c logs down to scheme, host and path: no userinfo, no
+query (the session of a music server, the signature of a redirect).
 
 Usage:
     python3 patch_ffmpeg_webio.py <ffmpeg_source_dir>
@@ -32,7 +34,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_lib'))
 import anchor  # noqa: E402
 
-MARKER = 'MAK_WEBIO_PATCH_V1'
+MARKER = 'MAK_WEBIO_PATCH_V2'
 
 PROTOCOLS = 'libavformat/protocols.c'
 MAKEFILE = 'libavformat/Makefile'
@@ -56,6 +58,7 @@ def apply(p):
         'OBJS-$(CONFIG_WEBIO_MAKBLOB_PROTOCOL)    += webio.o\n',
     )])
     p.new_file('libavformat/webio.c', p.asset('webio/webio.c'))
+    p.new_file('libavformat/webio_log.h', p.asset('webio/webio_log.h'))
     no_keepalive(p, 'libavformat/hls.c')
     # dashdec.c has the helper and the option only with dash_keepalive.
     if p.marked('libavformat/dashdec.c', 'MAK_DASH_KEEPALIVE_V1'):

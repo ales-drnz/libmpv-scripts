@@ -80,6 +80,16 @@ build_openssl() {
     # Android passes `-D__ANDROID_API__=N` so OpenSSL targets the same
     # API level as the rest of the build instead of the NDK's max.
     #
+    # no-asm: came in 0.1.1 (d3d7e0c) with the other size cuts of that
+    # release (the no-<algorithm> list, -Os, OPENSSL_SMALL_FOOTPRINT), to
+    # leave out the assembly of every algorithm for every CPU. Its share of
+    # the saving was not measured. What it costs: AES, GHASH, ChaCha20,
+    # SHA-2 and the curves run as generic C, without AES-NI, PCLMUL, the
+    # ARMv8 Crypto extensions or NEON, and the C AES of aes_core.c is the
+    # table one, not constant-time (OPENSSL_AES_CONST_TIME is not set).
+    # Windows aarch64 needs it in any case, see build_libmpv_windows.sh.
+    # Dropping it wants a build of each target and the size in KB first.
+    #
     # no-atexit: OpenSSL would register atexit(OPENSSL_cleanup) at first TLS
     # use, after mpv's analysis drain (mak_scan.c) registered its own, so it
     # would run first and free TLS state under a scan still running.

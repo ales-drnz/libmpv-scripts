@@ -1,4 +1,4 @@
-/* MAK_READ_ERROR_PATCH_V1 ─── read-only flag: the reading of the current
+/* MAK_READ_ERROR_PATCH_V2 ─── read-only flag: the reading of the current
  * file stopped on a read error (a connection that dropped, a server that
  * closed before the length it announced) and not at the file's real end.
  * It turns yes when the demuxer stops reading, ahead of eof-reached. A
@@ -18,7 +18,7 @@ static int mp_property_demuxer_read_error(void *ctx, struct m_property *prop,
     return m_property_bool_ro(action, arg, s.mak_read_error);
 }
 
-/* MAK_READ_ERROR_PATCH_V1 ─── read-only int64: the segments of an HLS or
+/* MAK_READ_ERROR_PATCH_V2 ─── read-only int64: the segments of an HLS or
  * DASH stream that were lost to an error since the file was opened, in
  * whole (the segment did not open and was skipped) or in part (its reading
  * ended on a read error). 0 for every other format, and always 0 with an
@@ -39,7 +39,7 @@ static int mp_property_demuxer_skipped_segments(void *ctx,
 }
 
 
-/* MAK_READ_ERROR_PATCH_V1 ─── read-only int64: how many mak_ fields
+/* MAK_READ_ERROR_PATCH_V2 ─── read-only int64: how many mak_ fields
  * MPV_EVENT_END_FILE carries, 4 (mak_read_error, mak_skipped_segments,
  * mak_duration, mak_position). A client reads a field only when its
  * number is within this one; a libmpv without the property has 2 (r20:
