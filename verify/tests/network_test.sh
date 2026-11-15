@@ -254,8 +254,12 @@ run_tls() {
   local t="$RUNS/tls" port srv r
   compile tls_roots_test -Wl,--wrap=PEM_read_bio_X509 -Wl,--wrap=SSL_CTX_set_default_verify_paths || return
   mkdir -p "$t"
+  # The test connects to 127.0.0.1: from FFmpeg 8.1.3 tls_openssl.c checks a
+  # numeric host against the iPAddress names of the certificate (before, it
+  # checked no name for it), so the certificate carries that address.
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
-    -subj /CN=network-test -keyout "$t/key.pem" -out "$t/cert.pem" > "$t/req.log" 2>&1 || {
+    -subj /CN=network-test -addext subjectAltName=IP:127.0.0.1 \
+    -keyout "$t/key.pem" -out "$t/cert.pem" > "$t/req.log" 2>&1 || {
     echo "FAIL tls_roots_test: no test certificate"; FAILED+=("tls_roots_test"); return; }
   port="$(free_port)"
   openssl s_server -accept "127.0.0.1:$port" -cert "$t/cert.pem" -key "$t/key.pem" -quiet \
