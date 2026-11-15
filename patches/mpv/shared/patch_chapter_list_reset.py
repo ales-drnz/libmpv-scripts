@@ -15,8 +15,9 @@ watches it (mpv_audio_kit does).
 
 parse_node_chapters() (player/command.c, the setter of chapter-list) now
 resets the seek record as a file load does, so the current chapter comes
-from the position in the new list. It is the only place that replaces the
-chapters of a file that plays. A guard in the chapter-metadata getter alone
+from the position in the new list. From mpv 0.42.0 a demuxer can also
+replace them with DEMUX_EVENT_LISTS, without resetting the record, but only
+demux_disc does (dvdnav and bluray), which the audio-only build has not. A guard in the chapter-metadata getter alone
 would stop the crash but leave `chapter` past the end of the list.
 
 Usage: patch_chapter_list_reset.py <mpv source dir>

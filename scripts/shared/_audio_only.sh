@@ -1116,9 +1116,9 @@ verify_mpv_config() {
   ok "mpv config audit passed ($platform)"
 }
 
-# ── ffmpeg patch application (9 scripts, identical on every platform) ───────
-# Three are always applied and five are toggles, of which read_error runs
-# two scripts. The web build runs a tenth after them, patch_ffmpeg_webio.py
+# ── ffmpeg patch application (10 scripts, identical on every platform) ──────
+# Four are always applied and five are toggles, of which read_error runs
+# two scripts. The web build runs an eleventh after them, patch_ffmpeg_webio.py
 # (build_libmpv_web.sh).
 # Usage: apply_ffmpeg_patches <ffmpeg_source_dir>
 # Requires SCRIPT_DIR to be set to the directory containing this file.
@@ -1147,6 +1147,12 @@ apply_ffmpeg_patches() {
   # timeout (http:// and smb2://). Builds only with winsock2.h. Defect fix,
   # not user-gated.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_winsock_poll.py" "$ffmpeg_dir"
+
+  # FFmpeg 9.0's HLS demuxer keeps http_persistent and the http_multiple
+  # autodetection when s->pb (the playlist, mpv's own stream) has no
+  # URLContext, and opens a new connection for a segment AVIOContext
+  # without one instead of asserting. Defect fix, not user-gated.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_hls_keepalive.py" "$ffmpeg_dir"
 
   # libsmb2 patch (toggleable): copies libavformat/libsmb2.c and edits
   # configure, Makefile and protocols.c. Idempotent, and every platform
