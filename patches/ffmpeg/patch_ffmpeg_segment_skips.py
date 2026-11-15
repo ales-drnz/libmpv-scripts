@@ -12,8 +12,11 @@ at the first failure) with a warning, and drops the rest of a segment
 whose reading fails without a word: read_data_continuous() goes on to the
 next one for any result of read_from_url() but data. dashdec.c does the
 same with a fragment that does not open, and with one whose reading fails,
-and dash_read_packet() ends with AVERROR_EOF in any case. The stream then
-ends as a normal EOF, and its holes are nowhere but in the log.
+and dash_read_packet() ends with AVERROR_EOF in any case (FFmpeg 9.0 hands
+on the error of the sub-demuxer instead). From FFmpeg 8.1.3 dashdec.c gives
+up after max_reload fragments in a row that do not open (100 by default)
+and ends the stream with AVERROR_EOF. The stream then ends as a normal EOF,
+and its holes are nowhere but in the log.
 
 This patch counts them in a read-only option of each demuxer,
 skipped_segments (int64, AV_OPT_FLAG_EXPORT | AV_OPT_FLAG_READONLY), which
@@ -23,7 +26,8 @@ exports mime_type and icy_metadata_packet, needs no new API and no struct
 layout on the reader's side: mpv built against an FFmpeg without the patch
 finds no option and reads 0. Counted:
 
-  - a segment (HLS) or fragment (DASH) skipped because it did not open;
+  - a segment (HLS) or fragment (DASH) skipped because it did not open,
+    the one after which dashdec.c gives up included;
   - a segment or fragment whose reading ended on an error and not at its
     end (EIO of a body shorter than its Content-Length, a dropped
     connection), once per segment. A new warning says it in hls.c and
@@ -94,14 +98,10 @@ HLS_SKIP_NEW = HLS_SKIP + (
 )
 
 # The end of a segment: whatever read_from_url() returned but data, the
-# segment is closed and the next one opened.
-HLS_END = (
-    '    if (c->http_persistent &&\n'
-    '        seg->key_type == KEY_NONE && av_strstart(seg->url, "http", NULL)) {\n'
-    '        v->input_read_done = 1;\n'
-)
-
-HLS_END_NEW = (
+# segment is closed (or its connection kept) and the next one opened.
+# FFmpeg 9.0 first tries to read the next byte range of the same resource
+# on the open connection (segment_reusable()), for a clean end only.
+HLS_COUNT = (
     '    /* ' + MARKER + ': the reading ended on an error and not at the end\n'
     '     * of the segment, whose rest is lost. */\n'
     '    if (ret < 0 && ret != AVERROR_EOF && ret != AVERROR_EXIT) {\n'
@@ -110,7 +110,16 @@ HLS_END_NEW = (
     '               v->cur_seq_no, v->index, av_err2str(ret));\n'
     '        c->skipped_segments++;\n'
     '    }\n'
-    + HLS_END
+)
+
+HLS_END = (
+    '    if (c->http_persistent &&\n'
+    '        seg->key_type == KEY_NONE && av_strstart(seg->url, "http", NULL)) {\n'
+    '        v->input_read_done = 1;\n'
+)
+
+HLS_END_90 = (
+    '    if (ret == 0 && segment_reusable(v->input, seg, next_segment(v))) {\n'
 )
 
 HLS_OPTIONS_END = (
@@ -151,14 +160,28 @@ DASH_OPEN_NEW = (
     + DASH_OPEN
 )
 
-DASH_SKIP = (
+# A fragment that does not open is skipped. From FFmpeg 8.1.3 dashdec.c
+# gives up after max_reload such fragments in a row and ends the stream:
+# the fragment is lost there too, so it is counted before that check.
+DASH_SKIP_WARNING = (
     '            av_log(v->parent, AV_LOG_WARNING, "Failed to open fragment of playlist\\n");\n'
+)
+
+DASH_SKIP = DASH_SKIP_WARNING + (
     '            v->cur_seq_no++;\n'
 )
 
 DASH_SKIP_NEW = DASH_SKIP + (
     '            c->skipped_segments++; /* ' + MARKER + ' */\n'
 )
+
+DASH_SKIP_813 = DASH_SKIP_WARNING + (
+    '            if (++v->n_open_failures > c->max_reload) {\n'
+)
+
+DASH_SKIP_813_NEW = DASH_SKIP_WARNING + (
+    '            c->skipped_segments++; /* ' + MARKER + ' */\n'
+) + DASH_SKIP_813[len(DASH_SKIP_WARNING):]
 
 DASH_READ = (
     '    ret = read_from_url(v, v->cur_seg, buf, buf_size);\n'
@@ -189,20 +212,23 @@ DASH_OPTIONS_END = (
 
 
 def apply(p):
-    p.edits(HLS, [
+    # The forms of FFmpeg 9.0 and 8.1.3 come first, then those of 8.1.1.
+    if p.edits(HLS, [
         ('HLSContext end', HLS_CONTEXT, HLS_CONTEXT_NEW),
         ('segment skipped after seg_max_retry', HLS_SKIP, HLS_SKIP_NEW),
-        ('end of a segment', HLS_END, HLS_END_NEW),
         ('hls_options end', HLS_OPTIONS_END, OPTION + HLS_OPTIONS_END),
-    ])
-    p.edits(DASH, [
+    ]):
+        p.optional(HLS, [(HLS_END_90, HLS_COUNT + HLS_END_90),
+                         (HLS_END, HLS_COUNT + HLS_END)], 'end of a segment')
+    if p.edits(DASH, [
         ('DASHContext end', DASH_CONTEXT, DASH_CONTEXT_NEW),
         ('struct representation', DASH_REP, DASH_REP_NEW),
         ('opening of a fragment', DASH_OPEN, DASH_OPEN_NEW),
-        ('fragment that does not open', DASH_SKIP, DASH_SKIP_NEW),
         ('end of a fragment', DASH_READ, DASH_READ_NEW),
         ('dash_options end', DASH_OPTIONS_END, OPTION + DASH_OPTIONS_END),
-    ])
+    ]):
+        p.optional(DASH, [(DASH_SKIP_813, DASH_SKIP_813_NEW),
+                          (DASH_SKIP, DASH_SKIP_NEW)], 'fragment that does not open')
 
 
 anchor.main(apply, 'patch_ffmpeg_segment_skips', marker=MARKER,
