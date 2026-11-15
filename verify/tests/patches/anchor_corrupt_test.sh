@@ -89,7 +89,7 @@ for a in ('ssl', 'crypto', 'xml2', 'bz2', 'lzma'):
 # the test reads back from scripts/shared/_audio_only.sh.
 SHARED = [
     'patch_optional_deps.py', 'patch_property_seam.py',
-    'patch_swscale_optional.py',
+    'patch_strip_env.py', 'patch_swscale_optional.py',
     'patch_strip_libass.py', 'patch_strip_mpv_dead.py',
     'patch_strip_win_resources.py', 'patch_afmt_reset.py',
     'patch_prefetch.py', 'patch_audio_output_state.py',

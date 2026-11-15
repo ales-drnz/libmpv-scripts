@@ -1223,6 +1223,10 @@ apply_mpv_patches_common() {
   # below that adds a property writes its headers, getters and table entries
   # to the three files it creates, not to command.c, so it MUST run first.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_property_seam.py" "$mpv_dir"
+  # No env:// protocol and no env property (mpv 0.42.0): in a library inside
+  # an app neither a playlist nor a property expansion may read the
+  # environment of the process. Required, not a toggle, after the seam.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_strip_env.py" "$mpv_dir"
 
   # ── Size-reduction patches (toggleable from Settings ▸ Patches) ──────────────
   # Each strips a subsystem the audio-only consumer (vid=no, vo=null, sid=no,
