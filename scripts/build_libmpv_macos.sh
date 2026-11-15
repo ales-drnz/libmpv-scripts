@@ -192,9 +192,9 @@ build_for_arch() {
   build_libsmb2    "$PREFIX"
   CFLAGS="$af -Oz" LDFLAGS="$af" cross_build_libxml2
 
-  # libarchive, mujs and luajit are not built — mpv is configured with
-  # -Dlibarchive=disabled / -Dlua=disabled / -Djavascript=disabled which
-  # gates their use at the preprocessor level (no source-side inclusion).
+  # libarchive, mujs and luajit are not built: -Dlua=disabled names lua (a
+  # combo), and auto_features=disabled turns off the libarchive and
+  # javascript features, at the preprocessor level.
 
   build_ffmpeg "$PREFIX"
   build_mpv    "$PREFIX"

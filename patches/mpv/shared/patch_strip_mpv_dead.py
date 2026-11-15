@@ -173,7 +173,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
 
-MARKER = 'MAK_STRIP_MPV_DEAD_PATCH_V1'
+MARKER = 'MAK_STRIP_MPV_DEAD_PATCH_V2'
 
 
 # ─── new stub: video/out/stub_gpu.c ─────────────────────────────────────

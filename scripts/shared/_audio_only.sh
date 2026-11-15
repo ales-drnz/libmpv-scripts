@@ -1044,6 +1044,11 @@ verify_mpv_config() {
 
   # ── Cross-platform must-haves ─────────────────────────────────────────
   assert_define "$cfg" "HAVE_LIBPLACEBO" "1"
+  # Off by name (lua is a combo, not a feature) or out of reach: a second
+  # HTTP stack (libcurl) or disc reader (dvda) would bypass the FFmpeg one.
+  assert_define "$cfg" "HAVE_LUA" "0"
+  assert_define "$cfg" "HAVE_LIBCURL" "0"
+  assert_define "$cfg" "HAVE_DVDA" "0"
   # libass: adaptive. Stripped by default (audio-only: sid=no, vo=null) → HAVE
   # is 0; when the user disables BOTH strip_libass AND strip_mpv_dead (see
   # libass_stripped) the whole font stack is rebuilt and mpv re-detects libass
