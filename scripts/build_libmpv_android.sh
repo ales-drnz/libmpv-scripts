@@ -26,7 +26,7 @@
 #   ./scripts/build_libmpv_android.sh
 #
 # Options (environment variables):
-#   ANDROID_NDK_ROOT=/path/to/ndk   (else searched in known SDK locations; NDK r28c auto-downloaded if absent)
+#   ANDROID_NDK_ROOT=/path/to/ndk   (else searched in known SDK locations; NDK r30 auto-downloaded if absent)
 #   ANDROID_API=24                   (default: 24 — minSdkVersion)
 #   MPV_VERSION=0.42.0              (default: 0.42.0)
 #   ABIS="arm64-v8a armeabi-v7a x86_64"      (default: arm64-v8a x86_64; x86 is accepted, never built in CI)
@@ -77,11 +77,11 @@ fi
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
-NDK_VERSION="r28c"
+NDK_VERSION="r30"
 # Maps letter-format → semantic-version. Android Studio installs the NDK as
-# 28.2.13676358, while Google's zip is named android-ndk-r28c. Both forms are
+# 30.0.16248370, while Google's zip is named android-ndk-r30. Both forms are
 # searched among the candidates below.
-NDK_SEMVER="28.2.13676358"
+NDK_SEMVER="30.0.16248370"
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Android}"
 PREFIX_BASE="$BUILD_DIR/prefix"
 
@@ -185,7 +185,7 @@ find_or_download_ndk() {
   local url="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-${host_tag}.zip"
   # Google publishes only a SHA-1 for the NDK zips (repository2-3.xml and the
   # NDK downloads page). _sources.sha256 pins the SHA-256 of the zips whose
-  # SHA-1 was Google's (r28c: a7b54a5d… linux, fc20a6bf… darwin), and the
+  # SHA-1 was Google's (r30: 5107f898… linux, c060be96… darwin), and the
   # check is against that, as for every other source. A zip with no pin stops
   # the build here even without STRICT_SOURCES: bump with NDK_VERSION.
   [[ -n "$(pinned_source "$url")" ]] ||

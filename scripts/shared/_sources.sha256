@@ -11,8 +11,8 @@ af050313ee63bc18b35b2e064e5dce05b276aaf6d1aa2b8a82ced1fe2f8028e9  https://breakf
 93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5  https://downloads.sourceforge.net/freetype/freetype-2.15.0.tar.xz
 d80dd2a38a37f803cb9b6ac7b14bd6e74ddc3b654780a8380bdf93523fdb4389  https://downloads.sourceforge.net/libpng/libpng-1.6.59.tar.xz
 8c777343e4a6399569c72abc38a95b24db56882c83dbdb6c6424a5f4aeb54d3d  https://downloads.xiph.org/releases/speex/speexdsp-1.2.1.tar.gz
-0d4599e8bbf1a1668a0d51a541729b2246360f350018a2081d0b302dbb594f2a  https://dl.google.com/android/repository/android-ndk-r28c-darwin.zip
-dfb20d396df28ca02a8c708314b814a4d961dc9074f9a161932746f815aa552f  https://dl.google.com/android/repository/android-ndk-r28c-linux.zip
+d125634de97b26deb1e1bb1a562f9d839aa5803d1784a1e414485f5ccbe6739f  https://dl.google.com/android/repository/android-ndk-r30-darwin.zip
+753611f410d002cfcd3f3dc2ef49aad532089d3180b436c060a90bf0fcb64df2  https://dl.google.com/android/repository/android-ndk-r30-linux.zip
 1b856f26a07082b6879f3e5300d81e8c7ce3b410ade5898b14382d90c2904634  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.gz
 b6863adde98898f42602017462871b5f6333e65aec803fdd7a6308639c52edf3  https://ffmpeg.org/releases/ffmpeg-8.1.1.tar.xz
 9a06844846d664d7122161700c10a64480d7c7bcead3091925a785b38c91edab  https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.19.1.tar.gz

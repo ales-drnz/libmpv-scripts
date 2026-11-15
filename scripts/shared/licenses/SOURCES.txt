@@ -9,7 +9,7 @@ mingw-w64-crt/COPYING.MinGW-w64-runtime.txt
   https://raw.githubusercontent.com/mingw-w64/mingw-w64/ee9bd87644156c41072a11ad957d1e11831a72df/COPYING.MinGW-w64-runtime/COPYING.MinGW-w64-runtime.txt
 llvm-runtimes/<libcxx|libcxxabi|libunwind|compiler-rt>/LICENSE.TXT
   https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-22.1.0/<dir>/LICENSE.TXT
-  (the same bytes in llvmorg-19.1.7, the LLVM of NDK r28c, and in the
+  (the same bytes in 2d287f51eff2, the LLVM 21 of NDK r30, and in the
   system/lib/<dir>/LICENSE.TXT of Emscripten 6.0.12)
 emscripten/LICENSE
   https://raw.githubusercontent.com/emscripten-core/emscripten/5488e0871d46d19a3209988190fa6a653126256f/LICENSE
