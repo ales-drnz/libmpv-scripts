@@ -241,7 +241,7 @@ import property_seam as seam  # noqa: E402
 # Provenance tag stamped into every patched region and generated file so a
 # patched mpv tree is easy to grep. A file that already carries it is left
 # alone, so a second run changes nothing; the generated files are refreshed.
-MARKER = 'MAK_WAVEFORM_PATCH_V2'
+MARKER = 'MAK_WAVEFORM_PATCH_V3'
 
 
 # ─── player/loadfile.c ────────────────────────────────────────────────
