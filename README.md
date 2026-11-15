@@ -3,7 +3,7 @@
 #### Audio-only libmpv, built for every platform.
 
 [![](https://img.shields.io/badge/libmpv--scripts-0.4.1-7DCFFF.svg?style=for-the-badge)](CHANGELOG.md)
-[![](https://img.shields.io/badge/mpv-v0.41.0-orange.svg?style=for-the-badge)]()
+[![](https://img.shields.io/badge/mpv-v0.42.0-orange.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/FFmpeg-8.1.1-green.svg?style=for-the-badge)]()
 [![](https://img.shields.io/badge/license-BSD--3--Clause-blue.svg?style=for-the-badge)](LICENSE)
 [![](https://img.shields.io/github/stars/ales-drnz/libmpv-scripts?style=for-the-badge&logo=github&logoColor=white)](https://github.com/ales-drnz/libmpv-scripts)
@@ -47,7 +47,7 @@ On Windows use `build.cmd`. You need Go, plus Docker for Linux, Windows, Android
 - **Linux and Android**: the SONAME is `libmpv_audio_kit.so`, so it can live next to another plugin's libmpv. Linux needs glibc 2.31 and ALSA; PipeWire (0.3.57 or later) and PulseAudio are loaded only when installed.
 - **Tizen**: the same SONAME. It needs Tizen 6.0, the TVs from 2021 on, and its glibc 2.30. The only audio output is `ao_tizen`, on the system's `capi-media-audio-io` and `capi-media-sound-manager`. libgcc and libstdc++ are linked in.
 - **webOS**: the same SONAME. It needs webOS 26 and its glibc 2.39, ALSA and the system's libstdc++. The audio output is ALSA.
-- **Web**: Emscripten 6.0.12 with pthreads. The zip holds `libmpv.mjs`, `libmpv.wasm`, the AudioWorklet `mak_webaudio_processor.js` and `build_web.json`. The page must be cross-origin isolated (COOP and COEP). A server of another origin must send CORS headers and expose `Content-Range`, or a server that caps each answer cuts the file. The memory starts at 32 MB and grows to 2 GB; a client can pass a smaller shared `wasmMemory`. No SMB.
+- **Web**: Emscripten 7.0.0 with pthreads. The zip holds `libmpv.mjs`, `libmpv.wasm`, the AudioWorklet `mak_webaudio_processor.js` and `build_web.json`. The page must be cross-origin isolated (COOP and COEP). A server of another origin must send CORS headers and expose `Content-Range`, or a server that caps each answer cuts the file. The memory starts at 32 MB and grows to 2 GB; a client can pass a smaller shared `wasmMemory`. No SMB.
 - **Records**: each build leaves `build_<target>.json` (license, patches, filters) and its license texts. `./build manifest` turns them into `manifest.json` and `licenses.zip`, and fails when the libraries disagree.
 
 Versions are set in `scripts/shared/_versions.sh`. `scripts/shared/_sources.sha256` pins every source by SHA-256 or by commit, and the web build's compiler on Linux x86_64.
@@ -108,7 +108,7 @@ Rubber Band is left out. `LIBMPV_GPL=1` builds it in, and the library becomes GP
 | [Go](https://go.dev/dl/) | always, it runs `./build` |
 | [Docker](https://docs.docker.com/get-docker/) | Linux, Windows, Android, Tizen and webOS (Android on macOS builds without it) |
 | Xcode | macOS, iOS and tvOS |
-| [emsdk](https://emscripten.org/docs/getting_started/downloads.html) 6.0.12, meson and ninja | the web |
+| [emsdk](https://emscripten.org/docs/getting_started/downloads.html) 7.0.0, meson and ninja | the web |
 
 The Android NDK is downloaded by the build, you don't need to install it. So are the Tizen 6.0 packages of the Tizen sysroot. LG's webOS NDK is installed when the `webos` Docker image is built (see [3.4](#34-tizen-and-webos)).
 
@@ -197,7 +197,7 @@ The `webos` image downloads LG's webOS NDK 11.2.0 from LG's release, checks its 
 
 #### 3.5 Web
 
-On a Linux or macOS host, with the emsdk at 6.0.12 (`./emsdk install 6.0.12 && ./emsdk activate 6.0.12`) and meson and ninja on the `PATH`:
+On a Linux or macOS host, with the emsdk at 7.0.0 (`./emsdk install 7.0.0 && ./emsdk activate 7.0.0`) and meson and ninja on the `PATH`:
 
 ```bash
 EMSDK=path/to/emsdk ./build web
