@@ -95,6 +95,26 @@ _finish_build_log() {
   return 0
 }
 
+# start_build_log <name> <glob> [<line>...]: the log of a build script,
+# builds/logs/build_<name>_<stamp>.log, mirrored by mirror_build_log, with the
+# 20 newest logs that match <glob> kept, and the banner: the start, the log
+# file and each <line>. Sets LOG_DIR and LOG_FILE.
+start_build_log() {
+  local name="$1" glob="$2" line
+  shift 2
+  LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
+  mkdir -p "$LOG_DIR"
+  # shellcheck disable=SC2012,SC2086  # newest first; the glob is the caller's
+  ls -t "$LOG_DIR"/$glob 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
+  LOG_FILE="$LOG_DIR/build_${name}_$(date +%Y%m%d_%H%M%S).log"
+  mirror_build_log "$LOG_FILE"
+  echo "════════════════════════════════════════════════════════════"
+  echo "Build started: $(date)"
+  echo "Log file:      $LOG_FILE"
+  for line in "$@"; do echo "$line"; done
+  echo "════════════════════════════════════════════════════════════"
+}
+
 # ── Source download with cache ───────────────────────────────────────────────
 # Usage: download <url> <dest_path> [mirror_url...]
 # Smart default: an existing non-empty dest is always reused. Pass

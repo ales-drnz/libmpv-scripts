@@ -88,17 +88,9 @@ if [[ -n "${CC_PREFIX:-}" ]]; then
 fi
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_linux-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_linux-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: linux/$ARCH"
-echo "Toolchain:     $CROSS_TRIPLE ($CROSS_TOOLCHAIN_KIND)"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "linux-${ARCH}" 'build_linux-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: linux/$ARCH" \
+  "Toolchain:     $CROSS_TRIPLE ($CROSS_TOOLCHAIN_KIND)"
 
 # ── System pkg-config search path (multiarch-scoped) ──────────────────────────
 # PKG_CONFIG_LIBDIR (NOT _PATH) so nothing leaks from the host triple's .pc

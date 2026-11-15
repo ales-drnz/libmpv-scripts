@@ -88,19 +88,9 @@ TOOLS="$BUILD_DIR/bin"
 mkdir -p "$BUILD_DIR" "$PREFIX/include" "$PREFIX/lib" "$TOOLS"
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_tizen-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_tizen-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: tizen/$ARCH"
-echo "Toolchain:     clang --target=$CLANG_TARGET, sysroot of Tizen 6.0"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "tizen-${ARCH}" 'build_tizen-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: tizen/$ARCH" \
+  "Toolchain:     clang --target=$CLANG_TARGET, sysroot of Tizen 6.0"
 
 # ── Sysroot ───────────────────────────────────────────────────────────────────
 # Unpacked again when the package list or its checksums changed.

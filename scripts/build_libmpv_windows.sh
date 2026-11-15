@@ -91,17 +91,9 @@ case "$CROSS_TOOLCHAIN_KIND" in
 esac
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_windows-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_windows-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: windows/$ARCH"
-echo "Toolchain:     $TRIPLE ($CROSS_TOOLCHAIN_KIND)"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "windows-${ARCH}" 'build_windows-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: windows/$ARCH" \
+  "Toolchain:     $TRIPLE ($CROSS_TOOLCHAIN_KIND)"
 
 # ── Clock skew fix for Docker on Windows hosts ────────────────────────────────
 # When Docker mounts a Windows (NTFS) volume into a Linux container, mtime

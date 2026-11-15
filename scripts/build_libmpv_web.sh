@@ -209,17 +209,10 @@ EOF
 }
 
 # ── Log ──────────────────────────────────────────────────────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR" "$BUILD_DIR"
-ls -t "$LOG_DIR"/build_web-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_web-${WEB_VARIANT}_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: web ($WEB_VARIANT)"
-echo "Build dir:     $BUILD_DIR"
-echo "════════════════════════════════════════════════════════════"
+mkdir -p "$BUILD_DIR"
+start_build_log "web-${WEB_VARIANT}" 'build_web-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: web ($WEB_VARIANT)" \
+  "Build dir:     $BUILD_DIR"
 
 # =============================================================================
 # Library builds

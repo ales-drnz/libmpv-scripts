@@ -76,19 +76,9 @@ TOOLS="$BUILD_DIR/bin"
 mkdir -p "$BUILD_DIR" "$PREFIX/include" "$PREFIX/lib" "$TOOLS"
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_webos-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_webos-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee >(while IFS= read -r line; do
-  printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$line"
-done >> "$LOG_FILE")) 2>&1
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: webos/$ARCH"
-echo "Toolchain:     webOS NDK in $WEBOS_NDK"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "webos-${ARCH}" 'build_webos-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: webos/$ARCH" \
+  "Toolchain:     webOS NDK in $WEBOS_NDK"
 
 # ── Sysroot ───────────────────────────────────────────────────────────────────
 # The NDK's, as it is. Its .pc files say prefix=/usr: copies with the

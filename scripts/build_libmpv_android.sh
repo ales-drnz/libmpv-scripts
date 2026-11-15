@@ -90,16 +90,8 @@ PREFIX_BASE="$BUILD_DIR/prefix"
 # in the log is prefixed with [YYYY-MM-DD HH:MM:SS] so we can measure how
 # long each phase of the build actually took (the terminal stays clean —
 # timestamps live only in the file). Old logs (>20) are pruned automatically.
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_android_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_android_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "android" 'build_android_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
 
 # Logging helpers (log / ok / warn / err / die / fail) come from _helpers.sh
 
