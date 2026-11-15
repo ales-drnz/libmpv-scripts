@@ -41,6 +41,9 @@ static const struct testcase cases[] = {
     {"compand-no-number", "compand", "attacks=x:decays=x", REFUSED},
     {"aiir-zero-poles", "aiir", "zeros=1+0i 1-0i:poles=0+0i 0-0i", REFUSED},
     {"aiir-infinite-zeros", "aiir", "zeros=inf+0i inf-0i:poles=0.5+0i 0.5-0i", REFUSED},
+    // FFmpeg 8.1.3 refuses an infinite zero, but finite zeros and poles far
+    // apart are at a distance that overflows to infinity all the same.
+    {"aiir-overflowing-distance", "aiir", "zeros=1e308+0i 1e308-0i:poles=-1e308+0i -1e308-0i", REFUSED},
     {"aeval-negative-channel", "aeval", "exprs=val(ch-1)|val(ch-1):c=same", FINITE},
     {"aeval-infinite-channel", "aeval", "exprs=val(1/0)|val(0/0):c=same", FINITE},
     // F51: lists of different lengths.
