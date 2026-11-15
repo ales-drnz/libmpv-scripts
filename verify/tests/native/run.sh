@@ -153,6 +153,7 @@ CASES=(
   "unit webio_log_test - - run"
   "unit wave_fold_test - - tail far roll"
   "unit wave_roll_test - - evict lead cap stale"
+  "unit feed_queue_test - - cutlate cutstop stop eof"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
   "tizen ao_tizen_test - - play pause seek underrun delay race seekrace seeklag refuse fast slow dead noresume short busy clock format"

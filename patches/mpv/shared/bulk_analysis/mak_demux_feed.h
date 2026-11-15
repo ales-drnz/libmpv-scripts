@@ -101,7 +101,9 @@ enum mak_feed_item mak_demux_feed_replay(struct mak_demux_feed *f,
 
 /* Consumer side. Waits up to [timeout_ns] for the next item. Once the
  * demuxer is gone the queue is drained only if it holds an EOF (a complete
- * pass); otherwise it is dropped and MAK_FEED_CLOSED returned at once. */
+ * pass); otherwise it is dropped and MAK_FEED_CLOSED returned at once, or
+ * MAK_FEED_GAP for a feed that was cut (mak_demux_feed_cut): the pass ended
+ * with the cut, whenever the demuxer let go. */
 enum mak_feed_item mak_demux_feed_pop(struct mak_demux_feed *f,
                                       struct demux_packet **out,
                                       int64_t timeout_ns);
@@ -122,8 +124,8 @@ int mak_demux_feed_stream(const struct mak_demux_feed *f);
  * GAP first. [bof] is set only when the packet is the first one of a queue
  * that starts the file. Over MAK_FEED_MAX_BYTES, counted with each packet's
  * own memory as the demuxer counts it, the packet is dropped and a GAP
- * queued. Returns false when the consumer has closed the feed: the caller
- * then detaches it with mak_demux_feed_owner_release. */
+ * queued. Returns false when the consumer has closed the feed or it was
+ * cut: the caller then detaches it with mak_demux_feed_owner_release. */
 bool mak_demux_feed_push(struct mak_demux_feed *f, struct demux_packet *dp,
                          const void *queue_id, bool bof);
 
