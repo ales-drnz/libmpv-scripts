@@ -320,7 +320,6 @@ build_libplacebo() {
   ( set -e
     download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_SRC" "v$LP_VERSION"
     git -C "$LP_SRC" submodule update --init --recursive
-    apply_libplacebo_patches "$LP_SRC"
     meson setup "$WORK/libplacebo-build" "$LP_SRC" --prefix="$LP_PREFIX" --libdir=lib \
       --buildtype=release --default-library=static -Dvulkan=disabled -Dshaderc=disabled \
       -Dglslang=disabled -Dopengl=disabled -Dd3d11=disabled -Ddemos=false -Dtests=false \
