@@ -103,7 +103,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Meson from pip, not apt: Ubuntu 24.04 ships meson 1.3.2, but fontconfig 2.16+
 # and other recent deps require meson >= 1.6.0. --break-system-packages is fine
 # in a throwaway build image (PEP 668 / Ubuntu 24.04). One version, with the
-# hash of its wheel: the version libmpv-r24 was built with.
+# hash of its wheel.
 RUN printf '%s\n' \
       'meson==1.12.1 --hash=sha256:930bc7542cbd9f57009e182fd014eba48cf1a0180a7b9006d2d32d8f168d8b02' \
       > /tmp/requirements.txt \
@@ -192,15 +192,37 @@ RUN set -eux; \
     ln -sf "/usr/bin/${triple}-g++-10" /usr/local/bin/c++; \
     "${triple}-gcc" --version | head -1
 
-# meson, ninja and cmake from pip: focal's are too old for the dependency
-# builds (meson >= 1.6 for mpv). The versions libmpv-r24 was built with,
-# each with the hashes of its x86_64 and aarch64 wheels.
+# Python from python-build-standalone, first on PATH: focal's 3.8 is too old
+# for mpv 0.42.0, whose build runs TOOLS/matroska.py (3.9 syntax), and for
+# meson 1.12 (3.10). The interpreter only runs build tools: nothing of it is
+# linked into the library. Pinned with the SHA-256 GitHub lists for the asset.
+ARG PYTHON_STANDALONE_RELEASE=20261110
+ARG PYTHON_STANDALONE_VERSION=3.14.10
+ARG PYTHON_STANDALONE_SHA256_X86_64=3fe0d7c0538eb5d190c34582992d26230532551355cbd789fabc6591621cfc07
+ARG PYTHON_STANDALONE_SHA256_AARCH64=e59f83159984a55e719bb3805a0b2b5b281f645769222218084b78b92eedc07f
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) arch=x86_64;  SHA="$PYTHON_STANDALONE_SHA256_X86_64" ;; \
+      arm64) arch=aarch64; SHA="$PYTHON_STANDALONE_SHA256_AARCH64" ;; \
+      *) echo "unsupported host arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 -o /tmp/python.tar.gz \
+      "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_STANDALONE_RELEASE}/cpython-${PYTHON_STANDALONE_VERSION}+${PYTHON_STANDALONE_RELEASE}-${arch}-unknown-linux-gnu-install_only.tar.gz"; \
+    echo "$SHA  /tmp/python.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/python.tar.gz -C /opt; \
+    rm /tmp/python.tar.gz; \
+    /opt/python/bin/python3 --version
+ENV PATH=/opt/python/bin:$PATH
+
+# meson, ninja and cmake from pip, on that Python: focal's are too old for the
+# dependency builds (meson >= 1.3 for mpv and libplacebo). Each with the
+# hashes of its x86_64 and aarch64 wheels.
 RUN printf '%s\n' \
-      'meson==1.7.2 --hash=sha256:82c6818dc81743c96de3a458f06175776ebfde4081195ea31ea6971838f25e38' \
+      'meson==1.12.1 --hash=sha256:930bc7542cbd9f57009e182fd014eba48cf1a0180a7b9006d2d32d8f168d8b02' \
       'ninja==1.13.2 --hash=sha256:65a24341b5ac09fcadcc37082660be40a94174e51a937fabf6e2cae26225fa2c --hash=sha256:d775a5e43e9088f507a6250d57fcf5678eb31268c545feb5064ffeee33735622' \
-      'cmake==3.31.10 --hash=sha256:3c17bb24dba15f8ecc3fd706afe04264410ef88796f4115c119327c961d5dc57 --hash=sha256:2f766bb46367e5e0559fa33184653754bce044583a06014dcaebf8e6dff8a1f1 --hash=sha256:a4a5615f31f692c9b9aa8b365704e4b76172348af6fa40e16fea3f118bb01194' \
+      'cmake==4.4.5 --hash=sha256:85625a9b6d5e88ff99c7eb79123d85570844e77ac076366cf75c609cc0b1b579 --hash=sha256:25fc8469e67857124ef10c002331c0ab416eb7b8d9e1d6e4c58e84e730013ece' \
       > /tmp/requirements.txt \
-    && pip3 install --no-cache-dir --require-hashes -r /tmp/requirements.txt \
+    && python3 -m pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt \
     && meson --version && ninja --version && cmake --version | head -1
 
@@ -253,11 +275,11 @@ WORKDIR /src
 # ══════════════════════════════════════════════════════════════════════════════
 FROM base AS windows
 
-ARG LLVM_MINGW_VERSION=20260421
+ARG LLVM_MINGW_VERSION=20261104
 # sha256 of the release assets, as GitHub lists them for the release. Bump
 # with LLVM_MINGW_VERSION.
-ARG LLVM_MINGW_SHA256_X86_64=f8b8cce779affeab47bcaec6ce6e9e768b166094a366123ef64b2d0b389cc121
-ARG LLVM_MINGW_SHA256_AARCH64=e9cfa5a93290cb852dc5a6b90ccde255403a63332648be171470ca3c1ad37828
+ARG LLVM_MINGW_SHA256_X86_64=919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926
+ARG LLVM_MINGW_SHA256_AARCH64=595e95bdffabfc62559fe26e30bdfbccf277cbaed4902793555015ee47306b94
 ENV LLVM_MINGW_DIR=/opt/llvm-mingw
 # llvm-mingw is intentionally NOT prepended to PATH: its tarball ships
 # x86_64-w64-mingw32-* shadow wrappers that would override the GNU MinGW-w64
@@ -318,11 +340,11 @@ WORKDIR /src
 # stub detection). The Android NDK sysroot is bind-mounted at runtime.
 FROM linux-noble AS verify
 
-ARG LLVM_MINGW_VERSION=20260421
+ARG LLVM_MINGW_VERSION=20261104
 # sha256 of the release assets, as GitHub lists them for the release. Bump
 # with LLVM_MINGW_VERSION.
-ARG LLVM_MINGW_SHA256_X86_64=f8b8cce779affeab47bcaec6ce6e9e768b166094a366123ef64b2d0b389cc121
-ARG LLVM_MINGW_SHA256_AARCH64=e9cfa5a93290cb852dc5a6b90ccde255403a63332648be171470ca3c1ad37828
+ARG LLVM_MINGW_SHA256_X86_64=919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926
+ARG LLVM_MINGW_SHA256_AARCH64=595e95bdffabfc62559fe26e30bdfbccf277cbaed4902793555015ee47306b94
 ENV LLVM_MINGW_DIR=/opt/llvm-mingw
 
 # Windows cross — GNU MinGW (x86_64) + llvm-mingw (aarch64) for the LoadLibrary
@@ -377,9 +399,9 @@ RUN set -eux; \
 # Pinned (like LLVM_MINGW_VERSION): the .deb set / default emulator can shift
 # between releases — bump consciously and re-verify against
 # https://github.com/AndreRH/hangover/releases
-ENV HANGOVER_VERSION=11.9
+ENV HANGOVER_VERSION=11.16
 # sha256 of the arm64 noble tarball as GitHub lists it. Bump with the version.
-ARG HANGOVER_SHA256=0c66e48800c03d32c3c22029b5053cef3d61376aedcf44eaddf82dce63e410dd
+ARG HANGOVER_SHA256=94611dad2b23978d35825a018c81b3947caaec174aa04c052849d37bc6a39e72
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     apt-get update; \
