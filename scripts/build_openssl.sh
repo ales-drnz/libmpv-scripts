@@ -50,7 +50,7 @@ build_openssl() {
     local prefix="$1" b="$2" openssl_target="${3:-}" extra_config="${4:-}"
     # The key names what the cached build was configured with: a build
     # kept from before a Configure change (no-atexit) is rebuilt, not reused.
-    local key="$OPENSSL_VERSION $openssl_target ${extra_config} no-atexit"
+    local key="$OPENSSL_VERSION $openssl_target ${extra_config} no-atexit aes-const-time"
     if [[ -f "$prefix/lib/libssl.a" &&
           "$(cat "$prefix/lib/.openssl-key" 2>/dev/null)" == "$key" ]]; then
         ok "openssl already built"; return
@@ -80,15 +80,14 @@ build_openssl() {
     # Android passes `-D__ANDROID_API__=N` so OpenSSL targets the same
     # API level as the rest of the build instead of the NDK's max.
     #
-    # no-asm: came in 0.1.1 (d3d7e0c) with the other size cuts of that
-    # release (the no-<algorithm> list, -Os, OPENSSL_SMALL_FOOTPRINT), to
-    # leave out the assembly of every algorithm for every CPU. Its share of
-    # the saving was not measured. What it costs: AES, GHASH, ChaCha20,
+    # no-asm: the assembly of every algorithm for every CPU is 1.3 MB of
+    # the Linux x86_64 library (9.99 MB with it, 8.70 MB without, measured
+    # for libmpv-r26), so it stays out, as from 0.1.1. AES, GHASH, ChaCha20,
     # SHA-2 and the curves run as generic C, without AES-NI, PCLMUL, the
-    # ARMv8 Crypto extensions or NEON, and the C AES of aes_core.c is the
-    # table one, not constant-time (OPENSSL_AES_CONST_TIME is not set).
-    # Windows aarch64 needs it in any case, see build_libmpv_windows.sh.
-    # Dropping it wants a build of each target and the size in KB first.
+    # ARMv8 Crypto extensions or NEON: fast enough for the bitrates of
+    # audio. OPENSSL_AES_CONST_TIME makes the C AES of aes_core.c the
+    # constant-time one, not the table one, whose timing follows the key.
+    # Windows aarch64 needs no-asm in any case, see build_libmpv_windows.sh.
     #
     # no-atexit: OpenSSL would register atexit(OPENSSL_cleanup) at first TLS
     # use, after mpv's analysis drain (mak_scan.c) registered its own, so it
@@ -121,7 +120,7 @@ build_openssl() {
         no-thread-pool no-uplink no-filenames no-cmac no-siv \
         no-atexit \
         threads \
-        -Os -DOPENSSL_SMALL_FOOTPRINT \
+        -Os -DOPENSSL_SMALL_FOOTPRINT -DOPENSSL_AES_CONST_TIME \
         ${extra_config}
     make -j"${JOBS:-$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)}"
     make install_sw       # install_sw = libs + headers, skip docs/man
