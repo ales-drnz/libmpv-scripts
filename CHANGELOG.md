@@ -1,3 +1,36 @@
+## [0.4.2]
+
+### All platforms
+**Changed**
+- mpv 0.42.0, from 0.41.0, and FFmpeg 9.0.2, from 8.1.1. The libraries say `mpv v0.42.0+r26`. The client API is 2.6, with the same structs and the same 54 exports.
+- mpv 0.42.0 verifies TLS certificates by default (`tls-verify`), and gives the playlist entries of local files as absolute, normalized paths.
+- No `env://` protocol and no `env` property: a playlist or a property expansion can no longer read the environment of the app.
+- Lua and libcurl are off by name in the mpv build, and the video, disc and window code new in 0.42.0 is stubbed by `strip_mpv_dead`.
+- OpenSSL 4.1.0, from 3.5.6, and libplacebo 7.387.0 on every platform, from 6.338.2 or 7.349.0, the floor of mpv 0.42.0.
+- zlib 1.4, xz 5.8.4, expat 2.10.0, libxml2 2.15.4, libpng 1.6.59, libiconv 1.19.1, and where libass is kept libass 0.17.5, freetype 2.15.0, fribidi 1.0.18, harfbuzz 15.1.0, fontconfig 2.18.3 and libunibreak 8.0.
+
+**Fixed**
+- A live PCM entry with an A-B loop plays on past B to its end. On mpv 0.42.0 it stopped at B.
+- The HLS demuxer of FFmpeg 9.0 keeps its persistent connections and prefetch under mpv, which it turned off because mpv reads the playlist itself. A segment input without a connection to reuse opens a new one instead of aborting.
+- A chunked HTTP body read to its last chunk ends with EOF on FFmpeg 9.0, not with a read error.
+
+### Android
+**Changed**
+- NDK r30, from r28c. minSdk stays 24.
+
+### Web
+**Changed**
+- Emscripten 7.0.0, from 6.0.12. The module targets Chrome 92, Firefox 114 and Safari 15.2: Firefox 114 is the first with the module workers an ES6 module with pthreads starts.
+- mpv's dummy subprocess in the browser: Emscripten declares `clone` without implementing it.
+
+### Build
+- The Linux image (Ubuntu 20.04) runs the build tools on CPython 3.14.10 from python-build-standalone, pinned by SHA-256: mpv 0.42.0 needs Python 3.9 at build time. meson 1.12.1, cmake 4.4.5 and ninja 1.13.2 there.
+- llvm-mingw 20261104, Hangover 11.16, Go 1.27.4 for the TUI and `actions/setup-java` 6.3.0.
+- fontconfig downloads from its GitLab packages, where its tarballs are since 2.17.
+- The FFmpeg patches follow 9.0.2. `filter_bounds` leaves to upstream the checks of `af_aecho.c` and `af_pan.c`, and `read_error` takes libavformat 63.
+- The native tests build libplacebo 7.387.0 from its pinned tag, `ao_close_test` sees the file `mp_fopen` opens, and the `sanitizers` job of `checks.yml` runs them under valgrind memcheck and with UBSan on every push.
+- `verify_mpv_config` asserts lua, libcurl and dvda off.
+
 ## [0.4.1] - 15-11-2026
 
 ### All platforms
