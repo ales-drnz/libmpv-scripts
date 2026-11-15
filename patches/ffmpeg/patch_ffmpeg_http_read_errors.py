@@ -5,7 +5,8 @@
 
 """
 The read errors http.c hides: a body cut short ends with EIO, not as if it
-were complete.
+were complete, and a chunked body read to its end ends as complete, not
+with EIO.
 
 ===== A reconnect that fails =====
 
@@ -65,6 +66,19 @@ inside a chunk is never EIO upstream. A live stream sent chunked (an internet ra
 that drops ended as a normal end. The patch answers both with EIO and an
 error in the log; a body closed by its last chunk ends as before.
 
+===== A chunked body read to its last chunk =====
+
+FFmpeg 9.0 answers a read with no connection left by the size of the body:
+http_read_stream() returns EIO while the offset is short of filesize, and
+AVERROR_EOF past it. A chunked body has no size (filesize stays UINT64_MAX),
+and after its last chunk http_buf_read() closes the connection (without
+multiple_requests): the next read then took every complete chunked body,
+a finished transcode for one, for one cut short, and ended it with EIO.
+The patch sets filesize to the offset at the last chunk, the size the body
+turned out to have, so the end of the body ends with AVERROR_EOF on every
+version. FFmpeg 8.1 ended it so already, and its size is only read there
+by a seek, which past the end now stays where it is.
+
 Whether the reconnect loop of http_read_stream() runs does not change: a
 chunked body has no known size, so the loop takes any failed read for
 premature, and a live stream without Range support is not resumed unless
@@ -74,7 +88,7 @@ Applied with patch_ffmpeg_segment_skips.py under the read_error toggle,
 the FFmpeg side of patch_read_error.py: with the toggle off the build keeps
 upstream's http.c.
 
-MARKER-guarded: MAK_HTTP_READ_ERRORS_V1 in every inserted hunk.
+MARKER-guarded: MAK_HTTP_READ_ERRORS_V2 in every inserted hunk.
 
 Usage:
     python3 patch_ffmpeg_http_read_errors.py <ffmpeg_src_dir>
@@ -87,7 +101,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_lib'))
 import anchor  # noqa: E402
 
 
-MARKER = 'MAK_HTTP_READ_ERRORS_V1'
+MARKER = 'MAK_HTTP_READ_ERRORS_V2'
 
 HTTP = 'libavformat/http.c'
 
@@ -188,6 +202,24 @@ CHUNK_SIZE_LINE_NEW = (
     '            } while (!*line);    /* skip CR LF from last chunk */\n'
 )
 
+# http_buf_read(): the last chunk of a body read without multiple_requests,
+# which closes the connection.
+LAST_CHUNK = (
+    '            else if (!s->chunksize) {\n'
+    '                av_log(h, AV_LOG_DEBUG, "Last chunk received, closing conn\\n");\n'
+    '                ffurl_closep(&s->hd);\n'
+)
+
+LAST_CHUNK_NEW = (
+    '            else if (!s->chunksize) {\n'
+    '                av_log(h, AV_LOG_DEBUG, "Last chunk received, closing conn\\n");\n'
+    '                /* ' + MARKER + ': the body is complete and its size known:\n'
+    '                 * with no connection left, a read short of filesize is\n'
+    '                 * EIO (FFmpeg 9.0), and a chunked body has none. */\n'
+    '                s->filesize = s->off;\n'
+    '                ffurl_closep(&s->hd);\n'
+)
+
 # http_buf_read(): the read of the body, here inside a chunk when chunked.
 BODY_READ = (
     '        len = ffurl_read(s->hd, buf, size);\n'
@@ -212,6 +244,7 @@ def apply(p):
     if p.edits(HTTP, [
         ('http_seek_internal saves the old context', SAVE, SAVE_NEW),
         ('http_buf_read size line of a chunk', CHUNK_SIZE_LINE, CHUNK_SIZE_LINE_NEW),
+        ('http_buf_read last chunk', LAST_CHUNK, LAST_CHUNK_NEW),
         ('http_buf_read read of the body', BODY_READ, BODY_READ_NEW),
     ]):
         p.optional(HTTP, [(RESTORE, RESTORE_NEW), (RESTORE_811, RESTORE_811_NEW)],
