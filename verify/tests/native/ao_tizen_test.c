@@ -28,6 +28,8 @@
 //             driver's check and its write: nothing lost or repeated
 //   seekrace  30 seeks, some in the middle of a read: nothing from before
 //             a seek plays after it
+//   seeklag   the same, with each write held before it reaches the device,
+//             so a reset and its flush can come first: still nothing old
 //   refuse    the device refuses writes for 0.5 s: no spinning, nothing
 //             lost, no reload
 //   fast      the device's clock runs 2% fast: the delay stays right
@@ -538,7 +540,7 @@ static int format_mode(void)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|refuse|fast|slow|dead|noresume|short|busy|clock|format\n", argv[0]);
+        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|seeklag|refuse|fast|slow|dead|noresume|short|busy|clock|format\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
@@ -680,11 +682,14 @@ int main(int argc, char **argv)
               "pauses came between a check and its write (%d refused)",
               atomic_load(&refused_writes));
         check_whole(0, "100 pauses");
-    } else if (!strcmp(mode, "seekrace")) {
+    } else if (!strcmp(mode, "seekrace") || !strcmp(mode, "seeklag")) {
         // Each seek k plays a source of its own, from k * 10^7 on.
         enum { SEEKS = 30, SPAN = 10000000 };
         int at[SEEKS + 1];
-        atomic_store(&read_lag_ms, 10);
+        if (!strcmp(mode, "seekrace"))
+            atomic_store(&read_lag_ms, 10);
+        else
+            atomic_store(&write_lag_ms, 10);
         unsigned seed = 2;
         for (int k = 1; k <= SEEKS; k++) {
             ao->driver->reset(ao);

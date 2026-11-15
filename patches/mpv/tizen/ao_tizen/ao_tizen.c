@@ -1,4 +1,4 @@
-/* MAK_AO_TIZEN_PATCH_V1 ─── ao_tizen: mpv's audio output on Tizen, through
+/* MAK_AO_TIZEN_PATCH_V2 ─── ao_tizen: mpv's audio output on Tizen, through
  * the audio_out API of capi-media-audio-io. See patches/mpv/tizen/
  * patch_ao_tizen.py in libmpv-scripts for the rationale.
  *
@@ -14,7 +14,9 @@
  * - The read blocks on buffer.c's lock: one that does not returns nothing
  *   while the core holds it, and leaves the chunk as it was.
  * - Each reset bumps a generation: a write that was in flight across it
- *   counts for nothing, its frames were flushed.
+ *   counts for nothing, its frames were flushed. A reset waits for a write
+ *   that left the lock and has not reached the device yet: started after
+ *   the flush, it would queue frames from before the seek.
  * - audio_out has no position or latency query. The frames heard follow the
  *   clock from the last start or resume, so the queue is what was written
  *   past them, never below 0 (an underrun) nor above the frames written.
@@ -70,6 +72,7 @@ struct priv {
     enum tz_state state;
     uint64_t generation;        // bumped by every reset
     int pending;                // frames read and not yet written
+    bool writing;               // between the lock and audio_out_write's end
     int64_t written;            // frames written since the last reset
     int64_t heard_base;         // frames heard at the clock's anchor
     int64_t anchor_ns;          // last start or resume, 0 when paused
@@ -139,11 +142,14 @@ static MP_THREAD_VOID playthread(void *arg)
                 continue;               // paused while reading: kept
         }
         int samples = p->pending;
+        p->writing = true;
         mp_mutex_unlock(&p->lock);
         int64_t t0 = mp_time_ns();
         int ret = audio_out_write(p->out, p->chunk, samples * ao->sstride);
         now = mp_time_ns();
         mp_mutex_lock(&p->lock);
+        p->writing = false;
+        mp_cond_broadcast(&p->wakeup);
         if (gen != p->generation)
             continue;                   // flushed by a reset
         int done = ret > 0 ? MPMIN(ret / ao->sstride, samples) : 0;
@@ -298,6 +304,9 @@ static void reset(struct ao *ao)
     p->state = TZ_STOPPED;
     p->generation++;
     p->pending = 0;
+    // A write between the lock and the device would queue after the flush.
+    while (p->writing)
+        mp_cond_wait(&p->wakeup, &p->lock);
     mp_mutex_unlock(&p->lock);
     // Both wait for a write in flight, then drop what it queued.
     device_pause(ao, true);

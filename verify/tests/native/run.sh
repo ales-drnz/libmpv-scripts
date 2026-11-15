@@ -155,7 +155,7 @@ CASES=(
   "unit wave_roll_test - - evict lead cap stale"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
-  "tizen ao_tizen_test - - play pause seek underrun delay race seekrace refuse fast slow dead noresume short busy clock format"
+  "tizen ao_tizen_test - - play pause seek underrun delay race seekrace seeklag refuse fast slow dead noresume short busy clock format"
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "lib keep_open_park_test playback - pause park nopause stop unload afterend seekend"
