@@ -13,6 +13,7 @@
 - A live PCM entry with an A-B loop plays on past B to its end. On mpv 0.42.0 it stopped at B.
 - The HLS demuxer of FFmpeg 9.0 keeps its persistent connections and prefetch under mpv, which it turned off because mpv reads the playlist itself. A segment input without a connection to reuse opens a new one instead of aborting.
 - A chunked HTTP body read to its last chunk ends with EOF on FFmpeg 9.0, not with a read error.
+- A stream whose cache fills before its end gets its analysis again from the re-open, or from playback on a hinted length. When the demuxer let go of the cache feed before the analysis reached the cut, the waveform and the loudness ended failed.
 
 ### Android
 **Changed**
