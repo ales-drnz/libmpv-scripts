@@ -87,6 +87,8 @@ if [[ "$MEMCHECK" == 1 ]]; then
   [[ "${UBSAN:-0}" == 1 ]] && { echo "MEMCHECK=1 and UBSAN=1 do not go together" >&2; exit 1; }
   command -v valgrind > /dev/null || { echo "MEMCHECK=1 needs valgrind" >&2; exit 1; }
   ASAN=() BSAN=none TIME="${MEMCHECK_TIMEOUT:-1200}"
+  # A test that bounds a cost in CPU time reads it (pcm_loop_test).
+  export MAK_UNDER_VALGRIND=1
   SAN_TAG="memcheck"
   # No leak check: LeakSanitizer does that in the default run. The origins
   # name the allocation or the stack frame the unwritten bytes come from.

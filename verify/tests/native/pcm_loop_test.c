@@ -142,7 +142,14 @@ int main(int argc, char **argv)
            "end-file %d (reason %d), file-loaded %d\n", cpu, ev.hits[0],
            ev.hits[0] - before, ev.hits[1], ev.end_files, ev.end_reason, ev.loaded);
     mt_check(ev.hits[0] == 0, "no failed loop seek (%d)", ev.hits[0]);
-    mt_check(cpu < 0.5, "the core is idle (%.2f s of CPU in 2 s)", cpu);
+    // Natively every mode stays near 0.02 s. With a next entry the two
+    // seconds play that file, which under valgrind costs about 0.5 s
+    // (memcheck runs one thread at a time, so a core busy for nothing
+    // takes close to all 2 s): the bound there leaves room for the
+    // playback, not for a spin.
+    double idle = m_next && getenv("MAK_UNDER_VALGRIND") ? 1.5 : 0.5;
+    mt_check(cpu < idle, "the core is idle (%.2f s of CPU in 2 s, under %.1f)", cpu,
+             idle);
     mt_check(ev.hits[1] == (m_off ? 0 : 1), "the cannot loop warning %s (%d)",
              m_off ? "is not there" : "comes once", ev.hits[1]);
     if (m_next) {
