@@ -24,6 +24,49 @@ static double mt_now(void)
 
 static void mt_sleep_ms(int ms) { usleep(ms * 1000); }
 
+// Time in the native tests: one rule for every test, the same natively and
+// under valgrind, which runs the code many times slower and one thread at a
+// time.
+//  1. A test that waits for something to happen waits on that condition
+//     (mt_wait_until, an_wait_event, an_wait_final). The time it gives is a
+//     ceiling: it only bounds a failure, and mt_ceil() multiplies it by
+//     mt_slow(), so a slow run waits longer and never fails on the clock.
+//     No fixed sleep stands in for "long enough for it to happen".
+//  2. A fixed window is for a check that something does not happen (no
+//     second warning, no seek, an idle core) and for a measure. It starts
+//     once the condition it follows was waited on, and is not scaled.
+//  3. A bound on a measure that the speed of the code decides (CPU time, how
+//     long a step took) is mt_bound(native, slow): the slow bound is used
+//     under valgrind and is set where valgrind's cost was measured, with
+//     the reason, and still fails on what the check is there to catch.
+//  4. A test of a pace the product keeps in real time against playback or a
+//     download is not scaled: when valgrind cannot keep it, the mode is in
+//     MEMCHECK_SLOW of run.sh, with the reason.
+// run.sh sets MAK_TIME_SCALE (10) under valgrind; mt_slow() is 1 without it.
+static double mt_slow(void)
+{
+    const char *s = getenv("MAK_TIME_SCALE");
+    double f = s ? atof(s) : 1;
+    return f >= 1 ? f : 1;
+}
+
+static double mt_ceil(double secs) { return secs * mt_slow(); }
+
+static double mt_bound(double native, double slow)
+{
+    return mt_slow() > 1 ? slow : native;
+}
+
+// Runs step until cond holds or the ceiling (seconds, rule 1) runs out.
+// cond is read again after the last step.
+#define mt_wait_until(secs, cond, step)                                     \
+    do {                                                                    \
+        double mt_t0_ = mt_now(), mt_max_ = mt_ceil(secs);                  \
+        while (!(cond) && mt_now() - mt_t0_ < mt_max_) {                    \
+            step;                                                           \
+        }                                                                   \
+    } while (0)
+
 static void mt_check(int ok, const char *fmt, ...)
 {
     va_list ap;

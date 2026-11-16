@@ -147,7 +147,7 @@ int main(int argc, char **argv)
     // (memcheck runs one thread at a time, so a core busy for nothing
     // takes close to all 2 s): the bound there leaves room for the
     // playback, not for a spin.
-    double idle = m_next && getenv("MAK_UNDER_VALGRIND") ? 1.5 : 0.5;
+    double idle = mt_bound(0.5, m_next ? 1.5 : 0.5);
     mt_check(cpu < idle, "the core is idle (%.2f s of CPU in 2 s, under %.1f)", cpu,
              idle);
     mt_check(ev.hits[1] == (m_off ? 0 : 1), "the cannot loop warning %s (%d)",
