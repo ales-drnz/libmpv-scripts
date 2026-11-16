@@ -27,13 +27,18 @@
 //            middle, whose device delay the seek dropped
 #include "playback_test.h"
 
-// Pumps until [name] reads [want], for up to [secs]. Returns whether it did.
+// Pumps until [name] reads [want], for up to [secs] (a ceiling, mt_ceil).
+// Returns whether it did.
 static int wait_str(mpv_handle *h, const char *name, const char *want,
                     double secs, struct pb_ev *ev)
 {
+    // Quiet until the last read, which prints a mismatch.
     double t0 = mt_now();
-    while (mt_now() - t0 < secs) {
-        if (mt_str_is(h, name, want))
+    while (mt_now() - t0 < mt_ceil(secs)) {
+        char *v = mt_str(h, name);
+        int ok = v && !strcmp(v, want);
+        mpv_free(v);
+        if (ok)
             return 1;
         pb_pump(h, 2, ev);
     }
@@ -48,7 +53,7 @@ static void ended_pause(mpv_handle *h, const char *hook, double end)
     mpv_hook_add(h, 1, hook, 0);
     double pos = -1, t0 = mt_now();
     uint64_t id = 0;
-    while (!id && mt_now() - t0 < 10) {
+    while (!id && mt_now() - t0 < mt_ceil(10)) {
         mt_double(h, "time-pos", &pos);
         mpv_event *e = mpv_wait_event(h, 0.002);
         if (e->event_id == MPV_EVENT_HOOK)
@@ -109,13 +114,18 @@ int main(int argc, char **argv)
         double t0 = mt_now();
         mpv_set_property_string(h, "pause", "yes");
         double took = mt_now() - t0;
-        mt_check(took < 0.05, "the pause in the tail returns at once (%.3f s)",
-                 took);
+        // r22 drained the tail first, about 0.35 s here. Under valgrind the
+        // call itself took 0.005 s unloaded: 0.15 s still fails a drain.
+        double at_once = mt_bound(0.05, 0.15);
+        mt_check(took < at_once, "the pause in the tail returns at once "
+                 "(%.3f s, under %.2f s)", took, at_once);
         // The next pass of the core settles time-pos on the delay the
-        // output froze at the pause (a few ms), then it stays.
-        pb_pump(h, 50, &ev);
-        double pos = -1;
+        // output froze at the pause (a few ms), then it stays: wait until
+        // it reads the same across 100 ms.
+        double pos = -1, prev = -2;
         mt_double(h, "time-pos", &pos);
+        mt_wait_until(1, pos == prev, (prev = pos, pb_pump(h, 100, &ev),
+                                       mt_double(h, "time-pos", &pos)));
         mt_check(pos < end - 0.02, "paused short of the end (%.3f of %.0f)",
                  pos, end);
         pb_pump(h, 400, &ev);
@@ -156,7 +166,10 @@ int main(int argc, char **argv)
         // to the end: the seek dropped what the device held, a park again.
         mt_cmd(h, "seek", "1", "absolute", NULL);
         mpv_set_property_string(h, "pause", "no");
-        pb_pump(h, 300, &ev);
+        double at = -1;
+        mt_wait_until(3, mt_double(h, "time-pos", &at) >= 0 && at >= 1.2 &&
+                         at < 1.9, pb_pump(h, 10, &ev));
+        mt_check(at >= 1.2 && at < 1.9, "playing in the middle (%.3f)", at);
         mpv_set_property_string(h, "pause", "yes");
         pb_pump(h, 100, &ev);
         mt_check(mt_str_is(h, "keep-open-parked", "no"), "paused in the middle");
@@ -170,8 +183,7 @@ int main(int argc, char **argv)
         mt_check(wait_str(h, "idle-active", "yes", 5, &ev), "idle after stop");
         // idle-active is yes once the stop is asked (stop_play), before
         // terminate_playback() closes the file; its end-file comes after.
-        for (double t0 = mt_now(); !ev.end_files && mt_now() - t0 < 5;)
-            pb_pump(h, 5, &ev);
+        mt_wait_until(5, ev.end_files, pb_pump(h, 5, &ev));
         mt_check(ev.end_files >= 1, "the file closed (%d)", ev.end_files);
         mt_check(mt_str_is(h, "keep-open-parked", "no"),
                  "a stop at the park leaves it");
