@@ -51,19 +51,26 @@ static int wait_str(mpv_handle *h, const char *name, const char *want,
 static void ended_pause(mpv_handle *h, const char *hook, double end)
 {
     mpv_hook_add(h, 1, hook, 0);
-    double pos = -1, t0 = mt_now();
+    // pos and when the core last moved it: time-pos moves once a pass of
+    // the core, which valgrind makes slow, while the output plays on.
+    double pos = -1, moved = 0, t0 = mt_now();
     uint64_t id = 0;
     while (!id && mt_now() - t0 < mt_ceil(10)) {
-        mt_double(h, "time-pos", &pos);
+        double now = -1;
+        if (mt_double(h, "time-pos", &now) >= 0 && now != pos) {
+            pos = now;
+            moved = mt_now();
+        }
         mpv_event *e = mpv_wait_event(h, 0.002);
         if (e->event_id == MPV_EVENT_HOOK)
             id = ((mpv_event_hook *)e->data)->id;
     }
     mt_check(id != 0, "the %s hook ran", hook);
-    // The position the output played to when the file ended.
-    double tail = end - pos;
-    mt_check(tail > 0.1, "the tail plays when the file ends (%.3f s)", tail);
     double hooked = mt_now();
+    // The tail the output still had to play at the hook: past pos, it
+    // played on for the time since the core last moved it.
+    double tail = end - pos - (hooked - moved);
+    mt_check(tail > 0.1, "the tail plays when the file ends (%.3f s)", tail);
     mpv_set_property_string(h, "pause", "yes");
     mpv_hook_continue(h, id);
     struct pb_ev ev = {.end_reason = -1};
