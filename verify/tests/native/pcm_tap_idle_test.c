@@ -98,6 +98,8 @@ void *realloc(void *p, size_t n)
 }
 
 #include "audio/out/mak_pcm_tap.c"
+// mt_wait_until, the ceiling of the time rule.
+#include "mpv_test.h"
 
 static int64_t fake_now = 1000000000;   // 1 s
 int64_t mp_time_ns(void) { return fake_now; }
@@ -302,8 +304,7 @@ static void mode_busy(void)
     pthread_mutex_lock(&g_tap_lock);   // a reader inside its copy
     pthread_t t;
     pthread_create(&t, NULL, busy_writer, NULL);
-    for (int i = 0; i < 100 && !atomic_load(&busy_done); i++)
-        usleep(5000);
+    mt_wait_until(0.5, atomic_load(&busy_done), usleep(5000));
     int returned = atomic_load(&busy_done);
     check(returned, "a write returns while the reader holds the lock");
     check(g_tap.valid_bytes == valid, "and leaves the ring as it was "
