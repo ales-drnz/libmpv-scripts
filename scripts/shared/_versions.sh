@@ -12,41 +12,39 @@
 # it directly.
 
 # ── Player core ──────────────────────────────────────────────────────────────
-# mpv 0.41.0 (2025-12) is the latest release. FFmpeg 8.1.1 ("Hoare",
-# 2026-05) — mpv 0.41's meson floor is libavcodec >= 60.31.102, which
-# the 8.x line clears comfortably.
-export MPV_VERSION="${MPV_VERSION:-0.41.0}"
+# mpv 0.42.0 (2026-11) and FFmpeg 9.0.2 are the latest releases. The meson
+# floor of mpv is FFmpeg 6.1 (libavcodec >= 60.31.102) and libplacebo 7.387.0.
+export MPV_VERSION="${MPV_VERSION:-0.42.0}"
 # The mpv_audio_kit release these binaries ship as (GitHub release
 # libmpv-<release>). Baked into mpv's own version string, so a running app
-# can tell which build it loaded: mpv-version reads "mpv v0.41.0+r25".
-export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r25}"
-export FFMPEG_VERSION="${FFMPEG_VERSION:-8.1.1}"
+# can tell which build it loaded: mpv-version reads "mpv v0.42.0+r26".
+export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r26}"
+export FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.2}"
 
 # ── Subtitle / font / text shaping (libass + pulls) ──────────────────────────
 # Built only when libass is kept (strip_libass and strip_mpv_dead both
 # disabled in Settings > Patches, see libass_stripped in _audio_only.sh).
 # By default patch_strip_libass.py removes libass and this chain is skipped.
-export LIBASS_VERSION="${LIBASS_VERSION:-0.17.4}"
-export FREETYPE_VERSION="${FREETYPE_VERSION:-2.14.3}"
-export FRIBIDI_VERSION="${FRIBIDI_VERSION:-1.0.16}"
-export HARFBUZZ_VERSION="${HARFBUZZ_VERSION:-14.2.0}"
-# 2.16.0 is the newest fontconfig with a dist tarball on the standard
-# freedesktop release mirror; 2.17.x ships only as git tags.
-export FONTCONFIG_VERSION="${FONTCONFIG_VERSION:-2.16.0}"
+export LIBASS_VERSION="${LIBASS_VERSION:-0.17.5}"
+export FREETYPE_VERSION="${FREETYPE_VERSION:-2.15.0}"
+export FRIBIDI_VERSION="${FRIBIDI_VERSION:-1.0.18}"
+export HARFBUZZ_VERSION="${HARFBUZZ_VERSION:-15.1.0}"
+# Since 2.17 the dist tarballs are GitLab generic packages, no longer on the
+# freedesktop release mirror.
+export FONTCONFIG_VERSION="${FONTCONFIG_VERSION:-2.18.3}"
 
 # ── Compression / system libraries ───────────────────────────────────────────
-# xz 5.8.3 is on the post-backdoor clean line and fixes CVE-2026-34743.
-export ZLIB_VERSION="${ZLIB_VERSION:-1.3.2}"
-export XZ_VERSION="${XZ_VERSION:-5.8.3}"
-export LIBEXPAT_VERSION="${LIBEXPAT_VERSION:-2.8.1}"
-# libxml2 stays on the mature 2.14 line (2.15.x carries build/API
-# regressions); only pulled in transitively by ffmpeg's DASH/IMF demuxers.
-export LIBXML2_VERSION="${LIBXML2_VERSION:-2.14.6}"
-export LIBPNG_VERSION="${LIBPNG_VERSION:-1.6.58}"
+# xz stays on the post-backdoor clean line (5.8.x).
+export ZLIB_VERSION="${ZLIB_VERSION:-1.4}"
+export XZ_VERSION="${XZ_VERSION:-5.8.4}"
+export LIBEXPAT_VERSION="${LIBEXPAT_VERSION:-2.10.0}"
+# libxml2: only pulled in by ffmpeg's DASH and IMF demuxers.
+export LIBXML2_VERSION="${LIBXML2_VERSION:-2.15.4}"
+export LIBPNG_VERSION="${LIBPNG_VERSION:-1.6.59}"
 export BZIP2_VERSION="${BZIP2_VERSION:-1.0.8}"
 # libiconv: built only where the platform lacks a system iconv that
 # ffmpeg/libxml2 can link (Android, Windows).
-export LIBICONV_VERSION="${LIBICONV_VERSION:-1.18}"
+export LIBICONV_VERSION="${LIBICONV_VERSION:-1.19.1}"
 
 # ── Audio DSP ─────────────────────────────────────────────────────────────────
 # rubberband 4.0.0 backs ffmpeg's `arubberband` filter. Its source uses an
@@ -60,7 +58,7 @@ export LIBSMB2_VERSION="${LIBSMB2_VERSION:-6.0.0}"
 # libmpv does not link PipeWire: its AO goes through a lazily loaded stub (see
 # patches/mpv/linux/patch_optional_audio_libs.py). This version supplies the
 # headers and the symbol set, so it is also the oldest PipeWire the AO works
-# with at run time. 0.3.57 is mpv 0.41's own floor, and building against it
+# with at run time. 0.3.57 is mpv's own floor (still so in 0.42.0), and building against it
 # keeps mpv on the code paths every later PipeWire supports.
 export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 
@@ -71,22 +69,20 @@ export PIPEWIRE_VERSION="${PIPEWIRE_VERSION:-0.3.57}"
 # it's been deprecated by Apple since 10.15, doesn't support TLS 1.3, and
 # is on its way out of upstream curl/ffmpeg (curl removed it in June 2025).
 #
-# OpenSSL 3.5.6 is the current LTS patch (the 3.5 LTS line is supported
-# until 2030). License Apache 2.0 (OpenSSL 3.0+), GPL-compatible — no
-# --enable-nonfree needed on the ffmpeg side.
-export OPENSSL_VERSION="${OPENSSL_VERSION:-3.5.6}"
+# OpenSSL 4.1.0 (2026-10) is the latest release. License Apache 2.0, GPL
+# compatible: no --enable-nonfree on the ffmpeg side.
+export OPENSSL_VERSION="${OPENSSL_VERSION:-4.1.0}"
+
+# ── libplacebo (every platform) ──────────────────────────────────────────────
+# mpv 0.42.0 needs 7.387.0 or later: video/csputils.c and video/mp_image.c,
+# which stay in the audio-only build, use symbols the older releases lack
+# (PL_ALPHA_NONE, pl_map_avdovi_metadata). One version on every platform, built
+# minimal (no vulkan, shaderc, d3d11, opengl). Its meson floor is 1.3.0.
+export LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-7.387.0}"
 
 # ── Platform-specific (only sourced where used) ──────────────────────────────
-# Some libraries are pinned per-platform because desktop/mobile track
-# different upstream branches — those stay in the per-platform script and
-# are NOT centralised here:
+# Pinned in the script of the one platform that uses them:
 #
-# - libplacebo: macOS / Linux / Tizen / webOS / web pin v7.349.0; iOS (and
-#   tvOS, the same script) / Android / Windows pin v6.338.2. Reason:
-#   libplacebo 7.x dropped some symbols mpv 0.41.0's
-#   csputils.h still references when building under the cross-compile
-#   cross files used on mobile/Windows. Once mpv ships a release that
-#   uses the 7.x API on those platforms too, they can all converge
-#   (libplacebo 7.360.1 is the current latest).
-# - Android NDK: pinned in build_libmpv_android.sh (NDK_VERSION).
-# - libunibreak: pinned in build_libmpv_linux.sh (Linux libass dep).
+# - Android NDK: build_libmpv_android.sh (NDK_VERSION).
+# - emsdk: build_libmpv_web.sh (EMSDK_VERSION).
+# - libunibreak: build_libmpv_linux.sh (Linux libass dep).

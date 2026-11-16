@@ -561,7 +561,7 @@ int main(int argc, char **argv)
             measure("mpv_create_initialize_ms", init_ms);
             char *v = mpv_get_property_string(r.h, "mpv-version");
             char *fv = mpv_get_property_string(r.h, "ffmpeg-version");
-            check(v && strncmp(v, "mpv v0.41.0", 11) == 0, "mpv-version", "%s, ffmpeg %s",
+            check(v && strncmp(v, "mpv v0.42.0", 11) == 0, "mpv-version", "%s, ffmpeg %s",
                   v ? v : "?", fv ? fv : "?");
             mpv_free(v);
             mpv_free(fv);

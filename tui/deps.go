@@ -28,7 +28,7 @@ func dependencyCatalog() []Dep {
 		{
 			Name:     "mpv",
 			EnvVar:   "MPV_VERSION",
-			Version:  "0.41.0",
+			Version:  "0.42.0",
 			License:  "LGPL-2.1+",
 			Category: "Player core",
 			Purpose:  "The player core (libmpv), -Dgpl=false (GPL only by LIBMPV_GPL)",
@@ -37,7 +37,7 @@ func dependencyCatalog() []Dep {
 		{
 			Name:     "FFmpeg",
 			EnvVar:   "FFMPEG_VERSION",
-			Version:  "8.1.1",
+			Version:  "9.0.2",
 			License:  "LGPL-3.0+",
 			Category: "Player core",
 			Purpose:  "Audio demux/decode/filter engine (libav*), --enable-version3",
@@ -203,8 +203,8 @@ func dependencyCatalog() []Dep {
 		// Rendering (linked)
 		{
 			Name:     "libplacebo",
-			EnvVar:   "",
-			Version:  "per-platform",
+			EnvVar:   "LIBPLACEBO_VERSION",
+			Version:  "7.387.0",
 			License:  "LGPL-2.1+",
 			Category: "Rendering (linked)",
 			Purpose:  "GPU shader/render lib (dead-stripped in audio-only)",

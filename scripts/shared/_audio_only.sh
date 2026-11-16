@@ -804,6 +804,12 @@ EOF
 # \$(mpv_common_args). \`auto_features=disabled\` flips every \`auto\` feature
 # off; the optional-deps patch makes libplacebo / libass not-required so
 # unbuilt deps don't fail configure.
+# Two are set off by name. lua is a combo, not a feature, so auto_features
+# does not reach it: its `auto` takes any lua or luajit pkg-config finds,
+# and with it the scripting a client could load. libcurl (mpv 0.42.0) is a
+# second HTTP and TLS stack, which would bypass FFmpeg's protocol whitelist
+# and its patches (embed_cacert, read_error): off by name, whatever a
+# platform's sysroot holds.
 mpv_common_args() {
   # License (see gpl_build). -Dgpl=false does not turn rubberband off (mpv's
   # rubberband feature does not depend on gpl), so both are set.
@@ -825,6 +831,8 @@ mpv_common_args() {
 -Dplain-gl=disabled
 -Drubberband=${_rubberband}
 -Dzlib=enabled
+-Dlua=disabled
+-Dlibcurl=disabled
 EOF
 }
 
@@ -1036,6 +1044,11 @@ verify_mpv_config() {
 
   # ── Cross-platform must-haves ─────────────────────────────────────────
   assert_define "$cfg" "HAVE_LIBPLACEBO" "1"
+  # Off by name (lua is a combo, not a feature) or out of reach: a second
+  # HTTP stack (libcurl) or disc reader (dvda) would bypass the FFmpeg one.
+  assert_define "$cfg" "HAVE_LUA" "0"
+  assert_define "$cfg" "HAVE_LIBCURL" "0"
+  assert_define "$cfg" "HAVE_DVDA" "0"
   # libass: adaptive. Stripped by default (audio-only: sid=no, vo=null) → HAVE
   # is 0; when the user disables BOTH strip_libass AND strip_mpv_dead (see
   # libass_stripped) the whole font stack is rebuilt and mpv re-detects libass
@@ -1103,9 +1116,9 @@ verify_mpv_config() {
   ok "mpv config audit passed ($platform)"
 }
 
-# ── ffmpeg patch application (9 scripts, identical on every platform) ───────
-# Three are always applied and five are toggles, of which read_error runs
-# two scripts. The web build runs a tenth after them, patch_ffmpeg_webio.py
+# ── ffmpeg patch application (10 scripts, identical on every platform) ──────
+# Four are always applied and five are toggles, of which read_error runs
+# two scripts. The web build runs an eleventh after them, patch_ffmpeg_webio.py
 # (build_libmpv_web.sh).
 # Usage: apply_ffmpeg_patches <ffmpeg_source_dir>
 # Requires SCRIPT_DIR to be set to the directory containing this file.
@@ -1134,6 +1147,12 @@ apply_ffmpeg_patches() {
   # timeout (http:// and smb2://). Builds only with winsock2.h. Defect fix,
   # not user-gated.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_winsock_poll.py" "$ffmpeg_dir"
+
+  # FFmpeg 9.0's HLS demuxer keeps http_persistent and the http_multiple
+  # autodetection when s->pb (the playlist, mpv's own stream) has no
+  # URLContext, and opens a new connection for a segment AVIOContext
+  # without one instead of asserting. Defect fix, not user-gated.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_hls_keepalive.py" "$ffmpeg_dir"
 
   # libsmb2 patch (toggleable): copies libavformat/libsmb2.c and edits
   # configure, Makefile and protocols.c. Idempotent, and every platform
@@ -1223,6 +1242,10 @@ apply_mpv_patches_common() {
   # below that adds a property writes its headers, getters and table entries
   # to the three files it creates, not to command.c, so it MUST run first.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_property_seam.py" "$mpv_dir"
+  # No env:// protocol and no env property (mpv 0.42.0): in a library inside
+  # an app neither a playlist nor a property expansion may read the
+  # environment of the process. Required, not a toggle, after the seam.
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/shared/patch_strip_env.py" "$mpv_dir"
 
   # ── Size-reduction patches (toggleable from Settings ▸ Patches) ──────────────
   # Each strips a subsystem the audio-only consumer (vid=no, vo=null, sid=no,
@@ -1393,44 +1416,6 @@ apply_libsmb2_post_install_fixes() {
         sed "${sed_inplace[@]}" 's|Libs: -L${libdir} -lsmb2|Libs: -L${libdir} -lsmb2 -framework CoreFoundation -lresolv|' "$pc"
         ;;
     esac
-  fi
-}
-
-# ── libplacebo source patch (every platform that builds it) ─────────────────
-# Python 3.14 changed ElementTree.__init__ to require an Element, not an
-# ElementTree. libplacebo's vulkan codegen still uses the old form. Idempotent.
-apply_libplacebo_patches() {
-  local lp_dir="$1"
-
-  # Patch 1 (vulkan utils): ET.parse() returns ElementTree; .getroot()
-  # is required to feed it into VkXML — newer Python ElementTree
-  # versions enforce this distinction.
-  local vk_target="$lp_dir/src/vulkan/utils_gen.py"
-  if [[ -f "$vk_target" ]] && grep -q 'VkXML(ET\.parse(xmlfile))' "$vk_target"; then
-    if [[ "$(uname)" == "Darwin" ]]; then
-      sed -i '' 's/VkXML(ET\.parse(xmlfile))/VkXML(ET.parse(xmlfile).getroot())/g' "$vk_target"
-    else
-      sed -i 's/VkXML(ET\.parse(xmlfile))/VkXML(ET.parse(xmlfile).getroot())/g' "$vk_target"
-    fi
-  fi
-
-  # Patch 2 (Windows export hygiene): libplacebo's src/meson.build hardcodes
-  # `c_args: ['-DPL_EXPORT']` when building the library, regardless of
-  # default_library = static|shared. On Windows that bakes
-  # `__declspec(dllexport)` into every `pl_*` function and emits 300+
-  # `-export:pl_*` directives into the .a's COFF .drectve sections —
-  # which the final libmpv-2.dll link honors despite `--exclude-all-symbols`,
-  # leaking the libplacebo API into the public DLL exports.
-  # Switch the unconditional `-DPL_EXPORT` to `-DPL_STATIC` so PL_API
-  # collapses to nothing when we build static. No-op on ELF (.drectve is
-  # PE/COFF only).
-  local mb_target="$lp_dir/src/meson.build"
-  if [[ -f "$mb_target" ]] && grep -q "c_args: \['-DPL_EXPORT'\]" "$mb_target"; then
-    if [[ "$(uname)" == "Darwin" ]]; then
-      sed -i '' "s/c_args: \['-DPL_EXPORT'\]/c_args: ['-DPL_STATIC']/g" "$mb_target"
-    else
-      sed -i "s/c_args: \['-DPL_EXPORT'\]/c_args: ['-DPL_STATIC']/g" "$mb_target"
-    fi
   fi
 }
 

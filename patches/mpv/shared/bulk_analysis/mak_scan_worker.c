@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine: one worker.
+/* MAK_WAVEFORM_PATCH_V3 ─── bulk-analysis scan engine: one worker.
  *
  * Decodes the worker's sample region of the source and bins it into its
  * disjoint slice of the envelope, publishing sealed bins through its
@@ -132,6 +132,7 @@ static bool worker_swr_for(SwrContext **swr, AVChannelLayout *layout,
 
 MP_THREAD_VOID mak_scan_worker_thread(void *p)
 {
+    mp_thread_set_name("mak/scan-work");
     struct worker_chunk *a = p;
     a->status = -1;
 

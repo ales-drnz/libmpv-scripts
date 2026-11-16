@@ -12,18 +12,34 @@
 //          and no GET after the player's own, so the pass was the feed's
 //          (r18 reads the partials as "progressive", like an envelope that
 //          grows from playback and never turns ready).
+//   ahead  cache-secs=5, paused: the read-ahead stops 5 s into the file, the
+//          feed is cut there and the re-open (more GETs from the start)
+//          reads the file; ready with every bin filled. Without the cut the
+//          pass would wait for a playback that never comes.
+//   hyst   the same with demuxer-hysteresis-bytes=256KiB, which mpv 0.42
+//          added: the read-ahead with a byte hysteresis still cuts the feed.
 #include "analysis_test.h"
 
 int main(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s grow <fixtures> <tmpdir>\n", argv[0]);
+        fprintf(stderr, "usage: %s grow|ahead|hyst <fixtures> <tmpdir>\n", argv[0]);
+        return 2;
+    }
+    const char *mode = argv[1];
+    int ahead = !strcmp(mode, "ahead") || !strcmp(mode, "hyst");
+    if (!ahead && strcmp(mode, "grow")) {
+        fprintf(stderr, "unknown mode %s\n", mode);
         return 2;
     }
     char url[256];
     snprintf(url, sizeof url, "http://127.0.0.1:%s/b.flac",
              getenv("HTTP_PORT") ? getenv("HTTP_PORT") : "0");
     mpv_handle *h = an_create();
+    if (ahead)
+        mpv_set_option_string(h, "cache-secs", "5");
+    if (!strcmp(mode, "hyst"))
+        mpv_set_option_string(h, "demuxer-hysteresis-bytes", "256KiB");
     mpv_initialize(h);
     an_flag(h, "waveform-enabled", 1);
     mpv_set_property_string(h, "pause", "yes");
@@ -34,8 +50,8 @@ int main(int argc, char **argv)
     int partials = 0, other = 0, shrank = 0, uncounted = 0;
     int64_t last = 0;
     char other_state[32] = "";
-    double t0 = mt_now();
-    while (mt_now() - t0 < 30) {
+    double t0 = mt_now(), max = mt_ceil(30);
+    while (mt_now() - t0 < max) {
         mpv_wait_event(h, 0.05);
         an_wave_free(&w);
         an_wave_read(h, &w);
@@ -56,12 +72,14 @@ int main(int argc, char **argv)
     printf("     after %.2f s: %s, %d of %d bins filled; %d partial snapshots, "
            "%d in another state (%s)\n", mt_now() - t0, w.state, w.filled,
            w.bins, partials, other, other ? other_state : "none");
-    mt_check(!other, "the pass reads decoding until it ends (%d read %s)",
-             other, other ? other_state : "otherwise");
-    mt_check(partials >= 3, "partial envelopes while the file downloads (%d)",
-             partials);
-    mt_check(!shrank, "the coverage never shrinks (%d)", shrank);
-    mt_check(!uncounted, "the coverage is the bins filled (%d differ)", uncounted);
+    if (!ahead) {
+        mt_check(!other, "the pass reads decoding until it ends (%d read %s)",
+                 other, other ? other_state : "otherwise");
+        mt_check(partials >= 3, "partial envelopes while the file downloads (%d)",
+                 partials);
+        mt_check(!shrank, "the coverage never shrinks (%d)", shrank);
+        mt_check(!uncounted, "the coverage is the bins filled (%d differ)", uncounted);
+    }
     mt_check(!strcmp(w.state, "ready") && w.bins > 0 && w.filled == w.bins,
              "ready with every bin filled (%s, %d of %d)", w.state, w.filled,
              w.bins);
@@ -78,7 +96,10 @@ int main(int argc, char **argv)
     }
     if (f)
         fclose(f);
-    mt_check(from0 == 1, "no second download (%d GETs from the start)", from0);
+    if (ahead)  // the re-open probes the file, then decodes it
+        mt_check(from0 >= 2, "the re-open took over (%d GETs from the start)", from0);
+    else
+        mt_check(from0 == 1, "no second download (%d GETs from the start)", from0);
     an_wave_free(&w);
     mpv_terminate_destroy(h);
     return mt_result();

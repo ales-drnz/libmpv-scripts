@@ -33,9 +33,8 @@
 #                  binary), with the source of the build in its README.txt
 #                  and all the texts in one file, THIRD_PARTY_LICENSES.txt
 #   components     what each target links, with its version: the components
-#                  its build named to write_licenses, so libplacebo 6 or 7,
-#                  the font stack only where libass is kept, and the date of
-#                  the CA bundle
+#                  its build named to write_licenses, so the font stack
+#                  only where libass is kept, and the date of the CA bundle
 #   toolchain      what compiled each target: the first line of its
 #                  compiler's --version, meson, ninja, cmake, and what the
 #                  platform adds (the NDK, Xcode and its SDK, emsdk)

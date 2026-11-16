@@ -325,7 +325,7 @@ def patch_mak_waveform_c(p):
 # ─── the property seam of player/command.c (bulk-emitted anchors) ────
 
 def patch_command_c(p):
-    getter_anchor = ('/* MAK_WAVEFORM_PATCH_V2 ─── read-only property: '
+    getter_anchor = ('/* MAK_WAVEFORM_PATCH_V3 ─── read-only property: '
                      'bulk waveform analyser')
     insert = p.asset('bulk_analysis/loudness_command_insert.c').rstrip('\n')
     if not insert.endswith(getter_anchor):
@@ -358,9 +358,9 @@ def patch_command_c(p):
 def patch_meson(p):
     edits = [
         ('source list',
-         "    # MAK_WAVEFORM_PATCH_V2\n"
+         "    # MAK_WAVEFORM_PATCH_V3\n"
          "    'audio/mak_waveform.c',",
-         "    # MAK_WAVEFORM_PATCH_V2\n"
+         "    # MAK_WAVEFORM_PATCH_V3\n"
          "    'audio/mak_waveform.c',\n"
          "    # " + MARKER + "\n"
          "    'audio/mak_loudness.c',"),

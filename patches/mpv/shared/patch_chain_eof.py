@@ -56,8 +56,8 @@ def apply(p):
 
     p.edits("filters/f_output_chain.c", [
         (
-            "    bool failed;\n    bool error_eof_sent;\n};\n",
-            "    bool failed;\n    bool error_eof_sent;\n"
+            "    bool failed;\n    bool error_eof_sent;\n    bool in_eof;\n};\n",
+            "    bool failed;\n    bool error_eof_sent;\n    bool in_eof;\n"
             f"\n    /* {MARKER}: an EOF went into f and has not come out. */\n"
             "    bool eof_held;\n};\n",
         ),

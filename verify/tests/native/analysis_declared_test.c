@@ -11,7 +11,8 @@
 // The audio is a 1 kHz sine at -20 dBFS, 48 kHz stereo, -20.0 LUFS
 // (hostile/, see fixtures.sh). The test replaces posix_memalign() for the
 // process to record the largest allocation, as analysis_hostile_test does.
-// For every mode: within 30 s the waveform is ready and the loudness final;
+// For every mode: within 30 s (the ceiling of mpv_test.h's rule 1) the
+// waveform is ready and the loudness final;
 // the waveform holds the sine at 0.1 in its first 3 s, nothing after, and
 // its bins end with the audio; a ready loudness is the sine's, -20.0 LUFS
 // within 0.1 LU, never the figure of a file padded with silence; no
@@ -87,8 +88,8 @@ int main(int argc, char **argv)
            "allocation %zu bytes\n", w.state, w.bins, (long long)w.total_bins,
            w.filled, w.duration_us / 1e6, atomic_load(&largest));
     mt_check(!strcmp(w.state, "ready") && an_final_loud(l.state),
-             "the waveform is ready and the loudness final within 30 s (%s, %s)",
-             w.state, l.state);
+             "the waveform is ready and the loudness final within %.0f s (%s, %s)",
+             mt_ceil(30), w.state, l.state);
     mt_check(atomic_load(&largest) <= 64u << 20,
              "no allocation over 64 MB (%zu bytes)", atomic_load(&largest));
     if (!strcmp(w.state, "ready")) {

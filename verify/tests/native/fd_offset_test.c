@@ -24,7 +24,7 @@ static double play_to_end(mpv_handle *h, const char *who)
     double t0 = mt_now(), pos = -1;
     int eof = 0;
     mpv_set_property_string(h, "pause", "no");
-    while (mt_now() - t0 < 60) {
+    while (mt_now() - t0 < mt_ceil(60)) {
         mpv_wait_event(h, 0.02);
         if (mpv_get_property(h, "eof-reached", MPV_FORMAT_FLAG, &eof) >= 0 && eof)
             break;
@@ -48,10 +48,25 @@ static mpv_handle *player(int paused)
     return h;
 }
 
+// The demuxer of h filled its read-ahead and its reader idles.
+static int reader_idle(mpv_handle *h)
+{
+    mpv_node n;
+    if (mpv_get_property(h, "demuxer-cache-state", MPV_FORMAT_NODE, &n) < 0)
+        return 0;
+    int idle = 0;
+    for (int i = 0; n.format == MPV_FORMAT_NODE_MAP && i < n.u.list->num; i++)
+        if (!strcmp(n.u.list->keys[i], "idle") &&
+            n.u.list->values[i].format == MPV_FORMAT_FLAG)
+            idle = n.u.list->values[i].u.flag;
+    mpv_free_node_contents(&n);
+    return idle;
+}
+
 static int wait_loaded(mpv_handle *h)
 {
     double t0 = mt_now();
-    while (mt_now() - t0 < 15) {
+    while (mt_now() - t0 < mt_ceil(15)) {
         mpv_event *e = mpv_wait_event(h, 0.1);
         if (e->event_id == MPV_EVENT_FILE_LOADED)
             return 1;
@@ -78,7 +93,8 @@ int main(int argc, char **argv)
     mpv_handle *a = player(1);
     mt_cmd(a, "loadfile", url, NULL, NULL);
     mt_check(wait_loaded(a), "player A loaded %s", url);
-    mt_sleep_ms(500);
+    // A reads its read-ahead before B starts.
+    mt_wait_until(5, reader_idle(a), mpv_wait_event(a, 0.02));
 
     mpv_handle *b = player(0);
     mt_cmd(b, "loadfile", url, NULL, NULL);

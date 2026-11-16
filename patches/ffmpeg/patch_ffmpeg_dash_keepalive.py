@@ -42,9 +42,12 @@ Changes applied to ``libavformat/dashdec.c``:
      the next GET via ``ff_http_do_new_request2``.
   5. ``open_url()`` rewritten to try the keepalive path first when
      the URL is http, ``http_persistent`` is enabled, and an existing
-     ``*pb`` is available. Falls back to a fresh
-     ``ffio_open_whitelist`` on any failure (bad host match, stale
-     socket, etc.) so behavior degrades gracefully. The failure logs a
+     ``*pb`` is available. Falls back to a fresh open on any failure
+     (bad host match, stale socket, etc.) so behavior degrades
+     gracefully. The fresh open is the call upstream makes there:
+     ``s->io_open()`` from FFmpeg 8.1.3 on, which goes through the
+     caller's io_open callback as the close (``ff_format_io_close()``)
+     goes through its io_close2, and ``ffio_open_whitelist()`` before. The failure logs a
      warning, except EINVAL, a segment on another host such as a CDN
      redirect, where the fresh connection is expected: VERBOSE (F89).
   6. ``read_data()`` treats ``v->input_read_done`` the same way it
@@ -174,66 +177,68 @@ def apply(p):
 
     # ─── Edit 5 ──────────────────────────────────────────────────────
     # Rewrite the open block inside open_url to try keepalive first.
+    # The open call is kept as upstream writes it: s->io_open() from
+    # FFmpeg 8.1.3 on (the caller's io_open callback, and its io_close2 in
+    # ff_format_io_close()), ffio_open_whitelist() before.
     pattern_open = re.compile(
         r'    av_freep\(pb\);\n'
         r'    av_dict_copy\(&tmp, \*opts, 0\);\n'
         r'    av_dict_copy\(&tmp, opts2, 0\);\n'
-        r'    ret = ffio_open_whitelist\(pb, url, AVIO_FLAG_READ,'
+        r'    ret = (s->io_open\(s, pb, url, AVIO_FLAG_READ, &tmp\)'
+        r'|ffio_open_whitelist\(pb, url, AVIO_FLAG_READ,'
         r' c->interrupt_callback, &tmp,'
-        r' s->protocol_whitelist, s->protocol_blacklist\);\n',
+        r' s->protocol_whitelist, s->protocol_blacklist\));\n',
     )
-    replacement_open = (
-        '    /* ' + MARKER + ' ─── try keep-alive first when we have a\n'
-        '     * live HTTP context for this representation. On failure\n'
-        '     * (host mismatch, stale socket, server closed) fall back\n'
-        '     * to a fresh connection so behaviour degrades gracefully. */\n'
-        '    {\n'
-        '        int is_http_url = av_strstart(proto_name, "http", NULL);\n'
-        '        int tried_keepalive = 0;\n'
-        '        av_dict_copy(&tmp, *opts, 0);\n'
-        '        av_dict_copy(&tmp, opts2, 0);\n'
-        '        /* Ask the http protocol to send `Connection: keep-alive`\n'
-        '         * so the server keeps the socket open after each response\n'
-        '         * and ff_http_do_new_request2 can actually reuse it. */\n'
-        '        if (is_http_url && c->http_persistent) {\n'
-        '            av_dict_set(&tmp, "multiple_requests", "1", 0);\n'
-        '        }\n'
-        '        if (is_http_url && c->http_persistent && *pb) {\n'
-        '            tried_keepalive = 1;\n'
-        '            ret = open_url_keepalive(s, pb, url, &tmp);\n'
-        '            if (ret < 0 && ret != AVERROR_EXIT) {\n'
-        '                /* EINVAL: the segment is on another host or\n'
-        '                 * protocol, as every segment redirected to a CDN\n'
-        '                 * is. The new connection is the expected path. */\n'
-        '                if (ret != AVERROR_EOF)\n'
-        '                    av_log(s, ret == AVERROR(EINVAL) ? AV_LOG_VERBOSE : AV_LOG_WARNING,\n'
-        '                        "DASH keepalive request failed for \'%s\' '
-        '(%s); retrying with new connection\\n",\n'
-        '                        url, av_err2str(ret));\n'
-        '                av_dict_free(&tmp);\n'
-        '                av_dict_copy(&tmp, *opts, 0);\n'
-        '                av_dict_copy(&tmp, opts2, 0);\n'
-        '                av_freep(pb);\n'
-        '                ret = ffio_open_whitelist(pb, url, AVIO_FLAG_READ,'
-        ' c->interrupt_callback, &tmp, s->protocol_whitelist,'
-        ' s->protocol_blacklist);\n'
-        '            }\n'
-        '        } else {\n'
-        '            av_freep(pb);\n'
-        '            ret = ffio_open_whitelist(pb, url, AVIO_FLAG_READ,'
-        ' c->interrupt_callback, &tmp, s->protocol_whitelist,'
-        ' s->protocol_blacklist);\n'
-        '        }\n'
-        '        (void)tried_keepalive;\n'
-        '    }\n'
-    )
+
+    def replacement_open(open_call):
+        return (
+            '    /* ' + MARKER + ' ─── try keep-alive first when we have a\n'
+            '     * live HTTP context for this representation. On failure\n'
+            '     * (host mismatch, stale socket, server closed) fall back\n'
+            '     * to a fresh connection so behaviour degrades gracefully. */\n'
+            '    {\n'
+            '        int is_http_url = av_strstart(proto_name, "http", NULL);\n'
+            '        int tried_keepalive = 0;\n'
+            '        av_dict_copy(&tmp, *opts, 0);\n'
+            '        av_dict_copy(&tmp, opts2, 0);\n'
+            '        /* Ask the http protocol to send `Connection: keep-alive`\n'
+            '         * so the server keeps the socket open after each response\n'
+            '         * and ff_http_do_new_request2 can actually reuse it. */\n'
+            '        if (is_http_url && c->http_persistent) {\n'
+            '            av_dict_set(&tmp, "multiple_requests", "1", 0);\n'
+            '        }\n'
+            '        if (is_http_url && c->http_persistent && *pb) {\n'
+            '            tried_keepalive = 1;\n'
+            '            ret = open_url_keepalive(s, pb, url, &tmp);\n'
+            '            if (ret < 0 && ret != AVERROR_EXIT) {\n'
+            '                /* EINVAL: the segment is on another host or\n'
+            '                 * protocol, as every segment redirected to a CDN\n'
+            '                 * is. The new connection is the expected path. */\n'
+            '                if (ret != AVERROR_EOF)\n'
+            '                    av_log(s, ret == AVERROR(EINVAL) ? AV_LOG_VERBOSE : AV_LOG_WARNING,\n'
+            '                        "DASH keepalive request failed for \'%s\' '
+            '(%s); retrying with new connection\\n",\n'
+            '                        url, av_err2str(ret));\n'
+            '                av_dict_free(&tmp);\n'
+            '                av_dict_copy(&tmp, *opts, 0);\n'
+            '                av_dict_copy(&tmp, opts2, 0);\n'
+            '                av_freep(pb);\n'
+            '                ret = ' + open_call + ';\n'
+            '            }\n'
+            '        } else {\n'
+            '            av_freep(pb);\n'
+            '            ret = ' + open_call + ';\n'
+            '        }\n'
+            '        (void)tried_keepalive;\n'
+            '    }\n'
+        )
     # Use a lambda to bypass re.sub's escape-processing of the
     # replacement string. Without this, '\\n' in the replacement (a
     # literal backslash-n, which is what the C compiler needs to see
     # for the newline escape inside the warning message) would be
     # re-interpreted by re.sub as a newline *character* and break the
     # string literal across two physical lines in the emitted C.
-    p.regex(DASHDEC, pattern_open, lambda _m: replacement_open,
+    p.regex(DASHDEC, pattern_open, lambda m: replacement_open(m.group(1)),
             'Edit 5: open_url body')
 
     # ─── Edit 6 ──────────────────────────────────────────────────────
@@ -294,13 +299,16 @@ def apply(p):
 
     # ─── Edit 8 ──────────────────────────────────────────────────────
     # Register http_persistent in dash_options. Default 1 to match HLS.
-    # Anchored on the last real option before the {NULL} terminator —
+    # Anchored on the last real option before the {NULL} terminator:
     # `cenc_decryption_keys`, added in FFmpeg 8.x (the 7.x array ended
-    # with `cenc_decryption_key`).
+    # with `cenc_decryption_key`), then `max_reload` from FFmpeg 8.1.3 on.
     pattern_options = re.compile(
         r'(    \{ "cenc_decryption_keys", "Media decryption keys by KID'
         r' \(hex\)", OFFSET\(cenc_decryption_keys\), AV_OPT_TYPE_STRING,'
-        r' \{\.str = NULL\}, INT_MIN, INT_MAX, \.flags = FLAGS \},\n)'
+        r' \{\.str = NULL\}, INT_MIN, INT_MAX, \.flags = FLAGS \},\n'
+        r'(?:    \{ "max_reload", "Maximum number of manifest reloads[^"]*",\n'
+        r'        OFFSET\(max_reload\), AV_OPT_TYPE_INT, \{ \.i64 = 100 \},'
+        r' 0, INT_MAX, FLAGS \},\n)?)'
         r'(    \{NULL\}\n)',
     )
     replacement_options = (

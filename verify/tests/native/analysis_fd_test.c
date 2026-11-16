@@ -88,8 +88,9 @@ int main(int argc, char **argv)
         mt_check(!strcmp(l.state, "unavailable"), "loudness unavailable for a pipe (%s)", l.state);
         mt_check(!strcmp(w.state, "progressive"), "waveform grows from playback (%s)", w.state);
         an_wave_free(&w);
+        // The player lets go of the pipe before the test closes it.
         mt_cmd(h, "stop", NULL, NULL, NULL);
-        an_pump(h, 0.3, MPV_EVENT_NONE);
+        an_wait_event(h, MPV_EVENT_END_FILE, 5);
         close(p[0]);
         pthread_join(t, NULL);
         mpv_terminate_destroy(h);
@@ -233,9 +234,9 @@ int main(int argc, char **argv)
              l.integrated, lref.integrated);
     if (!strcmp(mode, "fd")) {
         // Playback of the fd went on while the analysis read the same file.
-        an_pump(h, 1.0, MPV_EVENT_NONE);
         double pos = -1;
-        mt_double(h, "time-pos", &pos);
+        mt_wait_until(1, mt_double(h, "time-pos", &pos) >= 0 && pos > 0.5,
+                      mpv_wait_event(h, 0.02));
         mt_check(pos > 0.5, "the fd plays on (time-pos %.2f)", pos);
     }
     an_wave_free(&w);

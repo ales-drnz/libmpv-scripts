@@ -120,12 +120,7 @@ expected_version_for() {
     rubberband)     if gpl_build; then echo "$RUBBERBAND_VERSION"; fi ;;
     libsmb2)        echo "$LIBSMB2_VERSION" ;;
     openssl)        echo "$OPENSSL_VERSION" ;;
-    libplacebo)
-      # macOS / Linux desktop tracks 7.x; iOS / Android / Windows track 6.x.
-      case "$platform" in
-        macos|linux|tizen|webos) echo "7.349.0" ;;
-        *)           echo "6.338.2" ;;
-      esac ;;
+    libplacebo)     echo "$LIBPLACEBO_VERSION" ;;
     *) echo "" ;;
   esac
 }
@@ -149,6 +144,7 @@ detect_version_in_binary() {
       found=$(grep -oE 'FFmpeg version [0-9]+\.[0-9]+(\.[0-9]+)?'  <<<"$str" | head -1 | awk '{print $3}')
       [[ -z "$found" ]] && found=$(grep -oE 'Lavc[0-9]+\.[0-9]+\.[0-9]+' <<<"$str" | head -1 | sed 's/^Lavc//' | (
         read v; case "$v" in
+          63.1.102)  echo "9.0.2" ;;
           62.28.101) echo "8.1.1" ;;
           61.19.100) echo "7.1.1" ;;
           61.3.100)  echo "7.0.0" ;;

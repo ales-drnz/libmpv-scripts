@@ -5,10 +5,11 @@
 // prefetch_guard_test <mode> <fixtures> <tmpdir>: the prefetch of one player
 // does not wait on another's (F58). Two players in one process, each with
 // a.flac then b.flac and prefetch on. The client holds the on_prefetch hook
-// of player A for up to 4 s and starts player B meanwhile. B must reach its
-// own on_prefetch while A's is held: r17 kept the prefetch guard in one
-// static for the whole process, so B skipped its prefetch until A's hook
-// returned. The hook state is per player now.
+// of player A for up to 4 s (a ceiling, longer under valgrind) and starts
+// player B meanwhile. B must reach its own on_prefetch while A's is held:
+// r17 kept the prefetch guard in one static for the whole process, so B
+// skipped its prefetch until A's hook returned. The hook state is per
+// player now.
 // mode: "two" (the only one).
 #include "mpv_test.h"
 
@@ -35,7 +36,7 @@ int main(int argc, char **argv)
     uint64_t held_id = 0;
     double held_at = 0, b_prefetch_at = 0, a_released_at = 0;
     double t0 = mt_now();
-    while (mt_now() - t0 < 30) {
+    while (mt_now() - t0 < mt_ceil(30)) {
         for (int n = 0; n < 2; n++) {
             mpv_event *e = mpv_wait_event(h[n], 0.02);
             if (e->event_id != MPV_EVENT_HOOK)
@@ -55,7 +56,7 @@ int main(int argc, char **argv)
                 b_prefetch_at = mt_now();
             mpv_hook_continue(h[n], hk->id);
         }
-        if (held_id && (b_prefetch_at || mt_now() - held_at > 4.0)) {
+        if (held_id && (b_prefetch_at || mt_now() - held_at > mt_ceil(4.0))) {
             mpv_hook_continue(h[0], held_id);
             held_id = 0;
             a_released_at = mt_now();

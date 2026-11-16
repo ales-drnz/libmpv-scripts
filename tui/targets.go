@@ -183,7 +183,7 @@ func allTargets() []Target {
 
 		// ── Web (host bash script with the emsdk: emcc on PATH or EMSDK set,
 		//    meson and ninja on PATH). Not in "all", which needs no emsdk. ──
-		{Key: "web", Label: "wasm32", Group: "Web", InMenu: true, Note: "needs emsdk 6.0.12 and meson", kind: kNative, script: sWeb},
+		{Key: "web", Label: "wasm32", Group: "Web", InMenu: true, Note: "needs emsdk 7.0.0 and meson", kind: kNative, script: sWeb},
 
 		// ── Tizen (Docker — any host: clang cross-compiles both arches against
 		//    a sysroot of Tizen 6.0 packages). armv7l is the TVs, x86_64 the

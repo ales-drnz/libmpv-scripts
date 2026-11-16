@@ -83,10 +83,7 @@ for arg in "$@"; do
 done
 
 # ── Web-only pins (centralised ones live in _versions.sh) ────────────────────
-EMSDK_VERSION="${EMSDK_VERSION:-6.0.12}"
-# The desktop libplacebo. mpv only keeps its colour helpers after
-# strip_mpv_dead, and the 7.x line builds clean under emcc.
-LIBPLACEBO_VERSION="7.349.0"
+EMSDK_VERSION="${EMSDK_VERSION:-7.0.0}"
 
 # The browser has no sockets, no TLS store and no SMB: the protocol patches
 # that need them stay out (the per-user DISABLED_PATCHES is kept).
@@ -212,17 +209,10 @@ EOF
 }
 
 # ── Log ──────────────────────────────────────────────────────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR" "$BUILD_DIR"
-ls -t "$LOG_DIR"/build_web-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_web-${WEB_VARIANT}_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: web ($WEB_VARIANT)"
-echo "Build dir:     $BUILD_DIR"
-echo "════════════════════════════════════════════════════════════"
+mkdir -p "$BUILD_DIR"
+start_build_log "web-${WEB_VARIANT}" 'build_web-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: web ($WEB_VARIANT)" \
+  "Build dir:     $BUILD_DIR"
 
 # =============================================================================
 # Library builds
@@ -289,7 +279,6 @@ build_libplacebo() {
   download_git "https://code.videolan.org/videolan/libplacebo.git" "$gitdir" "v$LIBPLACEBO_VERSION"
   git -C "$gitdir" submodule update --init 3rdparty/jinja 3rdparty/markupsafe \
     3rdparty/fast_float 3rdparty/glad 3rdparty/Vulkan-Headers
-  apply_libplacebo_patches "$gitdir"
   local bdir="$BUILD_DIR/build/libplacebo"; rm -rf "$bdir"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
   meson setup "$gitdir" "${MESON_CROSS[@]}" \
@@ -366,6 +355,8 @@ build_mpv() {
   apply_mpv_patches_common "$dir"
   # The browser's audio output. Not a toggle: without it there is no sound.
   python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/web/patch_ao_webaudio.py" "$dir"
+  # No child processes in a browser: the dummy subprocess, not clone().
+  python3 "$LIBMPV_SCRIPTS_ROOT/patches/mpv/web/patch_web_subprocess.py" "$dir"
 
   local bdir="$BUILD_DIR/build/mpv"; rm -rf "$bdir"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null
@@ -418,6 +409,12 @@ WEB_LIBS+=(-lxml2 -lz -lm)
 #                             initial pages (32 MB, 512 pages), or the
 #                             factory rejects; the heap then grows up to its
 #                             maximum, and an allocation past it fails.
+#   MIN_<browser>_VERSION     the browsers the module runs in: Chrome 92 and
+#                             Safari 15.2, the floors of the kit's
+#                             doc/web.md, below the defaults of Emscripten 7
+#                             (93 and 15.4), and Firefox 114, the first with
+#                             the module workers an EXPORT_ES6 module with
+#                             pthreads starts (emcc warns below it).
 WEB_INCOMING_API=ENVIRONMENT,arguments,canvas,dynamicLibraries,elementPointerLock
 WEB_INCOMING_API+=,instantiateWasm,locateFile,monitorRunDependencies,noExitRuntime
 WEB_INCOMING_API+=,noInitialRun,onAbort,onExit,onRuntimeInitialized,postRun,preInit
@@ -431,6 +428,7 @@ web_link_common() {
     -sDEFAULT_PTHREAD_STACK_SIZE=2MB -sSTACK_SIZE=1MB \
     -sINITIAL_MEMORY="$WEB_INITIAL_MEMORY" -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=2GB \
     -sINCOMING_MODULE_JS_API="$WEB_INCOMING_API" \
+    -sMIN_CHROME_VERSION=92 -sMIN_FIREFOX_VERSION=114 -sMIN_SAFARI_VERSION=150200 \
     -sWASMFS -sFORCE_FILESYSTEM
 }
 

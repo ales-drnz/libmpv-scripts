@@ -105,12 +105,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / '_lib'))
 import anchor  # noqa: E402
 
 # Idempotency marker; also present in the copied sources.
-MARKER = 'MAK_PCM_STREAM_PATCH_V2'
+MARKER = 'MAK_PCM_STREAM_PATCH_V3'
 
 
 # ─── stream/stream.c ─────────────────────────────────────────────────
 
-# Pristine lines lifted from mpv 0.41.0. The protocol goes right after the
+# Pristine lines lifted from mpv 0.42.0. The protocol goes right after the
 # client callback streams, ahead of the catch-all ffmpeg protocols.
 STREAM_C = [
     ('stream_info_cb extern',
@@ -225,8 +225,14 @@ PLAYLOOP_C = [
      '            mp_notify_property(mpctx, "remaining-ab-loops");\n'
      '        }\n'
      '        if (ab_end) {\n'
-     '            /* The end was the B point: what follows it still plays. */\n'
+     '            /* The end was the B point: what follows it still plays. The\n'
+     '             * audio chain ended there and reads nothing after its EOF, so\n'
+     '             * it restarts from the frame it held back at B. */\n'
      '            mpctx->stop_play = KEEP_PLAYING;\n'
+     '            if (mpctx->ao_chain) {\n'
+     '                reset_audio_state(mpctx);\n'
+     '                mp_filter_wakeup(mpctx->ao_chain->ao_filter);\n'
+     '            }\n'
      '            mp_wakeup_core(mpctx);\n'
      '        }\n'
      '        return;\n'

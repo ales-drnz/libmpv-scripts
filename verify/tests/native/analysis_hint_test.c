@@ -125,6 +125,12 @@ int main(int argc, char **argv)
     if (!range && !known && !est && stat(path, &st) == 0)
         chunked_size = st.st_size;
     mpv_handle *h = an_create();
+    // The modes that end on a cut pass keep mpv's verbose log next to the
+    // server's: it shows how the pass ended when one of them fails.
+    if (grown) {
+        snprintf(path, sizeof path, "%s.mpv.log", argv[3]);
+        mpv_set_option_string(h, "log-file", path);
+    }
     if (!strcmp(mode, "full"))
         mpv_set_option_string(h, "demuxer-max-bytes", "100KiB");
     if (!strcmp(mode, "nocache"))
@@ -143,8 +149,11 @@ int main(int argc, char **argv)
     struct an_loud l = {0};
     int partials = 0, other = 0, eof_at_ready = -1;
     char other_state[32] = "";
-    double t0 = mt_now(), t_eof = 0, t_grown = 0;
-    while (mt_now() - t0 < 30) {
+    // A ceiling (mpv_test.h, rule 1). The 1.5 s after the end of a pass
+    // that does not turn ready are a window (rule 2): no second request
+    // and no other state comes in it.
+    double t0 = mt_now(), max = mt_ceil(30), t_eof = 0, t_rolled = 0, t_grown = 0;
+    while (mt_now() - t0 < max) {
         mpv_wait_event(h, 0.05);
         an_wave_free(&w);
         an_wave_read(h, &w);
@@ -157,8 +166,10 @@ int main(int argc, char **argv)
         if (an_final_wave(w.state) && an_final_loud(l.state))
             break;
         // Without a hint nothing ends: give up a while after the whole
-        // stream is cached.
-        if (rolls && t_eof && mt_now() - t_eof > 1.5)
+        // stream is cached and the loudness scan is final.
+        if (rolls && t_eof && an_final_loud(l.state) && !t_rolled)
+            t_rolled = mt_now();
+        if (rolls && t_rolled && mt_now() - t_rolled > 1.5)
             break;
         // Nor once it grows from playback: give up a while after.
         if (!strcmp(w.state, "progressive") && an_final_loud(l.state) && !t_grown)

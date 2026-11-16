@@ -89,7 +89,7 @@ for a in ('ssl', 'crypto', 'xml2', 'bz2', 'lzma'):
 # the test reads back from scripts/shared/_audio_only.sh.
 SHARED = [
     'patch_optional_deps.py', 'patch_property_seam.py',
-    'patch_swscale_optional.py',
+    'patch_strip_env.py', 'patch_swscale_optional.py',
     'patch_strip_libass.py', 'patch_strip_mpv_dead.py',
     'patch_strip_win_resources.py', 'patch_afmt_reset.py',
     'patch_prefetch.py', 'patch_audio_output_state.py',
@@ -127,7 +127,8 @@ untested = [(s, False) for s, _ in shared]
 BUILDS = {
     'linux': (MPV, shared + [('mpv/linux/patch_optional_audio_libs.py', True)]),
     'android': (MPV, untested + [('mpv/android/patch_audiotrack.py', True)]),
-    'web': (MPV, untested + [('mpv/web/patch_ao_webaudio.py', True)]),
+    'web': (MPV, untested + [('mpv/web/patch_ao_webaudio.py', True),
+                         ('mpv/web/patch_web_subprocess.py', True)]),
     'windows': (MPV, [('mpv/windows/patch_windows_deps.py', True),
                       ('mpv/windows/patch_timer_resolution.py', True)]),
     'ios': (MPV, [('mpv/ios/patch_ios_platform.py', True),
@@ -137,13 +138,15 @@ BUILDS = {
                   ('mpv/apple/patch_export_filter.py', True)]),
     'ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', True) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
-        'patch_ffmpeg_winsock_poll.py', 'patch_ffmpeg_libsmb2.py', 'patch_ffmpeg_advanced_editlist.py',
+        'patch_ffmpeg_winsock_poll.py', 'patch_ffmpeg_hls_keepalive.py', 'patch_ffmpeg_libsmb2.py',
+        'patch_ffmpeg_advanced_editlist.py',
         'patch_ffmpeg_dash_keepalive.py', 'patch_ffmpeg_http_read_errors.py',
         'patch_ffmpeg_segment_skips.py', 'patch_ffmpeg_embed_cacert.py')]),
     # The web build: no libsmb2 and no embed_cacert, then webio.
     'web-ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', False) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
-        'patch_ffmpeg_winsock_poll.py', 'patch_ffmpeg_advanced_editlist.py', 'patch_ffmpeg_dash_keepalive.py',
+        'patch_ffmpeg_winsock_poll.py', 'patch_ffmpeg_hls_keepalive.py', 'patch_ffmpeg_advanced_editlist.py',
+        'patch_ffmpeg_dash_keepalive.py',
         'patch_ffmpeg_http_read_errors.py', 'patch_ffmpeg_segment_skips.py')]
         + [('ffmpeg/patch_ffmpeg_webio.py', True)]),
 }

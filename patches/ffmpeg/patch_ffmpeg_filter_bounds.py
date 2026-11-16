@@ -4,8 +4,8 @@
 # Use of this source code is governed by BSD 3-Clause license that can be found in the LICENSE file.
 
 """
-Makes FFmpeg 8.1.1 audio filters refuse values that read or write out of
-their buffers, or leak, instead of running with them.
+Makes FFmpeg audio filters (8.1.3 and 9.0) refuse values that read or
+write out of their buffers, or leak, instead of running with them.
 
 mpv_audio_kit checks the typed effects before they reach mpv, but a
 RawAudioEffect, a live af-command or an `af` set by hand go straight to
@@ -25,10 +25,6 @@ the error the filter already gives for other bad input:
     their end. NaN, a negative delay or depth, or a speed with less than
     one sample per period moved the modulation index out of the delay
     line.
-  - af_aecho.c: the delay and decay range checks were false for NaN, and
-    a NaN delay became INT_MIN as an index.
-  - af_pan.c: an input channel named UNK, UNSD or AMBIn has an id from
-    0x200 up, and indexed 64 slot arrays on the stack.
   - af_mcompand.c: an empty attack or decay rate ran av_strtok out of
     items and handed NULL to sscanf; a NaN crossover frequency passed its
     range check.
@@ -41,6 +37,11 @@ the error the filter already gives for other bad input:
   - af_dynaudnorm.c, af_adrc.c: every command reparsed the curve or the
     transfer expression over the old one without freeing it. The new
     expression replaces the old one only when it parses.
+
+Two fixes of earlier versions of this patch are upstream from FFmpeg 8.1.3
+and are no longer here: the range checks of af_aecho.c are written so that
+NaN fails them, and af_pan.c refuses an input channel id from MAX_CHANNELS
+up (UNK, UNSD and AMBIn, from 0x200) before it indexes its arrays.
 
 Every hunk carries MARKER, a file that already has it is left alone, and
 the files are written only once every anchor has matched exactly once, so
@@ -151,27 +152,6 @@ EDITS = {
         '    }\n'
         '\n'
         '    for (n = 0; n < s->num_chorus; n++) {\n',
-    )],
-    'libavfilter/af_aecho.c': [(
-        '        if (s->delay[i] <= 0 || s->delay[i] > 90000) {\n',
-        '        /* ' + MARKER + ': written so that NaN fails it. */\n'
-        '        if (!(s->delay[i] > 0 && s->delay[i] <= 90000)) {\n',
-    ), (
-        '        if (s->decay[i] <= 0 || s->decay[i] > 1) {\n',
-        '        if (!(s->decay[i] > 0 && s->decay[i] <= 1)) {\n',
-    )],
-    'libavfilter/af_pan.c': [(
-        '            nb_in_channels[named]++;\n',
-        '            /* ' + MARKER + ': UNK, UNSD and AMBIn have ids from\n'
-        '             * 0x200 up, past the arrays this id indexes. */\n'
-        '            if (in_ch_id >= MAX_CHANNELS) {\n'
-        '                av_log(ctx, AV_LOG_ERROR,\n'
-        '                       "Can not use in channel %d, the limit is %d\\n",\n'
-        '                       in_ch_id, MAX_CHANNELS);\n'
-        '                ret = AVERROR(EINVAL);\n'
-        '                goto fail;\n'
-        '            }\n'
-        '            nb_in_channels[named]++;\n',
     )],
     'libavfilter/af_mcompand.c': [(
         '            p3 = NULL;\n'

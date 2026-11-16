@@ -6,23 +6,51 @@
 // nobody wants it any more (F70, F72). b.flac (3.75 MB) comes from
 // slow_http.py at 600000 bytes a second (run.sh), about 6 s for the file.
 //   stop       waveform and loudness on, cache=no (the re-open, one worker
-//              downloading the file again). 1.5 s after the load, stop:
-//              within 1 s no connection to the server is left, both
-//              results are failed, and 7 s later they still are (r17 keeps
-//              downloading and turns ready on a stopped player).
+//              downloading the file again). Once the pass has published
+//              some bins, stop: within 1 s no connection to the server is
+//              left, both results are failed, and 7 s later they still are
+//              (r17 keeps downloading and turns ready on a stopped player).
 //   feedstop   the same with the cache on (the cache feed): failed as well,
 //              as already on r17.
 //   readystop  a local file: once both are ready, stop leaves them ready.
-//   loudoff    loudness alone, cache=no. 1.5 s after the load the loudness
-//              is turned off (F72): within 1 s no analysis connection is
-//              left, only the player's (r17 keeps downloading for a result
-//              nobody reads).
+//   loudoff    loudness alone, cache=no. Once the scan has progress, the
+//              loudness is turned off (F72): within 1 s no analysis
+//              connection is left, only the player's (r17 keeps downloading
+//              for a result nobody reads).
 //   loudkeep   waveform and loudness on, cache=no: turning the loudness off
 //              leaves the waveform's pass running to ready.
-//   probe      waveform on, cache=no (F71): 1.5 s into the re-open the
-//              player and the worker hold a connection each, the
-//              coordinator's probe none (r17 keeps the probe open: 3).
+//   probe      waveform on, cache=no (F71): once the re-open has published
+//              some bins, which the coordinator does after it closed its
+//              probe, the player and the worker hold a connection each, the
+//              probe none (r17 keeps the probe open: 3).
+// The 1 s of the stop modes is a ceiling (mpv_test.h, rule 1): the wait
+// ends once the connections are gone and the results final.
 #include "analysis_test.h"
+
+// The pass is under way: it published some bins of the waveform (wave) or
+// some progress of the loudness.
+static int under_way(mpv_handle *h, int wave)
+{
+    struct an_wave w;
+    struct an_loud l;
+    an_wave_read(h, &w);
+    an_loud_read(h, &l);
+    int on = wave ? w.coverage > 0 : l.progress > 0;
+    an_wave_free(&w);
+    return on;
+}
+
+// Both results final, as after a stop.
+static int both_final(mpv_handle *h)
+{
+    struct an_wave w;
+    struct an_loud l;
+    an_wave_read(h, &w);
+    an_loud_read(h, &l);
+    int fin = an_final_wave(w.state) && an_final_loud(l.state);
+    an_wave_free(&w);
+    return fin;
+}
 
 int main(int argc, char **argv)
 {
@@ -56,7 +84,8 @@ int main(int argc, char **argv)
         an_wait_final(h, 1, 1, 30, &w, &lo);
         an_wave_free(&w);
     } else {
-        an_pump(h, 1.5, MPV_EVENT_NONE);
+        // The file takes about 6 s to download: this is well before its end.
+        mt_wait_until(5, under_way(h, !loudoff), mpv_wait_event(h, 0.02));
         an_wave_read(h, &w);
         an_loud_read(h, &lo);
         printf("     before: waveform %s, loudness %s, %d connections\n",
@@ -77,18 +106,25 @@ int main(int argc, char **argv)
         an_flag(h, "loudness-scan-enabled", 0);
     else
         mt_cmd(h, "stop", NULL, NULL, NULL);
-    int left = -1;
-    double gone = -1;
-    while (mt_now() - t0 < 1.0) {
+    // readystop and loudkeep: a window in which the ready results and the
+    // waveform's connection stay. The others: a wait until the connections
+    // are gone and the results final.
+    int left = -1, window = local || loudkeep;
+    double gone = -1, max = window ? 1.0 : mt_ceil(1.0);
+    while (mt_now() - t0 < max) {
         mpv_wait_event(h, 0.02);
         left = an_tcp_conns(port);
         if (gone < 0 && left <= (loudoff ? 1 : 0))
             gone = mt_now() - t0;
+        if (!window && gone >= 0 && (loudoff || both_final(h)))
+            break;
     }
     if (!local) {
-        printf("     connections 1 s after: %d (analysis gone after %.3f s)\n", left, gone);
+        printf("     connections %.2f s after: %d (analysis gone after %.3f s)\n",
+               mt_now() - t0, left, gone);
         if (!loudkeep)
-            mt_check(left <= (loudoff ? 1 : 0), "no analysis connection left 1 s after (%d)", left);
+            mt_check(left <= (loudoff ? 1 : 0), "no analysis connection left "
+                     "within %.0f s (%d)", max, left);
     }
     if (loudkeep) {
         mt_check(left >= 2, "the waveform's pass keeps its connection (%d)", left);

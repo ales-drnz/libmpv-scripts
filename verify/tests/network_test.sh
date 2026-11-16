@@ -11,8 +11,8 @@
 # http and libsmb2 protocols, the wav, hls, mpegts, dash (libxml2) and mov
 # demuxers and the aac decoder, with patch_ffmpeg_libsmb2.py,
 # patch_ffmpeg_embed_cacert.py, patch_ffmpeg_advanced_editlist.py,
-# patch_ffmpeg_http_read_errors.py and patch_ffmpeg_segment_skips.py
-# applied.
+# patch_ffmpeg_http_read_errors.py, patch_ffmpeg_segment_skips.py and
+# patch_ffmpeg_hls_keepalive.py applied.
 # Then it runs, each mode in its own process:
 #   - smb_url_test: the URL handling of libsmb2.c, password and percent
 #     decoding (F85, F86);
@@ -26,6 +26,12 @@
 #     last chunk (with Accept-Ranges too, its resume refused), and the HLS
 #     and DASH demuxers count the segments they lose, against
 #     native/slow_http.py (one per mode);
+#   - hls_keepalive_test: an HLS playlist read through an AVIOContext of
+#     the caller, as mpv reads it, gets its segments on one connection with
+#     the default io_open (two when the next one is fetched ahead), and on
+#     one connection each, without an abort,
+#     with an io_open whose AVIOContexts have no URLContext; the
+#     connections are counted in the log of keepalive_http.py;
 #   - editlist_test: the AAC priming of a fragmented MP4 is skipped once in
 #     a file, and the DASH demuxer, which opens the mov demuxer again at
 #     every segment, cuts nothing at the boundaries.
@@ -50,7 +56,8 @@
 # (default gcc and gcc-asan, or clang and clang-asan), and
 # DISABLED_PATCHES=read_error leaves out patch_ffmpeg_http_read_errors.py and
 # patch_ffmpeg_segment_skips.py, to see read_errors_test fail without them
-# (advanced_editlist the same for editlist_test dash).
+# (advanced_editlist the same for editlist_test dash, hls_keepalive for
+# hls_keepalive_test custom-pb).
 # About two minutes at JOBS=4, half of it building.
 #
 # Usage: bash verify/tests/network_test.sh [--reuse] <work dir> [test[:mode,...] ...]
@@ -86,6 +93,7 @@ CASES=(
   "tls_roots_test verify"
   "smb_client_test open dir sum slow-open read-stop read-stop@60 kill-read@60 open-stop open-stop@60 stress open-hang pause-read close-hang"
   "editlist_test fmp4 dash"
+  "hls_keepalive_test custom-pb custom-pb-multiple custom-io"
   "read_errors_test http-refused http-resume http-nolength http-nolength-norange chunked-ok chunked-between chunked-mid ranged-between ranged-mid ranged-resume ranged-ok ranged-seek hls-ok hls-404 hls-cut dash-ok dash-404 dash-cut"
 )
 # The modes that mostly wait, started first and in the background.
@@ -170,6 +178,9 @@ fi
   if patch_on read_error; then
     python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_http_read_errors.py" "$SRC" &&
       python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_segment_skips.py" "$SRC"
+  fi &&
+  if patch_on hls_keepalive; then
+    python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_hls_keepalive.py" "$SRC"
   fi
 } > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "the FFmpeg patches failed"; }
 [[ -n "$DISABLED_PATCHES" ]] && echo "disabled patches: $DISABLED_PATCHES"
@@ -254,8 +265,12 @@ run_tls() {
   local t="$RUNS/tls" port srv r
   compile tls_roots_test -Wl,--wrap=PEM_read_bio_X509 -Wl,--wrap=SSL_CTX_set_default_verify_paths || return
   mkdir -p "$t"
+  # The test connects to 127.0.0.1: from FFmpeg 8.1.3 tls_openssl.c checks a
+  # numeric host against the iPAddress names of the certificate (before, it
+  # checked no name for it), so the certificate carries that address.
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
-    -subj /CN=network-test -keyout "$t/key.pem" -out "$t/cert.pem" > "$t/req.log" 2>&1 || {
+    -subj /CN=network-test -addext subjectAltName=IP:127.0.0.1 \
+    -keyout "$t/key.pem" -out "$t/cert.pem" > "$t/req.log" 2>&1 || {
     echo "FAIL tls_roots_test: no test certificate"; FAILED+=("tls_roots_test"); return; }
   port="$(free_port)"
   openssl s_server -accept "127.0.0.1:$port" -cert "$t/cert.pem" -key "$t/key.pem" -quiet \
@@ -402,6 +417,46 @@ run_editlist() {
   done
 }
 
+# hls_keepalive_mode <mode>: one mode against its own keepalive_http.py; the
+# segments must come on one connection (custom-pb), on two with the next
+# fetched ahead (custom-pb-multiple), or on one each (custom-io).
+hls_keepalive_mode() {
+  local m="$1" log="$RUNS/hls_keepalive_test-$1.log" port srv r n conns
+  port="$(free_port)"
+  python3 -I "$HERE/keepalive_http.py" "$WORK/keepalive" "$port" 2> "$log.http" &
+  srv=$!; echo "$srv" >> "$PIDS"
+  wait_port "$port" || echo "keepalive_http.py did not start on port $port" >> "$log.http"
+  timeout 120 "$BIN/hls_keepalive_test" "$m" "$port" > "$log" 2>&1; r=$?
+  kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null
+  n="$(grep -c '^GET /seg[0-9]*\.ts ' "$log.http")"
+  conns="$(grep '^GET /seg[0-9]*\.ts ' "$log.http" | sed 's/.*conn=//' | sort -u | wc -l)"
+  echo "$n segment requests on $conns connection(s)" >> "$log"
+  if (( n < 4 )); then
+    echo "FAIL every segment is requested ($n)" >> "$log"; r=1
+  elif [[ "$m" == custom-pb ]] && (( conns != 1 )); then
+    echo "FAIL the segments come on one connection ($conns for $n)" >> "$log"; r=1
+  elif [[ "$m" == custom-pb-multiple ]] && (( conns != 2 )); then
+    echo "FAIL the segments come on two connections ($conns for $n)" >> "$log"; r=1
+  elif [[ "$m" == custom-io ]] && (( conns != n )); then
+    echo "FAIL each segment comes on a new connection ($conns for $n)" >> "$log"; r=1
+  fi
+  report "hls_keepalive_test $m" "$r" "$log"
+}
+
+run_hls_keepalive() {
+  local d="$WORK/keepalive" m
+  compile hls_keepalive_test || return
+  if [[ ! -f "$d/hls.m3u8" ]]; then
+    rm -rf "$d"; mkdir -p "$d"
+    ffmpeg -nostdin -loglevel error -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=4" \
+      -ac 2 -c:a aac -b:a 128k -f hls -hls_time 1 -hls_playlist_type vod \
+      -hls_segment_filename "$d/seg%d.ts" "$d/hls.m3u8" > "$WORK/logs/keepalive_fixtures.log" 2>&1 || {
+      tail -5 "$WORK/logs/keepalive_fixtures.log"; echo "FAIL hls_keepalive_test: no fixtures"
+      FAILED+=("hls_keepalive_test (fixtures)"); return; }
+  fi
+  for m in "$@"; do hls_keepalive_mode "$m"; done
+}
+
 smb_report() {
   local m="$1" label="smb_client_test ${1%@*}" log="$RUNS/smb_client_test-$1.log"
   [[ "$m" == *@* ]] && label+=" (timeout ${m#*@} s)"
@@ -420,6 +475,7 @@ for c in "${CASES[@]}"; do
     smb_client_test) run_smb "${modes[@]}" ;;
     read_errors_test) run_read_errors "${modes[@]}" ;;
     editlist_test) run_editlist "${modes[@]}" ;;
+    hls_keepalive_test) run_hls_keepalive "${modes[@]}" ;;
   esac
 done
 

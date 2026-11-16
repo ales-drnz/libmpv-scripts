@@ -7,7 +7,7 @@
 # mak_protocol_seek in stream/stream_lavf.c (F5-18): that function sets
 # fields of AVIOContext the way aviobuf.c of the FFmpeg it was read against
 # uses them, and no anchor watches FFmpeg from mpv. The guard taken from the
-# patched file must stop the preprocessor on a libavformat outside 60 to 62
+# patched file must stop the preprocessor on a libavformat outside 60 to 63
 # and pass inside, and with MAK_PROTOCOL_SEEK_UNCHECKED defined.
 #
 # Usage: bash verify/tests/patches/read_error_guard_test.sh <patched mpv source dir> <work dir>
@@ -32,9 +32,9 @@ pp() {
   { echo "#define LIBAVFORMAT_VERSION_MAJOR $v"; cat "$T/guard.h"; } |
     "$CC" -E "$@" -x c - > /dev/null 2> "$T/pp-$v.log"
 }
-for v in 60 61 62; do pp "$v"; check $? "libavformat $v passes"; done
-for v in 59 63; do ! pp "$v"; check $? "libavformat $v stops the build"; done
-pp 63 -DMAK_PROTOCOL_SEEK_UNCHECKED; check $? "libavformat 63 passes with MAK_PROTOCOL_SEEK_UNCHECKED"
+for v in 60 61 62 63; do pp "$v"; check $? "libavformat $v passes"; done
+for v in 59 64; do ! pp "$v"; check $? "libavformat $v stops the build"; done
+pp 64 -DMAK_PROTOCOL_SEEK_UNCHECKED; check $? "libavformat 64 passes with MAK_PROTOCOL_SEEK_UNCHECKED"
 
 echo "read_error_guard_test: $fails failure(s)"
 (( fails == 0 ))

@@ -24,9 +24,13 @@
 #
 # Needs gcc, meson, ninja, pkg-config, python3, curl, the ffmpeg command
 # with the libopus, libmp3lame and libvorbis encoders, and the FFmpeg
-# development files (mpv 0.41 wants libavcodec 60.31.102 or later),
-# libplacebo's (mpv includes its headers even with libplacebo optional), and
-# SDL2's for ao=sdl, the pull output of gapless_tail_test (its dummy driver).
+# development files (mpv 0.42 wants libavcodec 60.31.102 or later), git, a
+# C++ compiler, and SDL2's for ao=sdl, the pull output of gapless_tail_test
+# (its dummy driver). mpv includes the libplacebo headers even with
+# libplacebo optional and wants 7.387.0 or later, newer than any distribution
+# ships with that FFmpeg: run.sh clones the tag, checks its commit against
+# _sources.sha256 and builds it static, with the options of the release
+# builds, into the work dir, and libmpv and the tests use that one.
 # audiotrack_test needs jni.h from the NDK in ANDROID_NDK_HOME.
 #
 # The work dir is wiped first; --reuse keeps its downloads, build and
@@ -83,6 +87,8 @@ if [[ "$MEMCHECK" == 1 ]]; then
   [[ "${UBSAN:-0}" == 1 ]] && { echo "MEMCHECK=1 and UBSAN=1 do not go together" >&2; exit 1; }
   command -v valgrind > /dev/null || { echo "MEMCHECK=1 needs valgrind" >&2; exit 1; }
   ASAN=() BSAN=none TIME="${MEMCHECK_TIMEOUT:-1200}"
+  # The ceilings of the waits grow with it (the time rule of mpv_test.h).
+  export MAK_TIME_SCALE=10
   SAN_TAG="memcheck"
   # No leak check: LeakSanitizer does that in the default run. The origins
   # name the allocation or the stack frame the unwritten bytes come from.
@@ -138,7 +144,7 @@ CASES=(
   "lib analysis_start_test analysis 2000000 http"
   "lib analysis_tail_test analysis 2000000 over"
   "lib analysis_tail_test analysis 2000000:400000 overcut"
-  "lib analysis_feed_test analysis 600000 grow"
+  "lib analysis_feed_test analysis 600000 grow ahead hyst"
   "lib analysis_hint_test analysis 60000::chunked exact short long none full nocache forced forcednone huge"
   "lib analysis_hint_test analysis 60000:165000:chunked cut"
   "lib analysis_hint_test analysis 600000 range"
@@ -149,9 +155,10 @@ CASES=(
   "unit webio_log_test - - run"
   "unit wave_fold_test - - tail far roll"
   "unit wave_roll_test - - evict lead cap stale"
+  "unit feed_queue_test - - cutlate cutstop stop eof"
   "lib ao_close_test prefetch - play pause eof direct silence stop nogapless"
   "audiotrack audiotrack_test - - underrun silence dead pause seek ac3 eac3"
-  "tizen ao_tizen_test - - play pause seek underrun delay race seekrace refuse fast slow dead noresume short busy clock format"
+  "tizen ao_tizen_test - - play pause seek underrun delay race seekrace seeklag refuse fast slow dead noresume short busy clock format"
   "lib pcm_tap_test playback - ch up rate idle"
   "lib gapless_tail_test playback - park gyes last idle nogapless realtime pull"
   "lib keep_open_park_test playback - pause park nopause stop unload afterend seekend"
@@ -185,10 +192,8 @@ OPEN_DEFECTS=()
 # time against playback or a download, and valgrind runs them too slowly:
 # each fails there with no report of memcheck and passes without valgrind.
 MEMCHECK_SLOW=(
-  "pcm_tap_test idle the output underruns under valgrind and the tap has no window to read"
-  "analysis_tail_test overcut the scan is slower than the download it is timed against"
+  "analysis_tail_test overcut the open of the player is cut at 400000 bytes before the pass reads, so there is no re-open"
   "analysis_hint_test short the scan ends after the stream is cached, the test wants it before"
-  "af_command_args_test labels the command lands before the seek rebuilt the filter and is refused"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.
@@ -205,6 +210,7 @@ PATCH_TESTS=(
   "embed_cacert_patch_test {ffmpeg}"
   "filter_bounds_anchor_test {ffmpeg}"
   "winsock_poll_patch_test {ffmpeg}"
+  "hls_keepalive_patch_test {ffmpeg}"
   "advanced_editlist_patch_test {ffmpeg}"
   "dash_keepalive_patch_test {ffmpeg}"
   "webio_patch_test {ffmpeg}"
@@ -301,6 +307,34 @@ echo "mpv $MPV_VERSION, libavcodec $(pkg-config --modversion libavcodec 2>/dev/n
   "$("$CC" --version | head -1), meson $(meson --version 2>/dev/null || echo '?')"
 [[ -n "$DISABLED_PATCHES" ]] && echo "disabled patches: $DISABLED_PATCHES"
 
+# libplacebo, static, with the options of cross_build_libplacebo and its
+# automatic dependencies off, so that what the host has installed does not
+# change it. Kept by --reuse. A system libplacebo stays out: its pkg-config
+# file comes after this one, and the tests take its headers from here.
+LP_VERSION="${LIBPLACEBO_VERSION:-7.387.0}"
+LP_SRC="$WORK/libplacebo" LP_PREFIX="$WORK/libplacebo-prefix"
+build_libplacebo() {
+  [[ "$(cat "$LP_PREFIX/version" 2> /dev/null)" == "$LP_VERSION" ]] && return 0
+  log "Building libplacebo $LP_VERSION"
+  rm -rf "$LP_PREFIX" "$WORK/libplacebo-build"
+  ( set -e
+    download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_SRC" "v$LP_VERSION"
+    git -C "$LP_SRC" submodule update --init --recursive
+    meson setup "$WORK/libplacebo-build" "$LP_SRC" --prefix="$LP_PREFIX" --libdir=lib \
+      --buildtype=release --default-library=static -Dvulkan=disabled -Dshaderc=disabled \
+      -Dglslang=disabled -Dopengl=disabled -Dd3d11=disabled -Ddemos=false -Dtests=false \
+      -Dlcms=disabled -Dlibdovi=disabled -Dunwind=disabled -Dxxhash=disabled
+    ninja -C "$WORK/libplacebo-build" -j"$JOBS" install
+  ) > "$WORK/logs/libplacebo.log" 2>&1
+  (( $? == 0 )) || { tail -30 "$WORK/logs/libplacebo.log"; die "the libplacebo build failed"; }
+  echo "$LP_VERSION" > "$LP_PREFIX/version"
+}
+if (( NEED_BUILD )); then
+  build_libplacebo
+  export PKG_CONFIG_PATH="$LP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+  echo "libplacebo $(pkg-config --modversion libplacebo)"
+fi
+
 if (( NEED_BUILD )) && [[ ! -f "$BLD/libmpv.so" || $REUSE == 0 ]]; then
   log "Patching and building mpv $MPV_VERSION with ${ASAN[0]:+AddressSanitizer}${VG[0]:+no sanitizer, for valgrind}"
   rm -rf "$SRC" "$BLD"
@@ -368,7 +402,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
     unit)
       # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
-        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
+        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil libplacebo) \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" \
         $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
     tsan)
@@ -376,7 +410,7 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # AddressSanitizer, which does not link with ThreadSanitizer.
       # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -fsanitize=thread \
-        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil) \
+        -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libavcodec libswresample libavutil libplacebo) \
         "$HERE/$t.c" "$SRC"/ta/ta.c "$SRC"/ta/ta_talloc.c "$SRC"/ta/ta_utils.c -o "$BIN/$t" \
         $(pkg-config --libs libavcodec libswresample libavutil) -lpthread -lm > "$log" 2>&1 ;;
     audiotrack)
@@ -390,8 +424,9 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       # driver only, but the patch wants both files to apply.
       cp "$WORK/mpv/audio/out/ao_audiotrack.c" "$WORK/mpv/audio/out/buffer.c" "$o/audio/out/"
       python3 -B "$AUDIOTRACK_PATCH" "$o" > "$log" 2>&1 || return 1
+      # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
-        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -idirafter "$o/jni" \
+        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libplacebo) -idirafter "$o/jni" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
     tizen)
       # The patch adds ao_tizen.c and edits ao.c and the meson files, so it
@@ -402,8 +437,9 @@ compile() { # compile <kind> <test>: builds $BIN/<test>, 0 on success
       cp "$WORK/mpv/audio/out/ao.c" "$o/audio/out/"
       cp "$WORK/mpv/meson.build" "$WORK/mpv/meson.options" "$o/"
       python3 -B "$TIZEN_PATCH" "$o" > "$log" 2>&1 || return 1
+      # shellcheck disable=SC2046
       "$CC" -g -O1 -std=gnu11 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 "${ASAN[@]}" "${SAN[@]}" \
-        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" -I"$HERE/tizen_sim" \
+        -Wall -Wno-unused-function -I"$o" -I"$SRC" -I"$SRC/include" -I"$BLD" $(pkg-config --cflags libplacebo) -I"$HERE/tizen_sim" \
         "$HERE/$t.c" "${TA[@]}" -o "$BIN/$t" -lpthread -lm >> "$log" 2>&1 ;;
   esac
 }

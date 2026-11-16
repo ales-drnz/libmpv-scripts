@@ -94,4 +94,4 @@ static int mp_property_loudness_scan_enabled(void *ctx,
     return M_PROPERTY_NOT_IMPLEMENTED;
 }
 
-/* MAK_WAVEFORM_PATCH_V2 ─── read-only property: bulk waveform analyser
+/* MAK_WAVEFORM_PATCH_V3 ─── read-only property: bulk waveform analyser

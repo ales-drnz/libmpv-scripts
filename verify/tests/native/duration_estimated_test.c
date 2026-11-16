@@ -72,9 +72,11 @@ int main(int argc, char **argv)
         for (int k = 0; k < 2; k++) {
             snprintf(file, sizeof file, "%s/%s", dir, names[k]);
             mt_cmd(h, "loadfile", file, NULL, NULL);
-            double t0 = mt_now();
+            // A wait for the load and a value, up to mt_ceil(5), then a
+            // window of 1 s in which a later change would show.
+            double t0 = mt_now(), max = mt_ceil(5), t_both = 0;
             int last = -1, loaded = 0;
-            while (mt_now() - t0 < 5) {
+            while (mt_now() - t0 < max) {
                 mpv_event *e = mpv_wait_event(h, 0.05);
                 if (e->event_id == MPV_EVENT_FILE_LOADED)
                     loaded = 1;
@@ -83,7 +85,9 @@ int main(int argc, char **argv)
                     if (p->format == MPV_FORMAT_FLAG)
                         last = *(int *)p->data;
                 }
-                if (loaded && last >= 0 && mt_now() - t0 > 1)
+                if (loaded && last >= 0 && !t_both)
+                    t_both = mt_now();
+                if (t_both && mt_now() - t_both > 1)
                     break;
             }
             seen[n++] = last;

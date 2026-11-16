@@ -5,11 +5,14 @@
 // pcm_loop_test <mode> <fixtures> <tmpdir>: a looped live PCM entry
 // (mak-pcm://) at its end (F225).
 //   file  loop-file=inf before the entry; keep-open parks at the end
-//   late  loop-file=inf set while the entry plays
+//   late  loop-file=inf set after the entry loaded and its source drained:
+//         the entry starts paused and plays on once the loop is set, so a
+//         slow test thread cannot reach the end first
 //   ab    ab-loop-a=0.2 ab-loop-b=0.6 (ab-loop-count inf), loop-file=no:
 //         the entry plays on past B to its real end (1 s)
 //   next  loop-file=inf and a second entry (p_st48.flac) after the PCM one
-//   abnext the A-B loop and the second entry
+//   abnext the A-B loop and the second entry: the PCM entry still ends at
+//         its real end, past B
 //   off   no loop (control: parks at the end, no warning)
 //   afdrop no loop, 3 s of PCM, af=dynaudnorm, then af="" 0.5 s after
 //         the source drained, while dynaudnorm holds the EOF (F61): the
@@ -34,6 +37,29 @@ static int flag(mpv_handle *h, const char *name)
     if (mpv_get_property(h, name, MPV_FORMAT_FLAG, &v) < 0)
         return -1;
     return v;
+}
+
+// late: once the entry loaded, loop-file=inf, and where the entry was then.
+static int late_set, late_eof = -1;
+static double late_pos = -1;
+
+static void pump_late(mpv_handle *h, struct pb_ev *ev, int late)
+{
+    pb_pump(h, 20, ev);
+    if (late && !late_set && ev->loaded) {
+        mt_double(h, "time-pos", &late_pos);
+        late_eof = flag(h, "eof-reached");
+        mpv_set_property_string(h, "loop-file", "inf");
+        late_set = 1;
+    }
+}
+
+// The entry ended: parked at its end (pause yes), or the next entry loaded.
+static int ended(mpv_handle *h, struct pb_ev *ev, int next)
+{
+    if (next)
+        return ev->end_files >= 1 && ev->loaded >= 2;
+    return flag(h, "pause") == 1 && flag(h, "eof-reached") == 1;
 }
 
 int main(int argc, char **argv)
@@ -62,6 +88,8 @@ int main(int argc, char **argv)
     }
     if (m_drop)
         mpv_set_option_string(h, "af", "dynaudnorm");
+    if (m_late)
+        mpv_set_option_string(h, "pause", "yes");
     if (mpv_initialize(h) < 0)
         return 2;
     mpv_request_log_messages(h, "warn");
@@ -92,17 +120,18 @@ int main(int argc, char **argv)
 
     struct pb_ev ev = {.needle = {"Cannot seek", "cannot loop", NULL},
                        .end_reason = -1};
-    double t0 = mt_now();
-    int late_set = 0;
-    while (mt_now() - t0 < 10 && mak_pcm_state(id) != 3) {
-        pb_pump(h, 20, &ev);
-        if (m_late && !late_set && ev.loaded) {
-            mpv_set_property_string(h, "loop-file", "inf");
-            late_set = 1;
-        }
-    }
+    // The source drains as fast as the demuxer reads it, which can be before
+    // the event of the load is read here: late waits for both.
+    mt_wait_until(10, mak_pcm_state(id) == 3 && (!m_late || late_set),
+                  pump_late(h, &ev, m_late));
     mt_check(mak_pcm_state(id) == 3, "the source drained (state %d)",
              mak_pcm_state(id));
+    if (m_late) {
+        mt_check(late_set && late_eof == 0, "loop-file=inf set before the end "
+                 "(set %d, at %.3f s, eof-reached %d)", late_set, late_pos,
+                 late_eof);
+        mpv_set_property_string(h, "pause", "no");
+    }
     if (m_drop) {
         pb_pump(h, 500, &ev);
         double at = -1;
@@ -110,28 +139,24 @@ int main(int argc, char **argv)
         mt_check(flag(h, "eof-reached") == 0, "still playing at %.3f s", at);
         mt_check(mpv_set_property_string(h, "af", "") >= 0, "af cleared");
         double d0 = mt_now(), took = -1;
-        while (mt_now() - d0 < 5.0) {
-            pb_pump(h, 50, &ev);
-            if (ev.end_files || (flag(h, "pause") == 1 &&
-                                 flag(h, "eof-reached") == 1)) {
-                took = mt_now() - d0;
-                break;
-            }
-        }
+        mt_wait_until(5, ev.end_files || ended(h, &ev, 0), pb_pump(h, 50, &ev));
+        if (ev.end_files || ended(h, &ev, 0))
+            took = mt_now() - d0;
         double pos = -1;
         mt_double(h, "time-pos", &pos);
         printf("     af cleared at %.3f s, end after %.2f s (time-pos %.3f, "
                "end-file %d), Cannot seek %d\n", at, took, pos, ev.end_files,
                ev.hits[0]);
-        mt_check(took >= 0, "the entry ended within 5 s of the change (%.2f s)",
-                 took);
+        mt_check(took >= 0, "the entry ended within %.0f s of the change (%.2f s)",
+                 mt_ceil(5), took);
         mt_check(ev.hits[0] == 0, "no failed refresh seek (%d)", ev.hits[0]);
         mak_pcm_release(id);
         mpv_terminate_destroy(h);
         return mt_result();
     }
-    // Settle, then measure two seconds.
-    pb_pump(h, 1000, &ev);
+    // Wait for the end, then measure two seconds.
+    mt_wait_until(10, ended(h, &ev, m_next), pb_pump(h, 20, &ev));
+    pb_pump(h, 0, &ev);
     int before = ev.hits[0];
     double c0 = pb_cpu(), w0 = mt_now();
     while (mt_now() - w0 < 2.0)
@@ -141,7 +166,14 @@ int main(int argc, char **argv)
            "end-file %d (reason %d), file-loaded %d\n", cpu, ev.hits[0],
            ev.hits[0] - before, ev.hits[1], ev.end_files, ev.end_reason, ev.loaded);
     mt_check(ev.hits[0] == 0, "no failed loop seek (%d)", ev.hits[0]);
-    mt_check(cpu < 0.5, "the core is idle (%.2f s of CPU in 2 s)", cpu);
+    // Natively every mode stays near 0.02 s. With a next entry the two
+    // seconds play that file, which under valgrind costs about 0.5 s
+    // (memcheck runs one thread at a time, so a core busy for nothing
+    // takes close to all 2 s): the bound there leaves room for the
+    // playback, not for a spin.
+    double idle = mt_bound(0.5, m_next ? 1.5 : 0.5);
+    mt_check(cpu < idle, "the core is idle (%.2f s of CPU in 2 s, under %.1f)", cpu,
+             idle);
     mt_check(ev.hits[1] == (m_off ? 0 : 1), "the cannot loop warning %s (%d)",
              m_off ? "is not there" : "comes once", ev.hits[1]);
     if (m_next) {
@@ -149,6 +181,9 @@ int main(int argc, char **argv)
                  "the PCM entry ended and the next one loaded "
                  "(end-file %d, reason %d, file-loaded %d)", ev.end_files,
                  ev.end_reason, ev.loaded);
+        if (m_ab)
+            mt_check(ev.first_end_pos > 0.95, "the PCM entry ended past B "
+                     "(position %.3f)", ev.first_end_pos);
     } else {
         int p = flag(h, "pause"), eof = flag(h, "eof-reached");
         double pos = -1;

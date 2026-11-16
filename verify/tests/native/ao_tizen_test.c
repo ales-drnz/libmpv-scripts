@@ -28,6 +28,8 @@
 //             driver's check and its write: nothing lost or repeated
 //   seekrace  30 seeks, some in the middle of a read: nothing from before
 //             a seek plays after it
+//   seeklag   the same, with each write held before it reaches the device,
+//             so a reset and its flush can come first: still nothing old
 //   refuse    the device refuses writes for 0.5 s: no spinning, nothing
 //             lost, no reload
 //   fast      the device's clock runs 2% fast: the delay stays right
@@ -49,6 +51,8 @@
 #include <unistd.h>
 
 #include "audio/out/ao_tizen.c"
+// mt_wait_until, the ceiling of the time rule.
+#include "mpv_test.h"
 
 #define RATE 48000
 #define CAP (RATE / 10)          // the stream holds 100 ms
@@ -415,6 +419,15 @@ static int played_count(void)
     return n;
 }
 
+// The source index of the last frame played, 0 for none.
+static int64_t last_played(void)
+{
+    pthread_mutex_lock(&sim_lock);
+    int64_t id = nplayed ? played[nplayed - 1] : 0;
+    pthread_mutex_unlock(&sim_lock);
+    return id;
+}
+
 // Source frames missing, and repeated, between consecutive frames played
 // from index from on.
 static void played_gaps(int from, int64_t *first, int64_t *lost, int64_t *repeated)
@@ -538,7 +551,7 @@ static int format_mode(void)
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|refuse|fast|slow|dead|noresume|short|busy|clock|format\n", argv[0]);
+        fprintf(stderr, "usage: %s play|pause|seek|underrun|delay|race|seekrace|seeklag|refuse|fast|slow|dead|noresume|short|busy|clock|format\n", argv[0]);
         return 2;
     }
     const char *mode = argv[1];
@@ -563,11 +576,11 @@ int main(int argc, char **argv)
     sleep_ms(200);
     check(played_count() == 0, "nothing plays before start (%d frames)", played_count());
     ao->driver->start(ao);
-    sleep_ms(500);
-    check(played_count() > RATE / 4, "the stream plays (%d frames in 0.5 s)", played_count());
+    mt_wait_until(1, played_count() > RATE / 4, sleep_ms(1));
+    check(played_count() > RATE / 4, "the stream plays (%d frames)", played_count());
 
     if (!strcmp(mode, "play")) {
-        sleep_ms(500);
+        mt_wait_until(1, played_count() > RATE * 8 / 10, sleep_ms(1));
         check(played_count() > RATE * 8 / 10, "a second of audio (%d frames)", played_count());
         check_whole(0, "play");
     } else if (!strcmp(mode, "pause")) {
@@ -576,7 +589,7 @@ int main(int argc, char **argv)
         sleep_ms(500);
         check(played_count() == p0, "nothing plays while paused (%d frames)", played_count() - p0);
         player_pause(ao, false);
-        sleep_ms(500);
+        mt_wait_until(1, played_count() > p0 + RATE / 4, sleep_ms(1));
         check(played_count() > p0 + RATE / 4, "the resume plays (%d frames)", played_count() - p0);
         check_whole(0, "across the pause");
     } else if (!strcmp(mode, "seek")) {
@@ -586,7 +599,7 @@ int main(int argc, char **argv)
         atomic_store(&src_next, 5000000);
         int at = played_count();
         ao->driver->start(ao);
-        sleep_ms(500);
+        mt_wait_until(1, played_count() > at + RATE / 4, sleep_ms(1));
         int old_after = 0;
         pthread_mutex_lock(&sim_lock);
         for (int i = at; i < nplayed; i++)
@@ -648,22 +661,28 @@ int main(int argc, char **argv)
             atomic_store(&resume_fails, true);
             player_pause(ao, false);
         }
-        sleep_ms(2500);
+        // The driver asks after 1 s of failed writes, then not again.
+        mt_wait_until(2.5, atomic_load(&reloads) >= 1, sleep_ms(1));
+        sleep_ms(1000);
         check(atomic_load(&reloads) == 1, "one reload is asked (%d)",
               atomic_load(&reloads));
         atomic_store(&device_refuses, false);
     } else if (!strcmp(mode, "short")) {
-        sleep_ms(1000);
+        mt_wait_until(1.5, played_count() > RATE, sleep_ms(1));
         check(played_count() > RATE, "the stream plays (%d frames)", played_count());
         check_whole(0, "short writes");
     } else if (!strcmp(mode, "busy")) {
         int r0 = atomic_load(&reads);
         atomic_store(&read_busy_every, 7);
-        sleep_ms(1000);
+        mt_wait_until(1.5, atomic_load(&reads) - r0 > 35, sleep_ms(1));
         atomic_store(&read_busy_every, 0);
-        check(atomic_load(&reads) - r0 > 21, "reads while the lock is held now and then (%d)",
+        check(atomic_load(&reads) - r0 > 35, "reads while the lock is held now and then (%d)",
               atomic_load(&reads) - r0);
-        sleep_ms(200);
+        // Every frame read so far plays: a chunk written twice is heard.
+        int64_t read_to = atomic_load(&src_next) - 1;
+        mt_wait_until(1, last_played() >= read_to, sleep_ms(1));
+        check(last_played() >= read_to, "the frames read played (%lld of %lld)",
+              (long long)last_played(), (long long)read_to);
         check_whole(0, "a busy lock");
     } else if (!strcmp(mode, "race")) {
         atomic_store(&write_lag_ms, 5);
@@ -674,17 +693,22 @@ int main(int argc, char **argv)
             player_pause(ao, false);
             sleep_ms(3 + rand_r(&seed) % 12);
         }
-        sleep_ms(300);
+        // Audio after the last resume, so a loss there shows as a gap.
+        int p0 = played_count();
+        mt_wait_until(1, played_count() > p0 + RATE / 10, sleep_ms(1));
         printf("race: %d writes, %d refused\n", atomic_load(&writes), atomic_load(&refused_writes));
         check(atomic_load(&refused_writes) > 0,
               "pauses came between a check and its write (%d refused)",
               atomic_load(&refused_writes));
         check_whole(0, "100 pauses");
-    } else if (!strcmp(mode, "seekrace")) {
+    } else if (!strcmp(mode, "seekrace") || !strcmp(mode, "seeklag")) {
         // Each seek k plays a source of its own, from k * 10^7 on.
         enum { SEEKS = 30, SPAN = 10000000 };
         int at[SEEKS + 1];
-        atomic_store(&read_lag_ms, 10);
+        if (!strcmp(mode, "seekrace"))
+            atomic_store(&read_lag_ms, 10);
+        else
+            atomic_store(&write_lag_ms, 10);
         unsigned seed = 2;
         for (int k = 1; k <= SEEKS; k++) {
             ao->driver->reset(ao);
@@ -693,7 +717,9 @@ int main(int argc, char **argv)
             ao->driver->start(ao);
             sleep_ms(15 + rand_r(&seed) % 30);
         }
-        sleep_ms(200);
+        // The last source plays past the stream's 100 ms: a write held
+        // across its reset would be heard by then.
+        mt_wait_until(1, played_count() > at[SEEKS - 1] + RATE / 10, sleep_ms(1));
         at[SEEKS] = played_count();
         int stale = 0;
         pthread_mutex_lock(&sim_lock);
@@ -715,7 +741,7 @@ int main(int argc, char **argv)
         check(w <= 10, "a refusing device is not spun on (%d writes in 0.5 s)", w);
         atomic_store(&device_refuses, false);
         int p0 = played_count();
-        sleep_ms(500);
+        mt_wait_until(1, played_count() > p0 + RATE / 4, sleep_ms(1));
         check(played_count() > p0 + RATE / 4, "the stream plays again (%d frames)",
               played_count() - p0);
         check_whole(0, "across the refusal");

@@ -133,7 +133,9 @@ static int an_final_loud(const char *s)
            !strcmp(s, "unavailable");
 }
 
-// Drains events for [secs] seconds; returns the number of [id] seen.
+// Drains events for [secs] seconds; returns the number of [id] seen. A
+// fixed window (rule 2 of mpv_test.h): for a check that something does not
+// happen, once what it follows was waited on. Not scaled.
 static int an_pump(mpv_handle *h, double secs, mpv_event_id id)
 {
     int seen = 0;
@@ -146,11 +148,11 @@ static int an_pump(mpv_handle *h, double secs, mpv_event_id id)
     return seen;
 }
 
-// Waits up to [secs] for an event [id]; returns 1 if it came.
+// Waits up to mt_ceil([secs]) for an event [id]; returns 1 if it came.
 static int an_wait_event(mpv_handle *h, mpv_event_id id, double secs)
 {
-    double t0 = mt_now();
-    while (mt_now() - t0 < secs) {
+    double t0 = mt_now(), max = mt_ceil(secs);
+    while (mt_now() - t0 < max) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == id)
             return 1;
@@ -159,11 +161,12 @@ static int an_wait_event(mpv_handle *h, mpv_event_id id, double secs)
 }
 
 // Polls the waveform (want_wave) and the loudness (want_loud) every 20 ms
-// until both are final or [secs] pass. Leaves the last snapshots in w and l.
+// until both are final or mt_ceil([secs]) pass. Leaves the last snapshots
+// in w and l.
 static void an_wait_final(mpv_handle *h, int want_wave, int want_loud,
                           double secs, struct an_wave *w, struct an_loud *l)
 {
-    double t0 = mt_now();
+    double t0 = mt_now(), max = mt_ceil(secs);
     memset(w, 0, sizeof(*w));
     memset(l, 0, sizeof(*l));
     while (1) {
@@ -173,7 +176,7 @@ static void an_wait_final(mpv_handle *h, int want_wave, int want_loud,
         an_loud_read(h, l);
         int done = (!want_wave || an_final_wave(w->state)) &&
                    (!want_loud || an_final_loud(l->state));
-        if (done || mt_now() - t0 > secs)
+        if (done || mt_now() - t0 > max)
             break;
     }
     printf("     after %.2f s: waveform %s (%d of %d bins filled), loudness %s (%.2f LUFS)\n",

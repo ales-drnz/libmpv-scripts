@@ -26,7 +26,7 @@
 #
 # Options (env vars):
 #   ARCH=x86_64|aarch64     (default: x86_64; --arch=… overrides)
-#   MPV_VERSION=0.41.0      (default: 0.41.0)
+#   MPV_VERSION=0.42.0      (default: 0.42.0)
 #   JOBS=N                  (default: nproc)
 #   FORCE_DOWNLOAD=1        (redownload sources even if cached)
 #   KEEP_BUILD=1            (preserve all of BUILD_DIR for inspection)
@@ -71,8 +71,7 @@ export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # ── Linux-only dependency versions (centralised ones live in _versions.sh) ────
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="7.349.0"
-LIBUNIBREAK_VERSION="6.1"
+LIBUNIBREAK_VERSION="8.0"
 
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Linux/$ARCH}"
 PREFIX="$BUILD_DIR/prefix"
@@ -89,17 +88,9 @@ if [[ -n "${CC_PREFIX:-}" ]]; then
 fi
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_linux-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_linux-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: linux/$ARCH"
-echo "Toolchain:     $CROSS_TRIPLE ($CROSS_TOOLCHAIN_KIND)"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "linux-${ARCH}" 'build_linux-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: linux/$ARCH" \
+  "Toolchain:     $CROSS_TRIPLE ($CROSS_TOOLCHAIN_KIND)"
 
 # ── System pkg-config search path (multiarch-scoped) ──────────────────────────
 # PKG_CONFIG_LIBDIR (NOT _PATH) so nothing leaks from the host triple's .pc
@@ -235,7 +226,7 @@ build_freetype_round2() {
 build_fontconfig() {
   [[ -f "$PREFIX/lib/libfontconfig.a" ]] && return
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null

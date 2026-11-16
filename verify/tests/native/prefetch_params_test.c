@@ -19,6 +19,27 @@
 //           headers still differ, no prefetch.
 #include "mpv_test.h"
 
+// The whole of the playing file is in the cache and its reader idles: the
+// player then runs or skips the prefetch of the next entry.
+static int cached_to_end(mpv_handle *h)
+{
+    mpv_node n;
+    if (mpv_get_property(h, "demuxer-cache-state", MPV_FORMAT_NODE, &n) < 0)
+        return 0;
+    int eof = 0, idle = 0;
+    for (int i = 0; n.format == MPV_FORMAT_NODE_MAP && i < n.u.list->num; i++) {
+        mpv_node *v = &n.u.list->values[i];
+        if (v->format != MPV_FORMAT_FLAG)
+            continue;
+        if (!strcmp(n.u.list->keys[i], "eof"))
+            eof = v->u.flag;
+        if (!strcmp(n.u.list->keys[i], "idle"))
+            idle = v->u.flag;
+    }
+    mpv_free_node_contents(&n);
+    return eof && idle;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 4) {
@@ -58,8 +79,8 @@ int main(int argc, char **argv)
     mpv_command(h, l2);
 
     int prefetch_hooks = 0, load_hooks = 0, loaded = 0, checked = 0;
-    double t_loaded = 0, t0 = mt_now();
-    while (mt_now() - t0 < 30) {
+    double t_cached = 0, t0 = mt_now();
+    while (mt_now() - t0 < mt_ceil(30)) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == MPV_EVENT_HOOK) {
             mpv_event_hook *hk = e->data;
@@ -71,8 +92,6 @@ int main(int argc, char **argv)
         }
         if (e->event_id == MPV_EVENT_FILE_LOADED) {
             loaded++;
-            if (loaded == 1)
-                t_loaded = mt_now();
             if (loaded == 2) {
                 char *st = mt_str(h, "prefetch-state");
                 mt_check(st && (strcmp(st, "used") == 0) == expect_prefetch,
@@ -91,9 +110,14 @@ int main(int argc, char **argv)
                 break;
             }
         }
-        if (loaded == 1 && !checked && mt_now() - t_loaded > 1.5) {
-            // The whole of a is in the cache by now, so the prefetch of b
-            // either ran or was skipped.
+        if (loaded == 1 && !t_cached && cached_to_end(h))
+            t_cached = mt_now();
+        // Once the whole of a is in the cache the prefetch of b runs or is
+        // skipped: a prefetch is waited on (a ceiling), a skip has 1.5 s to
+        // show that no prefetch comes.
+        if (loaded == 1 && !checked && t_cached &&
+            (expect_prefetch ? prefetch_hooks > 0 || mt_now() - t_cached > mt_ceil(5)
+                             : mt_now() - t_cached > 1.5)) {
             checked = 1;
             char *st = mt_str(h, "prefetch-state");
             int idle = st && strcmp(st, "idle") == 0;
@@ -113,6 +137,7 @@ int main(int argc, char **argv)
             mt_cmd(h, "seek", pos, "absolute", NULL);
         }
     }
+    mt_check(checked, "the whole of a reached the cache while a played");
     mt_check(loaded == 2, "b loaded after a");
     mpv_terminate_destroy(h);
     return mt_result();

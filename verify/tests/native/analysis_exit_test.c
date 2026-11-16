@@ -11,9 +11,13 @@
 // runs after it, and looks at what the drain left.
 //   exit  long.flac (15 min, 4 workers) decoding, then exit(0): at the
 //         exit handlers after the drain the scan is cancelled (waveform
-//         idle), the five threads of the scan are gone, and the drain took
-//         less than its 2 s limit. Without the handler the scan is still
-//         decoding there, on its five threads.
+//         idle), no thread of the scan is left (they are named mak/scan,
+//         mak/scan-work and mak/scan-feed), and the drain took less than
+//         its 2 s limit. Without the handler the scan is still decoding
+//         there, on its five threads. A thread that has told the drain it
+//         is done can stay listed for a moment while the kernel takes it
+//         down: the check waits for it up to 50 ms (mt_ceil). The 2 s
+//         limit is the drain's own, in real time, and is not scaled.
 // No leak check: the core is left alive on purpose.
 #include "analysis_test.h"
 
@@ -23,21 +27,46 @@ static mpv_handle *g_h;
 static double t_exit;
 static int threads_scanning;
 
+// The threads of this process whose name starts with mak/scan.
+static int scan_threads(void)
+{
+    DIR *d = opendir("/proc/self/task");
+    if (!d)
+        return -1;
+    int n = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (e->d_name[0] == '.')
+            continue;
+        char path[300], name[32] = "";
+        snprintf(path, sizeof path, "/proc/self/task/%s/comm", e->d_name);
+        FILE *f = fopen(path, "r");
+        if (!f)
+            continue;   // gone between the listing and the read
+        if (fgets(name, sizeof name, f) && !strncmp(name, "mak/scan", 8))
+            n++;
+        fclose(f);
+    }
+    closedir(d);
+    return n;
+}
+
 static void at_end(void)
 {
     if (!g_h)
         return;
     double took = mt_now() - t_exit;
-    int threads = mt_count_files("/proc/self/task");
     struct an_wave w;
     an_wave_read(g_h, &w);
-    printf("     %.3f s after exit(): waveform %s, %d threads (%d while scanning)\n",
-           took, w.state, threads, threads_scanning);
+    int now = scan_threads(), left = now;
+    mt_wait_until(0.05, left == 0, usleep(1000); left = scan_threads());
+    printf("     %.3f s after exit(): waveform %s, %d scan threads at once, %d after "
+           "%.0f ms (%d while scanning)\n", took, w.state, now, left,
+           mt_ceil(0.05) * 1000, threads_scanning);
     mt_check(!strcmp(w.state, "idle"), "the scan was cancelled before the "
              "exit handlers after it (%s)", w.state);
-    mt_check(threads <= threads_scanning - 5,
-             "the coordinator and its 4 workers are gone (%d threads, %d before)",
-             threads, threads_scanning);
+    mt_check(left == 0, "the coordinator and its 4 workers are gone (%d of %d left)",
+             left, threads_scanning);
     mt_check(took < 2.0, "the drain did not run into its limit (%.3f s)", took);
     an_wave_free(&w);
     fflush(stdout);
@@ -66,14 +95,14 @@ int main(int argc, char **argv)
     mt_check(an_wait_event(h, MPV_EVENT_FILE_LOADED, 15), "file loaded");
     // In the middle of the decode: some bins sealed, most not.
     struct an_wave w;
-    double t0 = mt_now();
+    double t0 = mt_now(), max = mt_ceil(20);
     int mid = 0;
-    while (mt_now() - t0 < 20 && !mid) {
+    while (mt_now() - t0 < max && !mid) {
         mpv_wait_event(h, 0.005);
         /* The most threads the scan had: a worker whose slice is short is
          * gone by the middle of the decode, on a loaded machine above all,
          * and the count taken there alone was one short. */
-        int now = mt_count_files("/proc/self/task");
+        int now = scan_threads();
         if (now > threads_scanning)
             threads_scanning = now;
         an_wave_read(h, &w);
@@ -85,6 +114,8 @@ int main(int argc, char **argv)
         an_wave_free(&w);
     }
     mt_check(mid, "the scan is in the middle of its decode");
+    mt_check(threads_scanning >= 2, "the scan runs on named threads (%d seen)",
+             threads_scanning);
     g_h = h;
     t_exit = mt_now();
     exit(0);

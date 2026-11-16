@@ -9,8 +9,10 @@
 // that runs the WASAPI COM teardown on a thread that never ran its init
 // (the hotplug crash, for the AO).
 // With ao=pcm (the default here) the test sees the thread: it interposes
-// fopen64 and fclose and records the thread name for the ao-pcm-file. Init
-// and close must both run on "core". AO=null skips the thread check and
+// fopen64, fdopen and fclose and records the thread name for the
+// ao-pcm-file. mpv 0.42 opens it with mp_fopen, open() then fdopen(), so
+// fdopen tells it by the path of its descriptor; mpv 0.41 called fopen.
+// Init and close must both run on "core". AO=null skips the thread check and
 // leaves the clean sequence under ASan and TSan.
 // Options as the kit sets them: keep-open, idle, audio-device-list and
 // audio-output-state observed, quit then mpv_terminate_destroy.
@@ -24,8 +26,11 @@
 //   nogapless  gapless-audio=no closes it at unload (control, green on r17)
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include "mpv_test.h"
 
 static char target[4096];
@@ -33,13 +38,22 @@ static _Atomic(FILE *) target_fp;
 static atomic_int opens, closes;
 static char open_thread[16], close_thread[16];
 static FILE *(*real_fopen64)(const char *, const char *);
+static FILE *(*real_fdopen)(int, const char *);
 static int (*real_fclose)(FILE *);
 
 // Resolved before main, so no thread races on the lazy lookup.
 __attribute__((constructor)) static void resolve(void)
 {
     real_fopen64 = (FILE *(*)(const char *, const char *))dlsym(RTLD_NEXT, "fopen64");
+    real_fdopen = (FILE *(*)(int, const char *))dlsym(RTLD_NEXT, "fdopen");
     real_fclose = (int (*)(FILE *))dlsym(RTLD_NEXT, "fclose");
+}
+
+static void opened(FILE *f)
+{
+    pthread_getname_np(pthread_self(), open_thread, sizeof open_thread);
+    atomic_store(&target_fp, f);
+    atomic_fetch_add(&opens, 1);
 }
 
 FILE *fopen64(const char *path, const char *mode)
@@ -47,10 +61,26 @@ FILE *fopen64(const char *path, const char *mode)
     if (!real_fopen64)
         resolve();
     FILE *f = real_fopen64(path, mode);
-    if (f && target[0] && strcmp(path, target) == 0) {
-        pthread_getname_np(pthread_self(), open_thread, sizeof open_thread);
-        atomic_store(&target_fp, f);
-        atomic_fetch_add(&opens, 1);
+    if (f && target[0] && strcmp(path, target) == 0)
+        opened(f);
+    return f;
+}
+
+// target is a canonical path, as the link of the descriptor.
+FILE *fdopen(int fd, const char *mode)
+{
+    if (!real_fdopen)
+        resolve();
+    FILE *f = real_fdopen(fd, mode);
+    if (f && target[0]) {
+        char link[64], path[PATH_MAX];
+        snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+        ssize_t n = readlink(link, path, sizeof path - 1);
+        if (n > 0) {
+            path[n] = '\0';
+            if (strcmp(path, target) == 0)
+                opened(f);
+        }
     }
     return f;
 }
@@ -67,11 +97,11 @@ int fclose(FILE *f)
     return real_fclose(f);
 }
 
-// Waits up to secs for the event, logging what goes by. 1 if seen.
+// Waits for the event, up to secs (a ceiling, mt_ceil). 1 if seen.
 static int wait_event(mpv_handle *h, int id, double secs)
 {
     double t0 = mt_now();
-    while (mt_now() - t0 < secs) {
+    while (mt_now() - t0 < mt_ceil(secs)) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == id)
             return 1;
@@ -79,10 +109,11 @@ static int wait_event(mpv_handle *h, int id, double secs)
     return 0;
 }
 
+// Waits until the property reads want, up to secs (a ceiling, mt_ceil).
 static int wait_prop(mpv_handle *h, const char *name, const char *want, double secs)
 {
     double t0 = mt_now();
-    while (mt_now() - t0 < secs) {
+    while (mt_now() - t0 < mt_ceil(secs)) {
         char *v = mt_str(h, name);
         int ok = v && strcmp(v, want) == 0;
         mpv_free(v);
@@ -107,7 +138,12 @@ int main(int argc, char **argv)
     snprintf(a, sizeof a, "%s/a.flac", argv[2]);
     // Stream silence makes ao=pcm write silence as fast as it can: that
     // goes to /dev/null, not to a file in a tmpfs.
-    snprintf(target, sizeof target, "%s/out.wav", argv[3]);
+    char dir[PATH_MAX];
+    if (!realpath(argv[3], dir)) {
+        fprintf(stderr, "no dir %s\n", argv[3]);
+        return 2;
+    }
+    snprintf(target, sizeof target, "%s/out.wav", dir);
     if (!strcmp(mode, "silence"))
         snprintf(target, sizeof target, "/dev/null");
 
@@ -162,7 +198,12 @@ int main(int argc, char **argv)
     double took = mt_now() - t0;
 
     printf("terminate_destroy took %.3f s\n", took);
-    mt_check(took < 1.0, "no drain on the way out (%.3f s)", took);
+    // ao_pcm is untimed: a drain ends once it took everything, and the
+    // bound fails a teardown that hangs. Under valgrind silence took 1.5 to
+    // 2.2 s on CI, ao_pcm writing silence with no pause next to the core.
+    double bound = mt_bound(1.0, 5.0);
+    mt_check(took < bound, "no drain on the way out (%.3f s, under %.0f s)",
+             took, bound);
     if (pcm) {
         printf("pcm file opened %d times on '%s', closed %d times on '%s'\n",
                atomic_load(&opens), open_thread, atomic_load(&closes), close_thread);

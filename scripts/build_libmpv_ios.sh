@@ -6,7 +6,7 @@
 # =============================================================================
 # build_libmpv_ios.sh
 #
-# Compiles mpv 0.41.0 as a DYNAMIC library for iOS, and for tvOS with
+# Compiles mpv 0.42.0 as a DYNAMIC library for iOS, and for tvOS with
 # APPLE_OS=tvos (build_libmpv_tvos.sh).
 #
 # === OUTPUT FORMATS AND LOCATIONS ===
@@ -32,7 +32,7 @@
 #
 # Options (environment variables):
 #   APPLE_OS=ios|tvos     (default: ios)
-#   MPV_VERSION=0.41.0    (default: 0.41.0)
+#   MPV_VERSION=0.42.0    (default: 0.42.0)
 #   JOBS=N                (default: number of cores)
 #   FORCE_DOWNLOAD=1      (redownload sources even if cached)
 #   KEEP_BUILD=1          (preserve all of BUILD_DIR for inspection)
@@ -47,8 +47,7 @@
 # Note: libmpv ships as a dynamic framework with all its transitive deps
 #       (ffmpeg, libplacebo, libass, …) linked statically INTO the dylib.
 #       Only the public mpv_* C API is exported (via patch_export_filter).
-#       Same dependency versions as build_libmpv_macos.sh, except libplacebo
-#       (iOS pins 6.338.2; macOS pins 7.349.0 — see _versions.sh for why).
+#       Same dependency versions as build_libmpv_macos.sh.
 # =============================================================================
 
 set -euo pipefail
@@ -82,7 +81,6 @@ esac
 
 # iOS-only dependency versions (centralised ones live in _versions.sh)
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
 # LTO defaults to enabled on iOS (same as every other platform). The historic
@@ -440,7 +438,7 @@ slice_fontconfig() {
   [[ -f "$prefix/lib/libfontconfig.a" ]] && return
   log "fontconfig ($sdk/$arch)..."
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig-${sdk}-${arch}"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null

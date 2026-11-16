@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH_V2 ─── bulk-analysis scan engine.
+/* MAK_WAVEFORM_PATCH_V3 ─── bulk-analysis scan engine.
  *
  * The decode engine: on mak_scan_start() it spawns a detached coordinator that
  * probes + classifies the source and either BULK-decodes a complete seekable
@@ -189,6 +189,9 @@ void mak_scan_thread_leave(void)
 
 static MP_THREAD_VOID coordinator_main(void *p)
 {
+    /* Named, as mpv's own threads are: a profiler, and the exit test, tell
+     * the threads of the scan from the player's. */
+    mp_thread_set_name("mak/scan");
     struct coord_args *args = p;
     int    my_gen   = args->my_gen;
     char  *url      = args->url;

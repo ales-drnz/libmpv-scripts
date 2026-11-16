@@ -6,7 +6,7 @@
 # =============================================================================
 # build_libmpv_android.sh
 #
-# Compiles mpv 0.41.0 as a shared library for Android.
+# Compiles mpv 0.42.0 as a shared library for Android.
 #
 # === OUTPUT FORMATS AND LOCATIONS ===
 # Target Dir:  builds/release/
@@ -26,9 +26,9 @@
 #   ./scripts/build_libmpv_android.sh
 #
 # Options (environment variables):
-#   ANDROID_NDK_ROOT=/path/to/ndk   (else searched in known SDK locations; NDK r28c auto-downloaded if absent)
+#   ANDROID_NDK_ROOT=/path/to/ndk   (else searched in known SDK locations; NDK r30 auto-downloaded if absent)
 #   ANDROID_API=24                   (default: 24 — minSdkVersion)
-#   MPV_VERSION=0.41.0              (default: 0.41.0)
+#   MPV_VERSION=0.42.0              (default: 0.42.0)
 #   ABIS="arm64-v8a armeabi-v7a x86_64"      (default: arm64-v8a x86_64; x86 is accepted, never built in CI)
 #   JOBS=N
 #   FORCE_DOWNLOAD=1                 (redownload sources even if cached)
@@ -75,14 +75,13 @@ fi
 
 # Android-only dependency versions (centralised ones live in _versions.sh)
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="6.338.2"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
-NDK_VERSION="r28c"
+NDK_VERSION="r30"
 # Maps letter-format → semantic-version. Android Studio installs the NDK as
-# 28.2.13676358, while Google's zip is named android-ndk-r28c. Both forms are
+# 30.0.16248370, while Google's zip is named android-ndk-r30. Both forms are
 # searched among the candidates below.
-NDK_SEMVER="28.2.13676358"
+NDK_SEMVER="30.0.16248370"
 BUILD_DIR="${BUILD_DIR:-$LIBMPV_SCRIPTS_ROOT/builds/work/Android}"
 PREFIX_BASE="$BUILD_DIR/prefix"
 
@@ -91,16 +90,8 @@ PREFIX_BASE="$BUILD_DIR/prefix"
 # in the log is prefixed with [YYYY-MM-DD HH:MM:SS] so we can measure how
 # long each phase of the build actually took (the terminal stays clean —
 # timestamps live only in the file). Old logs (>20) are pruned automatically.
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_android_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_android_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "android" 'build_android_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION"
 
 # Logging helpers (log / ok / warn / err / die / fail) come from _helpers.sh
 
@@ -135,14 +126,16 @@ find_or_download_ndk() {
     ok "NDK found: $ANDROID_NDK_ROOT"
     return
   fi
+  # The SDK of the GitHub runners (NDK_SYSTEM_SDK moves it, for the tests).
+  local sys_sdk="${NDK_SYSTEM_SDK:-/usr/local/lib/android/sdk}"
   local candidates=(
     "$BUILD_DIR/ndk/android-ndk-${NDK_VERSION}"
     "$HOME/Library/Android/sdk/ndk/${NDK_SEMVER}"
     "$HOME/Android/Sdk/ndk/${NDK_SEMVER}"
-    "/usr/local/lib/android/sdk/ndk/${NDK_SEMVER}"
+    "$sys_sdk/ndk/${NDK_SEMVER}"
     "$HOME/Library/Android/sdk/ndk/${NDK_VERSION}"
     "$HOME/Android/Sdk/ndk/${NDK_VERSION}"
-    "/usr/local/lib/android/sdk/ndk/${NDK_VERSION}"
+    "$sys_sdk/ndk/${NDK_VERSION}"
     "$HOME/Library/Android/sdk/ndk-bundle"
     "${TMPDIR:-/tmp}/mpv_android_build/ndk/android-ndk-${NDK_VERSION}"
   )
@@ -159,7 +152,7 @@ find_or_download_ndk() {
   # 2.5 Dynamic search in common bases: the newest NDK of the SDK, which is
   # another version by definition, so only with ALLOW_ANY_NDK=1.
   if [[ "${ALLOW_ANY_NDK:-0}" == "1" ]]; then
-    for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "/usr/local/lib/android/sdk/ndk"; do
+    for base in "$HOME/Library/Android/sdk/ndk" "$HOME/Android/Sdk/ndk" "$sys_sdk/ndk"; do
       if [[ -d "$base" ]]; then
         local latest_ndk
         latest_ndk="$(ls -d "$base"/* 2>/dev/null | grep -Ev 'ndk-bundle' | sort -V | tail -1)"
@@ -186,7 +179,7 @@ find_or_download_ndk() {
   local url="https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-${host_tag}.zip"
   # Google publishes only a SHA-1 for the NDK zips (repository2-3.xml and the
   # NDK downloads page). _sources.sha256 pins the SHA-256 of the zips whose
-  # SHA-1 was Google's (r28c: a7b54a5d… linux, fc20a6bf… darwin), and the
+  # SHA-1 was Google's (r30: 5107f898… linux, c060be96… darwin), and the
   # check is against that, as for every other source. A zip with no pin stops
   # the build here even without STRICT_SOURCES: bump with NDK_VERSION.
   [[ -n "$(pinned_source "$url")" ]] ||
@@ -609,7 +602,7 @@ android_fontconfig() {
   local abi="$1" prefix="$2"
   [[ -f "$prefix/lib/libfontconfig.a" ]] && return
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig-android-$abi"; mkdir -p "$bdir"
   pushd "$bdir" >/dev/null

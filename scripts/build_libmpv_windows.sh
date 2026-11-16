@@ -24,7 +24,7 @@
 #
 # Options (env vars):
 #   ARCH=x86_64|aarch64     (default: x86_64; --arch=… overrides)
-#   MPV_VERSION=0.41.0      (default: 0.41.0)
+#   MPV_VERSION=0.42.0      (default: 0.42.0)
 #   JOBS=N                  (default: nproc)
 #   FORCE_DOWNLOAD=1        (redownload sources even if cached)
 #   KEEP_BUILD=1            (preserve all of BUILD_DIR for inspection)
@@ -59,7 +59,6 @@ esac
 
 # ── Windows-only dependency versions (centralised ones live in _versions.sh) ──
 EXPAT_VERSION="${EXPAT_VERSION:-${LIBEXPAT_VERSION}}"
-LIBPLACEBO_VERSION="${LIBPLACEBO_VERSION:-v6.338.2}"
 LIBSMB2_TAG="${LIBSMB2_TAG:-v${LIBSMB2_VERSION}}"
 
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
@@ -92,17 +91,9 @@ case "$CROSS_TOOLCHAIN_KIND" in
 esac
 
 # ── Mirror all stdout + stderr to a timestamped log file ─────────────────────
-LOG_DIR="$LIBMPV_SCRIPTS_ROOT/builds/logs"
-mkdir -p "$LOG_DIR"
-ls -t "$LOG_DIR"/build_windows-*_*.log 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
-LOG_FILE="$LOG_DIR/build_windows-${ARCH}_$(date +%Y%m%d_%H%M%S).log"
-mirror_build_log "$LOG_FILE"
-echo "════════════════════════════════════════════════════════════"
-echo "Build started: $(date)"
-echo "Log file:      $LOG_FILE"
-echo "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: windows/$ARCH"
-echo "Toolchain:     $TRIPLE ($CROSS_TOOLCHAIN_KIND)"
-echo "════════════════════════════════════════════════════════════"
+start_build_log "windows-${ARCH}" 'build_windows-*_*.log' \
+  "FFmpeg:        $FFMPEG_VERSION   mpv: $MPV_VERSION   target: windows/$ARCH" \
+  "Toolchain:     $TRIPLE ($CROSS_TOOLCHAIN_KIND)"
 
 # ── Clock skew fix for Docker on Windows hosts ────────────────────────────────
 # When Docker mounts a Windows (NTFS) volume into a Linux container, mtime
@@ -195,7 +186,7 @@ fi
 # ── xz (liblzma) ──────────────────────────────────────────────────────────────
 if [[ ! -f "$DIST/lib/liblzma.a" ]]; then
   log "Building xz $XZ_VERSION..."
-  XZ=$(fetch xz "https://tukaani.org/xz/xz-${XZ_VERSION}.tar.gz")
+  XZ=$(fetch xz "https://github.com/tukaani-project/xz/releases/download/v${XZ_VERSION}/xz-${XZ_VERSION}.tar.gz")
   tar -xf "$XZ" -C "$SRC"
   pushd "$SRC/xz-$XZ_VERSION"
     # xz 5.8.x's configure aborts if its `-Werror`-usability probe trips
@@ -331,7 +322,7 @@ ok "freetype r2 ✓"
 # final mpv link. Matches the Linux script's approach.
 if [[ ! -f "$DIST/lib/libfontconfig.a" ]]; then
   log "Building fontconfig $FONTCONFIG_VERSION..."
-  FC=$(fetch fontconfig "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz")
+  FC=$(fetch fontconfig "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz")
   tar -xf "$FC" -C "$SRC"
   pushd "$SRC/fontconfig-$FONTCONFIG_VERSION"
     rm -rf build
@@ -397,9 +388,8 @@ fi
 if [[ ! -f "$DIST/lib/libplacebo.a" ]]; then
   log "Building libplacebo $LIBPLACEBO_VERSION..."
   LP_DIR="$SRC/libplacebo-git"
-  download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_DIR" "$LIBPLACEBO_VERSION"
+  download_git "https://code.videolan.org/videolan/libplacebo.git" "$LP_DIR" "v$LIBPLACEBO_VERSION"
   git -C "$LP_DIR" submodule update --init --recursive
-  apply_libplacebo_patches "$LP_DIR"
   pushd "$LP_DIR"
     rm -rf build
     # `-DPL_STATIC` mutes the `PL_API` macro so it doesn't expand to

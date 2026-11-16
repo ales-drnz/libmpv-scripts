@@ -34,7 +34,7 @@ for side in alone keepalive; do
   fi
   apply "$T/$side" > "$T/$side.log" 2>&1; check $? "$side: the patches apply"
   for f in $FILES; do
-    case "$f" in http.c) m=MAK_HTTP_READ_ERRORS_V1 ;; *) m=MAK_SEGMENT_SKIPS_V1 ;; esac
+    case "$f" in http.c) m=MAK_HTTP_READ_ERRORS_V2 ;; *) m=MAK_SEGMENT_SKIPS_V1 ;; esac
     grep -q "$m" "$T/$side/libavformat/$f"; check $? "$side: $f carries $m"
   done
   cp -a "$T/$side" "$T/$side.before"

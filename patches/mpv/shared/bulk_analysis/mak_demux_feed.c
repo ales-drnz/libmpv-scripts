@@ -1,4 +1,4 @@
-/* MAK_WAVEFORM_PATCH_V2 ─── demuxer packet feed for the bulk analysis.
+/* MAK_WAVEFORM_PATCH_V3 ─── demuxer packet feed for the bulk analysis.
  * See mak_demux_feed.h. The queue is a singly linked list of items under the
  * feed's own mutex; the demuxer pushes while holding its lock and only ever
  * takes this mutex inside it, the consumer never takes the demuxer's lock,
@@ -296,7 +296,11 @@ enum mak_feed_item mak_demux_feed_pop(struct mak_demux_feed *f,
          * queue the pass can never complete, so decoding the rest (up to
          * MAK_FEED_MAX_BYTES of a file no longer playing) is wasted work:
          * drop it and report CLOSED now. A queued EOF means the download
-         * finished, so that pass is still drained to the end. */
+         * finished, so that pass is still drained to the end. A cut feed
+         * reports the GAP the cut queued instead: the pass was handed over
+         * when the cut came, and the demuxer lets go of a cut feed at its
+         * next push, which may come while the consumer still decodes the
+         * packets before the GAP. */
         f->gone_checked = true;
         bool has_eof = false;
         for (struct feed_item *q = f->head; q; q = q->next) {
@@ -309,9 +313,10 @@ enum mak_feed_item mak_demux_feed_pop(struct mak_demux_feed *f,
             struct feed_item *drop = f->head;
             f->head = f->tail = NULL;
             f->bytes = 0;
+            bool cut = f->cut;
             mp_mutex_unlock(&f->lock);
             free_items(drop);
-            return MAK_FEED_CLOSED;
+            return cut ? MAK_FEED_GAP : MAK_FEED_CLOSED;
         }
     }
     struct feed_item *it = f->head;

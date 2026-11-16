@@ -6,7 +6,7 @@
 # =============================================================================
 # build_libmpv_macos.sh
 #
-# Compiles mpv 0.41.0 as a Universal dynamic library for macOS, wrapped in
+# Compiles mpv 0.42.0 as a Universal dynamic library for macOS, wrapped in
 # a single-slice xcframework so SwiftPM consumers can pick it up via
 # `.binaryTarget` (same shape as iOS).
 #
@@ -31,7 +31,7 @@
 #   ./scripts/build_libmpv_macos.sh
 #
 # Options (environment variables):
-#   MPV_VERSION=0.41.0            (default: 0.41.0)
+#   MPV_VERSION=0.42.0            (default: 0.42.0)
 #   ARCHS="arm64 x86_64"          (target architectures, space-separated)
 #   JOBS=N                        (default: number of cores)
 #   FORCE_DOWNLOAD=1              (redownload sources even if cached)
@@ -76,7 +76,6 @@ HOST_ARCH="$(uname -m)"
 
 # macOS-only dependency versions (centralised ones live in _versions.sh)
 # shellcheck disable=SC2034  # read by the shared builds (_cross.sh, _apple.sh)
-LIBPLACEBO_VERSION="7.349.0"
 LIBSMB2_TAG="v${LIBSMB2_VERSION}"
 
 # ── Build directory ──────────────────────────────────────────────────────────
@@ -193,9 +192,9 @@ build_for_arch() {
   build_libsmb2    "$PREFIX"
   CFLAGS="$af -Oz" LDFLAGS="$af" cross_build_libxml2
 
-  # libarchive, mujs and luajit are not built — mpv is configured with
-  # -Dlibarchive=disabled / -Dlua=disabled / -Djavascript=disabled which
-  # gates their use at the preprocessor level (no source-side inclusion).
+  # libarchive, mujs and luajit are not built: -Dlua=disabled names lua (a
+  # combo), and auto_features=disabled turns off the libarchive and
+  # javascript features, at the preprocessor level.
 
   build_ffmpeg "$PREFIX"
   build_mpv    "$PREFIX"
@@ -344,7 +343,7 @@ build_fontconfig() {
   [[ -f "$prefix/lib/libfontconfig.a" ]] && { ok "fontconfig already compiled"; return; }
   log "Build fontconfig $FONTCONFIG_VERSION..."
   local src="$BUILD_DIR/src/fontconfig-$FONTCONFIG_VERSION.tar.xz"
-  download "https://www.freedesktop.org/software/fontconfig/release/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
+  download "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/${FONTCONFIG_VERSION}/fontconfig-${FONTCONFIG_VERSION}.tar.xz" "$src"
   local dir; dir="$(extract "$src" "$BUILD_DIR/src")"
   local bdir="$BUILD_DIR/build/fontconfig"
   mkdir -p "$bdir"

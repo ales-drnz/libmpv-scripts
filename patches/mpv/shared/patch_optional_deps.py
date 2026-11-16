@@ -24,7 +24,7 @@ import anchor  # noqa: E402
 # inside its argument list, so `[^)]*` correctly swallows to the single
 # closing paren. The patched call matches too, and is rewritten as itself.
 LP_RE = r"libplacebo = dependency\('libplacebo'[^)]*\)"
-LP_NEW = "libplacebo = dependency('libplacebo', version: '>=6.338.2', required: false)"
+LP_NEW = "libplacebo = dependency('libplacebo', version: '>=7.387.0', required: false)"
 
 # libass: the patched form on a re-run is not an error. Neither is a tree
 # where patch_strip_libass.py already dropped the line and swapped in its
