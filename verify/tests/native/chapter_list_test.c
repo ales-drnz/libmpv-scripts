@@ -44,17 +44,28 @@ static int set_chapter(mpv_handle *h, int64_t k)
     return r;
 }
 
-// Waits until time-pos >= t (or 5 s).
+// Waits until time-pos >= t (a ceiling of 5 s, mt_ceil).
 static int wait_pos(mpv_handle *h, double t, struct pb_ev *ev)
 {
-    double t0 = mt_now(), p = -1;
-    while (mt_now() - t0 < 5) {
-        pb_pump(h, 20, ev);
-        if (mt_double(h, "time-pos", &p) >= 0 && p >= t)
-            return 1;
-    }
+    double p = -1;
+    mt_wait_until(5, mt_double(h, "time-pos", &p) >= 0 && p >= t,
+                  pb_pump(h, 20, ev));
+    if (p >= t)
+        return 1;
     printf("     time-pos %.3f, want %.3f\n", p, t);
     return 0;
+}
+
+// Sets the chapter list, then waits until the observer of chapter-metadata
+// got the change: the core read the property for it.
+static void set_observed(mpv_handle *h, const double *t, int n,
+                         struct pb_ev *ev)
+{
+    pb_pump(h, 0, ev);
+    int c0 = ev->changes;
+    set_chapters(h, t, n);
+    mt_wait_until(1, ev->changes > c0, pb_pump(h, 10, ev));
+    mt_check(ev->changes > c0, "the observer got the list of %d", n);
 }
 
 // chapter-metadata's title, or "<unavailable>" (caller frees nothing).
@@ -93,9 +104,7 @@ int main(int argc, char **argv)
         mpv_observe_property(h, 1, "chapter-metadata", MPV_FORMAT_NODE);
     struct pb_ev ev = {.end_reason = -1};
     mt_cmd(h, "loadfile", path, NULL, NULL);
-    double t0 = mt_now();
-    while (!ev.loaded && mt_now() - t0 < 5)
-        pb_pump(h, 20, &ev);
+    mt_wait_until(5, ev.loaded, pb_pump(h, 20, &ev));
     mt_check(ev.loaded == 1, "sine60.flac loaded");
 
     char title[64];
@@ -105,10 +114,8 @@ int main(int argc, char **argv)
         set_chapters(h, two, 2);
         set_chapter(h, 1);
         mt_check(wait_pos(h, 2.9, &ev), "chapter 1 reached");
-        set_chapters(h, NULL, 0);
-        pb_pump(h, 100, &ev);
-        set_chapters(h, one, 1);
-        pb_pump(h, 300, &ev);
+        set_observed(h, NULL, 0, &ev);
+        set_observed(h, one, 1, &ev);
         meta_title(h, title, sizeof title);
         mt_check(!strcmp(title, "A"), "chapter-metadata is the one chapter's (%s)",
                  title);
@@ -129,8 +136,12 @@ int main(int argc, char **argv)
         set_chapters(h, four, 4);
         set_chapter(h, 3);
         mt_check(wait_pos(h, 44.9, &ev), "chapter 3 reached");
-        set_chapters(h, two, 2);
-        pb_pump(h, 300, &ev);
+        if (m_observe) {
+            set_observed(h, two, 2, &ev);
+        } else {
+            set_chapters(h, two, 2);
+            pb_pump(h, 300, &ev);
+        }
         if (m_index) {
             mt_int(h, "chapter", &ch);
             mt_check(ch == 1, "chapter is the position's in the new list (%lld)",

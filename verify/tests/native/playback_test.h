@@ -47,11 +47,12 @@ static double pb_cpu(void)
 }
 
 // Event counters of pb_pump: log lines containing needle[i] (up to four,
-// NULL-terminated), end-file events (the last reason) and file-loaded events.
+// NULL-terminated), end-file events (the last reason), file-loaded events
+// and property-change events of observed properties.
 struct pb_ev {
     const char *needle[5];
     int hits[4];
-    int end_files, end_reason, loaded;
+    int end_files, end_reason, loaded, changes;
     // The position the first END_FILE reports (mak_position).
     double first_end_pos;
 };
@@ -83,5 +84,7 @@ static void pb_pump(mpv_handle *h, int ms, struct pb_ev *ev)
         }
         if (e->event_id == MPV_EVENT_FILE_LOADED)
             ev->loaded++;
+        if (e->event_id == MPV_EVENT_PROPERTY_CHANGE)
+            ev->changes++;
     }
 }
