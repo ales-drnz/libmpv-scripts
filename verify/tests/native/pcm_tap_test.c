@@ -7,9 +7,10 @@
 //   ch    p_st48 (stereo, +0.25) then n_mono48 (mono, -0.5)
 //   up    p_mono48 (mono, +0.25) then n_st48 (stereo, -0.5)
 //   rate  p_st48 (48 kHz, +0.25) then n_st44 (44.1 kHz, -0.5)
-//   idle  F162: pn_st48 (+0.25 for 2 s, then -0.5) read at 30 Hz for
-//         0.5 s, then not for 3.5 s: the next read is unavailable (the
-//         tap disarmed and starts over), the one after holds only -0.5
+//   idle  F162: pn_st48 (+0.25 for 2 s, then -0.5) read at 30 Hz until
+//         windows come, then not for 3.4 s and past the switch: the next
+//         read is unavailable (the tap disarmed and starts over), the one
+//         after holds only -0.5
 // The tap is armed before the first file; pcm-tap-frame is then polled
 // every millisecond. A window read with the second file's format must hold
 // only that file's samples (-0.5, or silence): a +0.25 sample is a frame of
@@ -47,6 +48,26 @@ static int tap_read(mpv_handle *h, struct tap *t)
     return ok ? 0 : -1;
 }
 
+// Drains the events, then sleeps ms.
+static void idle_pump(mpv_handle *h, int ms)
+{
+    while (mpv_wait_event(h, 0)->event_id != MPV_EVENT_NONE)
+        ;
+    mt_sleep_ms(ms);
+}
+
+// One read of the listener at 30 Hz: got counts the windows.
+static void idle_read(mpv_handle *h, struct tap *t, int *got)
+{
+    while (mpv_wait_event(h, 0)->event_id != MPV_EVENT_NONE)
+        ;
+    if (tap_read(h, t) == 0) {
+        (*got)++;
+        free(t->s);
+    }
+    mt_sleep_ms(33);
+}
+
 // F162: a listener that stops for longer than the idle span (2 s).
 static int mode_idle(const char *fx)
 {
@@ -59,33 +80,26 @@ static int mode_idle(const char *fx)
     struct tap t;
     mt_check(tap_read(h, &t) < 0, "pcm-tap-frame unavailable before playback");
     mt_cmd(h, "loadfile", path, NULL, NULL);
-    double t0 = mt_now();
+    // Read at 30 Hz until windows come: under valgrind the first ones come
+    // late.
     int got = 0;
-    while (mt_now() - t0 < 0.6) {
-        mpv_event *e;
-        while ((e = mpv_wait_event(h, 0))->event_id != MPV_EVENT_NONE)
-            ;
-        if (tap_read(h, &t) == 0) {
-            got++;
-            free(t.s);
-        }
-        mt_sleep_ms(33);
-    }
+    mt_wait_until(5, got > 5, idle_read(h, &t, &got));
     mt_check(got > 5, "windows read while listening (%d)", got);
-    // No reads past the 2 s switch to -0.5 and the 2 s idle span.
-    while (mt_now() - t0 < 4.0) {
-        mpv_event *e;
-        while ((e = mpv_wait_event(h, 0))->event_id != MPV_EVENT_NONE)
-            ;
-        mt_sleep_ms(20);
-    }
+    // No reads past the 2 s switch to -0.5 and the 2 s idle span: the
+    // playback passes the switch, and 3.4 s go by since the last read.
+    double last = mt_now(), pos = -1;
+    mt_wait_until(5, mt_double(h, "time-pos", &pos) >= 0 && pos >= 2.1,
+                  idle_pump(h, 20));
+    mt_check(pos >= 2.1, "the playback passed the switch (%.3f s)", pos);
+    while (mt_now() - last < 3.4)
+        idle_pump(h, 20);
     int r = tap_read(h, &t);
     mt_check(r < 0, "the first read after 3.4 s without reads is unavailable "
              "(got %zu frames)", r < 0 ? (size_t)0 : t.n / 2);
     if (r == 0)
         free(t.s);
-    mt_sleep_ms(100);
-    r = tap_read(h, &t);
+    // The tap starts over: the next window comes once the output wrote.
+    mt_wait_until(1, (r = tap_read(h, &t)) == 0, idle_pump(h, 20));
     long old = 0, fresh = 0;
     for (size_t i = 0; r == 0 && i < t.n; i++) {
         old += t.s[i] > 0.2f && t.s[i] < 0.3f;
@@ -140,7 +154,7 @@ int main(int argc, char **argv)
     int a_win = 0, b_win = 0, stale_win = 0, other_win = 0, misaligned = 0;
     long b_new = 0, b_stale = 0;
     double first_b = 0, t0 = mt_now();
-    while (mt_now() - t0 < 15) {
+    while (mt_now() - t0 < mt_ceil(15)) {
         mpv_event *e;
         while ((e = mpv_wait_event(h, 0))->event_id != MPV_EVENT_NONE)
             ;
