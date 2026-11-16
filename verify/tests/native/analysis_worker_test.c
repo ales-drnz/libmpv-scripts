@@ -66,11 +66,11 @@ int main(int argc, char **argv)
     mt_cmd(h, "loadfile", file, NULL, NULL);
     mt_check(an_wait_event(h, MPV_EVENT_FILE_LOADED, 15), "file loaded");
 
-    double t0 = mt_now(), worst = 0, t_end = -1;
+    double t0 = mt_now(), max = mt_ceil(30), worst = 0, t_end = -1;
     int snaps = 0, over = 0;
     struct an_wave w;
     struct an_loud lo;
-    while (mt_now() - t0 < 30) {
+    while (mt_now() - t0 < max) {
         mpv_wait_event(h, 0.01);
         an_wave_read(h, &w);
         an_loud_read(h, &lo);

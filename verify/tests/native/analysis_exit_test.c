@@ -16,7 +16,8 @@
 //         its 2 s limit. Without the handler the scan is still decoding
 //         there, on its five threads. A thread that has told the drain it
 //         is done can stay listed for a moment while the kernel takes it
-//         down: the check gives it 50 ms.
+//         down: the check waits for it up to 50 ms (mt_ceil). The 2 s
+//         limit is the drain's own, in real time, and is not scaled.
 // No leak check: the core is left alive on purpose.
 #include "analysis_test.h"
 
@@ -58,10 +59,10 @@ static void at_end(void)
     struct an_wave w;
     an_wave_read(g_h, &w);
     int now = scan_threads(), left = now;
-    for (double t0 = mt_now(); left > 0 && mt_now() - t0 < 0.05; left = scan_threads())
-        usleep(1000);
+    mt_wait_until(0.05, left == 0, usleep(1000); left = scan_threads());
     printf("     %.3f s after exit(): waveform %s, %d scan threads at once, %d after "
-           "50 ms (%d while scanning)\n", took, w.state, now, left, threads_scanning);
+           "%.0f ms (%d while scanning)\n", took, w.state, now, left,
+           mt_ceil(0.05) * 1000, threads_scanning);
     mt_check(!strcmp(w.state, "idle"), "the scan was cancelled before the "
              "exit handlers after it (%s)", w.state);
     mt_check(left == 0, "the coordinator and its 4 workers are gone (%d of %d left)",
@@ -94,9 +95,9 @@ int main(int argc, char **argv)
     mt_check(an_wait_event(h, MPV_EVENT_FILE_LOADED, 15), "file loaded");
     // In the middle of the decode: some bins sealed, most not.
     struct an_wave w;
-    double t0 = mt_now();
+    double t0 = mt_now(), max = mt_ceil(20);
     int mid = 0;
-    while (mt_now() - t0 < 20 && !mid) {
+    while (mt_now() - t0 < max && !mid) {
         mpv_wait_event(h, 0.005);
         /* The most threads the scan had: a worker whose slice is short is
          * gone by the middle of the decode, on a loaded machine above all,

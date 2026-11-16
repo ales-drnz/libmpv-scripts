@@ -50,8 +50,8 @@ int main(int argc, char **argv)
     int partials = 0, other = 0, shrank = 0, uncounted = 0;
     int64_t last = 0;
     char other_state[32] = "";
-    double t0 = mt_now();
-    while (mt_now() - t0 < 30) {
+    double t0 = mt_now(), max = mt_ceil(30);
+    while (mt_now() - t0 < max) {
         mpv_wait_event(h, 0.05);
         an_wave_free(&w);
         an_wave_read(h, &w);
