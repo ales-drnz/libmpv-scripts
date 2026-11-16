@@ -195,7 +195,6 @@ MEMCHECK_SLOW=(
   "pcm_tap_test idle the output underruns under valgrind and the tap has no window to read"
   "analysis_tail_test overcut the scan is slower than the download it is timed against"
   "analysis_hint_test short the scan ends after the stream is cached, the test wants it before"
-  "af_command_args_test labels the command lands before the seek rebuilt the filter and is refused"
   "ao_close_test silence ao_pcm writes silence with no pause and the teardown takes over 1 s"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}

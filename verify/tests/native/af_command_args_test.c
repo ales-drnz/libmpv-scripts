@@ -37,6 +37,7 @@
 
 static int m_seek, m_track, m_extern, m_reload, m_next, m_keep, m_rollback;
 static int af_changes; // property-change events of af
+static int restarts;   // playback-restart events
 static struct pb_ev ev;
 
 // Drains the events for up to ms into ev and af_changes.
@@ -61,6 +62,8 @@ static void pump(mpv_handle *h, int ms)
         }
         if (e->event_id == MPV_EVENT_FILE_LOADED)
             ev.loaded++;
+        if (e->event_id == MPV_EVENT_PLAYBACK_RESTART)
+            restarts++;
     }
 }
 
@@ -86,21 +89,31 @@ static int level(mpv_handle *h, double *out)
 
 static int near(double v, double want) { return v > want - 0.04 && v < want + 0.04; }
 
-// Waits up to 4 s for three reads in a row at want.
-static int wait_level(mpv_handle *h, double want, const char *what)
+// Waits for three reads in a row at want (a ceiling of 4 s, the time rule
+// of mpv_test.h); v gets the last read, -9 for none.
+static int reach_level(mpv_handle *h, double want, double *v)
 {
-    double t0 = mt_now(), v = 0;
-    int got = -1, in_row = 0;
-    while (mt_now() - t0 < 4) {
+    double t0 = mt_now();
+    int in_row = 0;
+    *v = -9.0;
+    while (mt_now() - t0 < mt_ceil(4)) {
         pump(h, 30);
-        got = level(h, &v);
-        in_row = got == 0 && near(v, want) ? in_row + 1 : 0;
+        int got = level(h, v);
+        if (got < 0)
+            *v = -9.0;
+        in_row = got == 0 && near(*v, want) ? in_row + 1 : 0;
         if (in_row == 3)
             break;
     }
-    mt_check(in_row == 3, "%s: level %.4f (want %.4f)", what,
-             got == 0 ? v : -9.0, want);
     return in_row == 3;
+}
+
+static int wait_level(mpv_handle *h, double want, const char *what)
+{
+    double v;
+    int ok = reach_level(h, want, &v);
+    mt_check(ok, "%s: level %.4f (want %.4f)", what, v, want);
+    return ok;
 }
 
 // Reads for ms: every read at want.
@@ -179,9 +192,14 @@ static int af_command(mpv_handle *h, const char *label, const char *opt,
     return r;
 }
 
+// Seeks and waits for the playback to restart: the seek rebuilt the
+// filters, and a level read after it is the rebuilt chain's.
 static void seek_to(mpv_handle *h, const char *pos)
 {
+    int before = restarts;
     mt_cmd(h, "seek", pos, "absolute", NULL);
+    mt_wait_until(5, restarts > before, pump(h, 20));
+    mt_check(restarts > before, "the seek to %s s restarted the playback", pos);
 }
 
 static int load(mpv_handle *h, const char *fx, const char *file)
@@ -190,9 +208,7 @@ static int load(mpv_handle *h, const char *fx, const char *file)
     snprintf(path, sizeof path, "%s/%s", fx, file);
     int before = ev.loaded;
     mt_cmd(h, "loadfile", path, NULL, NULL);
-    double t0 = mt_now();
-    while (ev.loaded == before && mt_now() - t0 < 5)
-        pump(h, 20);
+    mt_wait_until(5, ev.loaded > before, pump(h, 20));
     return ev.loaded > before;
 }
 
@@ -219,7 +235,7 @@ static void mode_live(mpv_handle *h, const char *fx)
              "af-command gain 6 succeeds");
     wait_level(h, 0.25 * DB6, "after af-command gain 6");
     af_is(h, "@aek_bass_0:lavfi-bass=gain=6.000", "after af-command");
-    pump(h, 100);
+    mt_wait_until(1, af_changes > before, pump(h, 20));
     mt_check(af_changes > before, "af observers heard of the command (%d events)",
              af_changes - before);
 
@@ -251,6 +267,7 @@ static void mode_live(mpv_handle *h, const char *fx)
                            "@aek_treble_0:lavfi-treble") >= 0,
                  "af set with the live value and a new stage");
         hold_level(h, 0.25 * DB6, 1500, "after the new stage");
+        mt_wait_until(2, ev.hits[1] > 0, pump(h, 20));
         mt_check(ev.hits[1] > 0, "the new stage got audio (%d)", ev.hits[1]);
         mt_check(ev.hits[0] == 0, "the bass stage was kept, not rebuilt (%d)",
                  ev.hits[0]);
@@ -288,7 +305,10 @@ static void mode_order(mpv_handle *h, const char *fx)
     af_is(h, want, "a named constant back at its default drops the key");
 
     af_set(h, "@e:lavfi-equalizer=f=1000:g=2,@b:lavfi-bass=gain=2.000");
-    pump(h, 300);
+    // The new chain plays: the peak at 1 kHz leaves DC alone, the bass
+    // gives it 2 dB.
+    double v;
+    reach_level(h, 0.25 * 1.25893, &v);
     af_command(h, "e", "gain", "4.000", "equalizer");
     af_command(h, "b", "gain", "0.000", "bass");
     af_is(h, "@e:lavfi-equalizer=f=1000:g=4.000,@b:lavfi-bass",
