@@ -38,6 +38,7 @@
 - The AES of OpenSSL is the constant-time C one (`OPENSSL_AES_CONST_TIME`). The assembly stays out: it is 1.3 MB of the Linux library.
 - Every build script starts its log with `start_build_log`. The Tizen and webOS logs keep their last lines at exit, as the others do.
 - The threads of the analysis are named `mak/scan`, `mak/scan-work` and `mak/scan-feed`.
+- The native tests follow one time rule, stated in `mpv_test.h`: they wait on a condition with a ceiling that grows under valgrind, and keep fixed windows only for what must not happen. `pcm_tap_test idle`, `ao_close_test silence` and `af_command_args_test labels` run under memcheck again.
 
 ## [0.4.1] - 15-11-2026
 
