@@ -56,10 +56,8 @@ int main(int argc, char **argv)
     an_flag(h, "loudness-scan-enabled", 1);
     atomic_store(&armed, 0);
     printf("     failed calloc of %zu bytes\n", atomic_load(&failed_size));
-    an_pump(h, 2.0, MPV_EVENT_NONE);
-    an_wave_read(h, &w);
-    an_loud_read(h, &lo);
-    printf("     2 s later: waveform %s, loudness %s\n", w.state, lo.state);
+    // Both final: failed, or what the start left instead.
+    an_wait_final(h, 1, 1, 2, &w, &lo);
     mt_check(atomic_load(&failed_size) > 0, "an allocation failed");
     mt_check(!strcmp(w.state, "failed"), "waveform failed (%s)", w.state);
     mt_check(!strcmp(lo.state, "failed"), "loudness failed (%s)", lo.state);

@@ -102,12 +102,12 @@ static void same_result(const struct an_wave *a, const struct an_loud *la,
 }
 
 // Answers the on_load hook with [url] as stream-open-filename and waits for
-// FILE_LOADED. Returns 0 when the load ends without it.
+// FILE_LOADED, up to mt_ceil(20) s. Returns 0 when the load ends without it.
 static int hook_loaded(mpv_handle *h, const char *url)
 {
-    double t0 = mt_now();
+    double t0 = mt_now(), max = mt_ceil(20);
     int hooked = 0;
-    while (mt_now() - t0 < 20) {
+    while (mt_now() - t0 < max) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == MPV_EVENT_HOOK) {
             mpv_event_hook *hk = e->data;
@@ -208,8 +208,9 @@ int main(int argc, char **argv)
         char url[64];
         snprintf(url, sizeof url, "fdclose://%d", fa);
         analyze(h, url, 0, &w1, &l1);
+        // The stop closes N (fdclose://), so the next open gets it again.
         mt_cmd(h, "stop", NULL, NULL, NULL);
-        an_pump(h, 1.0, MPV_EVENT_NONE);
+        mt_wait_until(1, fcntl(fa, F_GETFD) < 0, mpv_wait_event(h, 0.02));
         int fb = open(b, O_RDONLY);
         printf("     a.flac was descriptor %d, b.flac is %d\n", fa, fb);
         mt_check(fb == fa, "b.flac got the same number");
