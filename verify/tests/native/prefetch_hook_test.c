@@ -9,8 +9,8 @@
 //               least 1.2 s. r19 ran the on_load hook of b there and pumped
 //               mp_idle, which feeds no audio: time-pos stood still.
 //   transition  F9: a2.flac (2 s) first, the hook of b held 4 s. b starts
-//               within 0.5 s of the end of a, with its own on_load, while
-//               the hook is held. That cancels the hook: prefetch-state is
+//               within 0.5 s of the end of a (1.5 s under valgrind), with
+//               its own on_load, while the hook is held. That cancels the hook: prefetch-state is
 //               idle, prefetch-open-filename unavailable and not writable,
 //               and the late continue opens nothing.
 //   rewrite     the hook sets prefetch-open-filename to c.flac: the prefetch
@@ -132,9 +132,15 @@ static int pf_get_err(struct pf *p, const char *name)
     return r;
 }
 
-// Pumps events until cond holds or secs pass.
+// Pumps events until cond holds or the ceiling of secs runs out (the time
+// rule of mpv_test.h, rule 1).
 #define PF_WAIT(p, secs, hold, cond) \
-    for (double t_ = mt_now(); !(cond) && mt_now() - t_ < (secs);) \
+    mt_wait_until(secs, cond, pf_pump(p, 0.05, hold))
+
+// Pumps events for a fixed window of secs, for a check that nothing happens
+// in it (rule 2): not scaled.
+#define PF_WINDOW(p, secs, hold) \
+    for (double t_ = mt_now(); mt_now() - t_ < (secs);) \
         pf_pump(p, 0.05, hold)
 
 static void pf_seek_end(struct pf *p, double left)
@@ -214,8 +220,12 @@ int main(int argc, char **argv)
         PF_WAIT(&p, 5, 0, pf_is(&p, "prefetch-state", "ready"));
         mt_check(pf_is(&p, "prefetch-state", "ready"), "the prefetch of b opened after the hook");
     } else if (strcmp(mode, "transition") == 0) {
+        // The hook stays held 4 s, and under valgrind on until b loaded:
+        // b must start while it is held, and the time it takes to get
+        // there is a ceiling (the time rule of mpv_test.h).
         int after_b = 0;
-        while (mt_now() - p.t_held < 4.0) {
+        while (mt_now() - p.t_held < 4.0 ||
+               (p.loaded < 2 && mt_now() - p.t_held < mt_ceil(4.0))) {
             pf_pump(&p, 0.05, 1);
             if (p.loaded >= 2 && !after_b) {
                 after_b = 1;
@@ -230,15 +240,18 @@ int main(int argc, char **argv)
                          mpv_error_string(r));
             }
         }
+        // How long the transition took. A transition that waits for the
+        // hook comes after the hold, seconds late. Measured under valgrind
+        // on a loaded machine: at most 0.01 s.
         double late = p.loaded >= 2 ? p.t_loaded[1] - p.t_loaded[0] - 2.0 : 99;
-        mt_check(p.loaded >= 2 && late <= 0.5,
-                 "b started within 0.5 s of the end of a (%.2f s after it)", late);
+        double late_max = mt_bound(0.5, 1.5);
+        mt_check(p.loaded >= 2 && late <= late_max,
+                 "b started within %.1f s of the end of a (%.2f s after it)", late_max, late);
         mt_check(p.loads_held == 1, "b had its own on_load while the hook was held (%d)",
                  p.loads_held);
         int r = pf_release(&p);
         mt_check(r >= 0, "the late continue is accepted (%s)", mpv_error_string(r));
-        while (mt_now() - p.t_held < 4.5)
-            pf_pump(&p, 0.05, 1);
+        PF_WINDOW(&p, 0.5, 1);
         mt_check(p.prefetch_hooks == 1, "no other prefetch hook (%d)", p.prefetch_hooks);
         mt_check(mt_str_is(p.h, "path", b), "b still plays");
         pf_nothing_opened(&p, b, 1);
@@ -276,7 +289,10 @@ int main(int argc, char **argv)
         mt_check(r >= 0 && id == want, "prefetch-playlist-entry-id is b's (%lld, want %lld, %s)",
                  (long long)id, (long long)want, mpv_error_string(r));
         pf_release(&p);
-        pf_pump(&p, 0.2, 0);
+        PF_WAIT(&p, 2, 0, pf_get_err(&p, "prefetch-open-filename") ==
+                          MPV_ERROR_PROPERTY_UNAVAILABLE &&
+                          pf_get_err(&p, "prefetch-playlist-entry-id") ==
+                          MPV_ERROR_PROPERTY_UNAVAILABLE);
         r = pf_get_err(&p, "prefetch-open-filename");
         mt_check(r == MPV_ERROR_PROPERTY_UNAVAILABLE,
                  "prefetch-open-filename unavailable after the hook (%s)", mpv_error_string(r));
@@ -297,7 +313,7 @@ int main(int argc, char **argv)
                  mpv_error_string(r));
         r = pf_release(&p);
         mt_check(r >= 0, "the late continue is accepted (%s)", mpv_error_string(r));
-        PF_WAIT(&p, 0.5, 1, 0);
+        PF_WINDOW(&p, 0.5, 1);
         mt_check(mt_str_is(p.h, "path", a), "a still plays");
         pf_nothing_opened(&p, b, 0);
     } else if (strcmp(mode, "stop") == 0) {
@@ -305,16 +321,19 @@ int main(int argc, char **argv)
         double t = mt_now();
         mt_cmd(p.h, "stop", NULL, NULL, NULL);
         PF_WAIT(&p, 3, 1, p.idle > idle);
-        mt_check(p.idle > idle && p.t_idle - t < 0.5,
-                 "idle within 0.5 s of the stop with the hook held (%.2f s)",
-                 p.idle > idle ? p.t_idle - t : -1);
+        // A stop that waits for the hook never gets there while it is
+        // held. Measured under valgrind on a loaded machine: 0.06 s.
+        double stop_max = mt_bound(0.5, 2.0);
+        mt_check(p.idle > idle && p.t_idle - t < stop_max,
+                 "idle within %.1f s of the stop with the hook held (%.2f s)",
+                 stop_max, p.idle > idle ? p.t_idle - t : -1);
         mt_check(pf_is(&p, "prefetch-state", "idle"), "prefetch-state idle after the stop");
         int r = mpv_set_property_string(p.h, "prefetch-open-filename", c);
         mt_check(r < 0, "prefetch-open-filename not writable after the stop (%s)",
                  mpv_error_string(r));
         r = pf_release(&p);
         mt_check(r >= 0, "the late continue is accepted (%s)", mpv_error_string(r));
-        PF_WAIT(&p, 0.5, 1, 0);
+        PF_WINDOW(&p, 0.5, 1);
         pf_nothing_opened(&p, b, 0);
     } else if (strcmp(mode, "destroy") == 0) {
         double t = mt_now();
@@ -326,8 +345,7 @@ int main(int argc, char **argv)
         mt_cmd(p.h, "playlist-next", NULL, NULL, NULL);
         PF_WAIT(&p, 5, 1, p.loaded >= 2);
         mt_check(p.loaded >= 2, "b started with the hook held");
-        double t = mt_now();
-        PF_WAIT(&p, 1.0, 1, mt_now() - t >= 1.0);
+        PF_WINDOW(&p, 1.0, 1);
         mt_check(p.prefetch_hooks == 1, "no hook for the prefetch of c while b's is held (%d)",
                  p.prefetch_hooks);
         mt_check(pf_is(&p, "prefetch-state", "idle"), "prefetch-state idle");
