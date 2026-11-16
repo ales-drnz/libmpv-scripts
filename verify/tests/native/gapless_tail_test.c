@@ -29,11 +29,12 @@
 #include "playback_test.h"
 
 // Pumps until eof-reached and pause are both yes (the keep-open park) or
-// idle-active is yes, for up to 10 s. Returns 1 at the park, 2 at idle.
+// idle-active is yes, for up to 10 s (a ceiling, mt_ceil). Returns 1 at the
+// park, 2 at idle.
 static int wait_end(mpv_handle *h, struct pb_ev *ev)
 {
     double t0 = mt_now();
-    while (mt_now() - t0 < 10) {
+    while (mt_now() - t0 < mt_ceil(10)) {
         pb_pump(h, 5, ev);
         char *e = mt_str(h, "eof-reached"), *p = mt_str(h, "pause"),
              *i = mt_str(h, "idle-active");
@@ -108,7 +109,7 @@ int main(int argc, char **argv)
         // idle-active was read with a get, the log messages come as events:
         // those of the drain, sent before mpv went idle, may still wait in
         // the queue.
-        pb_pump(h, 300, &ev);
+        mt_wait_until(0.3, ev.hits[0] >= 1, pb_pump(h, 20, &ev));
         mt_check(ev.hits[0] >= 1,
                  "the tail was drained before the output closed (%d)",
                  ev.hits[0]);
