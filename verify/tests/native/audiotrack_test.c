@@ -36,6 +36,8 @@
 #include <unistd.h>
 
 #include "audio/out/ao_audiotrack.c"
+// mt_wait_until, the ceiling of the time rule.
+#include "mpv_test.h"
 
 #define RATE 48000
 #define FIFO_MAX (1 << 16)
@@ -585,8 +587,8 @@ int main(int argc, char **argv)
     bool silence = !strcmp(mode, "silence");
     struct ao *ao = open_ao(silence);
     ao->driver->start(ao);
-    sleep_ms(500);
-    check(played_count() > RATE / 4, "the track plays (%d frames in 0.5 s)", played_count());
+    mt_wait_until(1, played_count() > RATE / 4, sleep_ms(1));
+    check(played_count() > RATE / 4, "the track plays (%d frames)", played_count());
 
     if (!strcmp(mode, "underrun") || !strcmp(mode, "silence")) {
         if (silence)
@@ -619,6 +621,9 @@ int main(int argc, char **argv)
         pthread_mutex_lock(&sim_lock);
         tracks[0].dead = true;
         pthread_mutex_unlock(&sim_lock);
+        // The reload is asked at the first failed write, then 1 s for a
+        // write loop or a second reload to show.
+        mt_wait_until(1, atomic_load(&reload_requests) >= 1, sleep_ms(1));
         sleep_ms(1000);
         int w = atomic_load(&writes) - w0;
         pthread_mutex_lock(&sim_lock);
@@ -640,7 +645,7 @@ int main(int argc, char **argv)
             atomic_store(&src_paused, false);
             int at = played_count();            // the track was flushed
             ao->driver->start(ao);              // resume after a reset
-            sleep_ms(500);
+            mt_wait_until(1, played_count() > at + RATE / 4, sleep_ms(1));
             int64_t first = 0;
             int old_after = 0;
             pthread_mutex_lock(&sim_lock);
@@ -653,8 +658,9 @@ int main(int argc, char **argv)
                   "after the seek the source plays from its start, whole (first %lld, %lld lost)",
                   (long long)first, (long long)lost);
         } else {
+            int p0 = played_count();
             player_pause(ao, false);
-            sleep_ms(500);
+            mt_wait_until(1, played_count() > p0 + RATE / 4, sleep_ms(1));
             if (getenv("VERBOSE")) {
                 pthread_mutex_lock(&sim_lock);
                 printf("     after resume: state %d, queue %d, played %d, last %lld, writes %d, reads %d\n",
