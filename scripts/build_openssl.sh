@@ -87,6 +87,8 @@ build_openssl() {
     # ARMv8 Crypto extensions or NEON: fast enough for the bitrates of
     # audio. OPENSSL_AES_CONST_TIME makes the C AES of aes_core.c the
     # constant-time one, not the table one, whose timing follows the key.
+    # It does not reach GHASH, the hash of AES-GCM, which stays the C one
+    # of gcm128.c with its 4-bit table.
     # Windows aarch64 needs no-asm in any case, see build_libmpv_windows.sh.
     #
     # no-atexit: OpenSSL would register atexit(OPENSSL_cleanup) at first TLS

@@ -35,7 +35,7 @@
 - The FFmpeg patches follow 9.0.2. `filter_bounds` leaves to upstream the checks of `af_aecho.c` and `af_pan.c`, and `read_error` takes libavformat 63.
 - The native tests build libplacebo 7.387.0 from its pinned tag, `ao_close_test` sees the file `mp_fopen` opens, and the `sanitizers` job of `checks.yml` runs them under valgrind memcheck and with UBSan on every push.
 - `verify_mpv_config` asserts lua, libcurl and dvda off.
-- The AES of OpenSSL is the constant-time C one (`OPENSSL_AES_CONST_TIME`). The assembly stays out: it is 1.3 MB of the Linux library.
+- The AES of OpenSSL is the constant-time C one (`OPENSSL_AES_CONST_TIME`). GHASH, the hash of AES-GCM, stays the C one with tables. The assembly stays out: it is 1.3 MB of the Linux library.
 - Every build script starts its log with `start_build_log`. The Tizen and webOS logs keep their last lines at exit, as the others do.
 - The threads of the analysis are named `mak/scan`, `mak/scan-work` and `mak/scan-feed`.
 - The native tests follow one time rule, stated in `mpv_test.h`: they wait on a condition with a ceiling that grows under valgrind, and keep fixed windows only for what must not happen. `pcm_tap_test idle`, `ao_close_test silence` and `af_command_args_test labels` run under memcheck again.
