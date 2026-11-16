@@ -97,11 +97,11 @@ int fclose(FILE *f)
     return real_fclose(f);
 }
 
-// Waits up to secs for the event, logging what goes by. 1 if seen.
+// Waits for the event, up to secs (a ceiling, mt_ceil). 1 if seen.
 static int wait_event(mpv_handle *h, int id, double secs)
 {
     double t0 = mt_now();
-    while (mt_now() - t0 < secs) {
+    while (mt_now() - t0 < mt_ceil(secs)) {
         mpv_event *e = mpv_wait_event(h, 0.05);
         if (e->event_id == id)
             return 1;
@@ -109,10 +109,11 @@ static int wait_event(mpv_handle *h, int id, double secs)
     return 0;
 }
 
+// Waits until the property reads want, up to secs (a ceiling, mt_ceil).
 static int wait_prop(mpv_handle *h, const char *name, const char *want, double secs)
 {
     double t0 = mt_now();
-    while (mt_now() - t0 < secs) {
+    while (mt_now() - t0 < mt_ceil(secs)) {
         char *v = mt_str(h, name);
         int ok = v && strcmp(v, want) == 0;
         mpv_free(v);
@@ -197,7 +198,12 @@ int main(int argc, char **argv)
     double took = mt_now() - t0;
 
     printf("terminate_destroy took %.3f s\n", took);
-    mt_check(took < 1.0, "no drain on the way out (%.3f s)", took);
+    // ao_pcm is untimed: a drain ends once it took everything, and the
+    // bound fails a teardown that hangs. Under valgrind silence took 1.5 to
+    // 2.2 s on CI, ao_pcm writing silence with no pause next to the core.
+    double bound = mt_bound(1.0, 5.0);
+    mt_check(took < bound, "no drain on the way out (%.3f s, under %.0f s)",
+             took, bound);
     if (pcm) {
         printf("pcm file opened %d times on '%s', closed %d times on '%s'\n",
                atomic_load(&opens), open_thread, atomic_load(&closes), close_thread);
