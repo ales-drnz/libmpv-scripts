@@ -192,7 +192,7 @@ OPEN_DEFECTS=()
 # time against playback or a download, and valgrind runs them too slowly:
 # each fails there with no report of memcheck and passes without valgrind.
 MEMCHECK_SLOW=(
-  "analysis_tail_test overcut the scan is slower than the download it is timed against"
+  "analysis_tail_test overcut the open of the player is cut at 400000 bytes before the pass reads, so there is no re-open"
   "analysis_hint_test short the scan ends after the stream is cached, the test wants it before"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
