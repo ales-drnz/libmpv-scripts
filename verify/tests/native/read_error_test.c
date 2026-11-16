@@ -176,6 +176,7 @@ struct st {
     int read_error;     // last notified demuxer-read-error, -1 unavailable
     int64_t skipped;    // last notified demuxer-skipped-segments
     int eof;            // last notified eof-reached
+    int restarts;       // playback-restart events
     int yes_seen;       // demuxer-read-error notified yes since START_FILE
     int no_after_yes;   // ... then no again, within the same file
 };
@@ -197,6 +198,8 @@ static void pump(mpv_handle *h, int ms, struct st *s)
         }
         if (e->event_id == MPV_EVENT_FILE_LOADED)
             s->loaded++;
+        if (e->event_id == MPV_EVENT_PLAYBACK_RESTART)
+            s->restarts++;
         if (e->event_id == MPV_EVENT_END_FILE && s->ends < 8) {
             mpv_event_end_file *ef = e->data;
             s->end_reason[s->ends] = ef->reason;
@@ -232,12 +235,11 @@ static void pump(mpv_handle *h, int ms, struct st *s)
     }
 }
 
-// Pumps until cond() or ms; returns cond().
+// Pumps until cond() or the ceiling of ms (the time rule of mpv_test.h);
+// returns cond().
 static int wait_for(mpv_handle *h, struct st *s, int ms, int (*cond)(struct st *))
 {
-    double t0 = mt_now();
-    while (!cond(s) && (mt_now() - t0) * 1000 < ms)
-        pump(h, 20, s);
+    mt_wait_until(ms / 1000.0, cond(s), pump(h, 20, s));
     return cond(s);
 }
 
@@ -247,6 +249,8 @@ static int five_ends(struct st *s) { return s->ends >= 5; }
 static int one_end(struct st *s) { return s->ends >= 1; }
 static int two_ends(struct st *s) { return s->ends >= 2; }
 static int two_loaded(struct st *s) { return s->loaded >= 2; }
+static int yes_notified(struct st *s) { return s->yes_seen; }
+static int no_notified(struct st *s) { return s->no_after_yes; }
 
 // eof-reached now: 1, 0, or -1 when unavailable.
 static int eof_now(mpv_handle *h)
@@ -256,22 +260,27 @@ static int eof_now(mpv_handle *h)
 }
 
 // Pumps until eof-reached reads want for the file of START_FILE number
-// starts, or ms. Read, not notified: a notification of the file before can
-// come after the next START_FILE.
+// starts, or the ceiling of ms. Read, not notified: a notification of the
+// file before can come after the next START_FILE.
 static int wait_eof(mpv_handle *h, struct st *s, int starts, int want, int ms)
 {
-    double t0 = mt_now();
-    while ((s->starts != starts || eof_now(h) != want) && (mt_now() - t0) * 1000 < ms)
-        pump(h, 20, s);
+    mt_wait_until(ms / 1000.0, s->starts == starts && eof_now(h) == want, pump(h, 20, s));
     return s->starts == starts && eof_now(h) == want;
 }
 
+// keep-open-parked now: 1 once the output played out at the park.
+static int parked_now(mpv_handle *h)
+{
+    int f = 0;
+    return mpv_get_property(h, "keep-open-parked", MPV_FORMAT_FLAG, &f) >= 0 && f;
+}
+
 // time-pos at a park, once the output played the audio it held when
-// eof-reached turned yes (a few hundred ms).
+// eof-reached turned yes (a few hundred ms): keep-open parked.
 static double park_pos(mpv_handle *h, struct st *s)
 {
     double pos = -1;
-    pump(h, 700, s);
+    mt_wait_until(5, parked_now(h), pump(h, 20, s));
     mt_double(h, "time-pos", &pos);
     return pos;
 }
@@ -458,8 +467,7 @@ int main(int argc, char **argv)
         const char *paused[] = {"loadfile", n4, "replace", "-1", "start=1.5,pause=yes", NULL};
         int loaded = s.loaded;
         mpv_command(h, paused);
-        for (double t0 = mt_now(); s.loaded == loaded && mt_now() - t0 < 5;)
-            pump(h, 20, &s);
+        mt_wait_until(5, s.loaded > loaded, pump(h, 20, &s));
         mt_check(s.loaded > loaded, "n.flac loaded paused");
         pump(h, 300, &s);
         mt_cmd(h, "stop", NULL, NULL, NULL);
@@ -527,6 +535,8 @@ int main(int argc, char **argv)
                      eof_cached_now(h));
         if (m_cutpark || m_seekback || m_retry) {
             mt_check(now == 1, "demuxer-read-error yes at the park (%d)", now);
+            // The notification can come after the property reads yes.
+            wait_for(h, &s, 2000, yes_notified);
             mt_check(s.yes_seen, "demuxer-read-error notified yes");
             if (m_cutpark)
                 mt_check(pos > 1.5 && pos < 2.6, "the park is at the cut, 2 s (%.2f)", pos);
@@ -534,6 +544,8 @@ int main(int argc, char **argv)
                 mt_check(pos > 2.0 && pos < 3.2, "the park is at the cut, 2.7 s (%.2f)", pos);
         } else {
             mt_check(now == 0, "demuxer-read-error no at the park (%d)", now);
+            // A window for a late notification of yes.
+            pump(h, 700, &s);
             mt_check(!s.yes_seen, "demuxer-read-error never notified yes");
         }
         if (m_resume)
@@ -555,6 +567,7 @@ int main(int argc, char **argv)
             now = read_error_now(h);
             pos = park_pos(h, &s);
             printf("second park: time-pos %.2f, demuxer-read-error %d\n", pos, now);
+            wait_for(h, &s, 2000, no_notified);
             mt_check(s.no_after_yes, "demuxer-read-error back to no once the read resumed");
             mt_check(now == 0, "demuxer-read-error no at the real end (%d)", now);
             mt_check(pos > 3.8, "the second park is at the real end (%.2f)", pos);
@@ -562,9 +575,13 @@ int main(int argc, char **argv)
         if (m_retry) {
             const char *to = retry_back ? "0.5" : "2.9";
             // The server is still down: the read is tried again and fails.
-            // A seek that fails at once may leave eof-reached yes throughout.
-            if (!seek_play(h, &s, to, 3000))
-                pump(h, 2000, &s);
+            // A seek that fails at once may leave eof-reached yes
+            // throughout: the restart of the playback after it ends the
+            // wait then.
+            int restarts = s.restarts;
+            mt_cmd(h, "seek", to, "absolute", NULL);
+            mpv_set_property_string(h, "pause", "no");
+            mt_wait_until(3, eof_now(h) == 0 || s.restarts > restarts, pump(h, 20, &s));
             mt_check(wait_eof(h, &s, 1, 1, 30000), "parked again with the server down");
             now = read_error_now(h);
             pos = park_pos(h, &s);
@@ -583,6 +600,7 @@ int main(int argc, char **argv)
             now = read_error_now(h);
             pos = park_pos(h, &s);
             printf("second park: time-pos %.2f, demuxer-read-error %d\n", pos, now);
+            wait_for(h, &s, 2000, no_notified);
             mt_check(s.no_after_yes, "demuxer-read-error back to no once the read resumed");
             mt_check(now == 0, "demuxer-read-error no at the real end (%d)", now);
             mt_check(pos > 3.8, "the second park is at the real end (%.2f)", pos);
@@ -592,9 +610,7 @@ int main(int argc, char **argv)
         }
         int before = s.ends;
         mt_cmd(h, "stop", NULL, NULL, NULL);
-        double t0 = mt_now();
-        while (s.ends == before && mt_now() - t0 < 5)
-            pump(h, 20, &s);
+        mt_wait_until(5, s.ends > before, pump(h, 20, &s));
         check_end(&s, before, MPV_END_FILE_REASON_STOP, m_cutpark, 0, "stop after the park");
     }
 
