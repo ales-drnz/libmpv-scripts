@@ -171,7 +171,9 @@ int main(int argc, char **argv)
         // 8 bytes per sum.
         atomic_store(&fail_size, 2250 * 8);
         mpv_handle *h = start(file, 1, 1);
-        an_wait_final(h, 1, 1, 300, &w, &lo);
+        // 900 s of audio: about 2 s natively, 74 s under valgrind, where
+        // mt_ceil makes the ceiling 600 s.
+        an_wait_final(h, 1, 1, 60, &w, &lo);
         mt_check(atomic_load(&failed_allocs) == 1,
                  "one worker's accumulator failed to allocate (%d)",
                  atomic_load(&failed_allocs));

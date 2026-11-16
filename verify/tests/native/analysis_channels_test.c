@@ -50,12 +50,11 @@ int main(int argc, char **argv)
 
     struct an_wave w;
     struct an_loud l;
-    // A bound, not a measure: the wait ends when both are final. Under
+    // A ceiling, not a measure: the wait ends when both are final. Under
     // valgrind on a CI runner the 16 channels of opus16 take about 30 s with
     // the loudness on (29.2 s on one run, 1736 of 2000 bins at 30 s on a
-    // slower one), so 30 s was the edge; 90 s stays inside the 120 s each
-    // mode has without valgrind.
-    an_wait_final(h, wave, loud, 90, &w, &l);
+    // slower one), inside the 300 s mt_ceil makes of 30 s there.
+    an_wait_final(h, wave, loud, 30, &w, &l);
     if (wave) {
         mt_check(!strcmp(w.state, "ready"), "waveform ready (%s)", w.state);
         mt_check(w.bins > 0 && w.filled == w.bins, "every bin filled (%d of %d)",
