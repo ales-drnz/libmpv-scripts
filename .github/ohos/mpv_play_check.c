@@ -5,11 +5,12 @@
 // mpv_play_check <libmpv> <file>: plays <file> through ao_ohaudio with the
 // libmpv of the OHOS build, run on the Oniro emulator with hdc shell (no
 // HAP, so no signing). <file> is the fixture of make_tone.py: 440 Hz
-// for 3 s, then 660 Hz. It plays past 2.5 s, seeks to 3.5 s and plays 1.5
-// s more, then quits: check_tone.py reads the emulator's WAV for the 440
-// Hz, then the 660 Hz with no 440 after it (a flush that kept old audio).
-// Prints MAK_OHOS_NATIVE PASS or FAIL from what mpv says: playback-time,
-// current-ao ohaudio, the seek done. The client API is taken with dlsym,
+// for 3 s, then 660 Hz. It plays past 2.5 s, seeks to 3.5 s and plays to
+// 4.5 s, pauses 1 s, plays on to 5.5 s, then quits: check_tone.py reads the
+// emulator's WAV for the 440 Hz, then the 660 Hz with no 440 after it (a
+// flush that kept old audio). Prints MAK_OHOS_NATIVE PASS or FAIL from
+// what mpv says: playback-time, current-ao ohaudio, the seek done, the
+// position held through the pause and moving again after it. The client API is taken with dlsym,
 // so the check needs no mpv header.
 #include <dlfcn.h>
 #include <stdio.h>
@@ -21,6 +22,7 @@ typedef void *(*create_fn)(void);
 typedef int (*init_fn)(void *);
 typedef int (*set_option_fn)(void *, const char *, const char *);
 typedef int (*command_fn)(void *, const char **);
+typedef int (*set_property_fn)(void *, const char *, const char *);
 typedef char *(*get_string_fn)(void *, const char *);
 typedef void (*free_fn)(void *);
 typedef void (*destroy_fn)(void *);
@@ -56,7 +58,9 @@ int main(int argc, char **argv)
     get = (get_string_fn)dlsym(lib, "mpv_get_property_string");
     mpv_free = (free_fn)dlsym(lib, "mpv_free");
     destroy_fn destroy = (destroy_fn)dlsym(lib, "mpv_terminate_destroy");
-    if (!create || !initialize || !set_option || !command || !get || !mpv_free || !destroy) {
+    set_property_fn set_property = (set_property_fn)dlsym(lib, "mpv_set_property_string");
+    if (!create || !initialize || !set_option || !command || !get || !mpv_free || !destroy ||
+        !set_property) {
         printf("MAK_OHOS_NATIVE FAIL missing client API symbols\n");
         return 1;
     }
@@ -85,13 +89,26 @@ int main(int argc, char **argv)
     const char *seek[] = {"seek", "3.5", "absolute+exact", NULL};
     int seek_err = command(mpv, seek);
     double after = 0;
-    for (int i = 0; i < 100 && after < 5.0; i++) {
+    for (int i = 0; i < 100 && after < 4.5; i++) {
         usleep(100 * 1000);
         after = number(mpv, "playback-time");
     }
-    int ok = before > 2.5 && !seek_err && after >= 5.0 && ao && !strcmp(ao, "ohaudio");
-    printf("MAK_OHOS_NATIVE %s playback-time=%.2f then %.2f after the seek, current-ao=%s "
-           "audio-out-params=%s\n", ok ? "PASS" : "FAIL", before, after, ao ? ao : "-",
+    set_property(mpv, "pause", "yes");
+    usleep(200 * 1000);
+    double paused = number(mpv, "playback-time");
+    usleep(1000 * 1000);
+    double held = number(mpv, "playback-time");
+    set_property(mpv, "pause", "no");
+    double resumed = held;
+    for (int i = 0; i < 100 && resumed < 5.5; i++) {
+        usleep(100 * 1000);
+        resumed = number(mpv, "playback-time");
+    }
+    int ok = before > 2.5 && !seek_err && after >= 4.5 && held - paused < 0.05 &&
+             resumed >= 5.5 && ao && !strcmp(ao, "ohaudio");
+    printf("MAK_OHOS_NATIVE %s playback-time=%.2f, %.2f after the seek, %.2f to %.2f "
+           "paused, %.2f after the resume, current-ao=%s audio-out-params=%s\n",
+           ok ? "PASS" : "FAIL", before, after, paused, held, resumed, ao ? ao : "-",
            params ? params : "-");
     if (ao)
         mpv_free(ao);

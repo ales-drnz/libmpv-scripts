@@ -5,8 +5,8 @@
 """What the emulator's sound card played, as QEMU's wav audiodev wrote it,
 for mpv_play_check.c: the fixture is 440 Hz for 3 s then 660 Hz, the
 client plays past 2.5 s, seeks to 3.5 s and plays 1.5 s more. The WAV is
-read in 50 ms windows, each a tone (its frequency from the zero crossings
-of the first channel) or silence. Passes with at least 2 s of 440 Hz,
+read in 50 ms windows, each a tone (its frequency from the period between
+the rising zero crossings of the first channel), silence or neither. Passes with at least 2 s of 440 Hz,
 then at least 1 s of 660 Hz, and no 440 Hz window after the first 660 Hz
 one: audio from before the seek, played after it, is a flush that kept
 old frames.
@@ -50,9 +50,16 @@ for i in range(0, n - win + 1, win):
     if rms < 500:
         labels.append('-')
         continue
-    rises = sum(1 for a, b in zip(w, w[1:]) if a < 0 <= b)
-    freq = rises * rate / win
-    labels.append('a' if abs(freq - 440) <= 40 else 'b' if abs(freq - 660) <= 40 else '?')
+    # The period between rising zero crossings, not their count: a window
+    # that is part tone and part silence (a seek, a pause, the end) has
+    # fewer crossings but the same period.
+    rises = [k for k in range(1, win) if w[k - 1] < 0 <= w[k]]
+    gaps = [b - a for a, b in zip(rises, rises[1:])]
+    if len(gaps) < 3 or max(gaps) > 1.5 * sorted(gaps)[len(gaps) // 2]:
+        labels.append('?')
+        continue
+    freq = rate * len(gaps) / (rises[-1] - rises[0])
+    labels.append('a' if abs(freq - 440) <= 20 else 'b' if abs(freq - 660) <= 20 else '?')
 
 line = ''.join(labels)
 a_first = line.find('a')
