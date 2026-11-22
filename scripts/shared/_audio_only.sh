@@ -1211,6 +1211,17 @@ apply_ffmpeg_patches() {
   else
     warn "Skipping disabled patch: embed_cacert"
   fi
+
+  # TLS option ca_extra_file: certificates trusted on top of the roots in
+  # use (embedded or not), where ca_file replaces them. Reached through
+  # stream-lavf-o.
+  if patch_on tls_extra_ca; then
+    log "Patching FFmpeg's OpenSSL backend with ca_extra_file..."
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_tls_extra_ca.py" "$ffmpeg_dir"
+    record_patch tls_extra_ca
+  else
+    warn "Skipping disabled patch: tls_extra_ca"
+  fi
 }
 
 # ── mpv patch application (the shared mpv patch set, every platform) ────────

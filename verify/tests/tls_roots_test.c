@@ -13,8 +13,12 @@
 //   verify=1: the bundle and the system store load and the self signed
 //             server is refused; with ca_file set to its certificate it is
 //             accepted; an empty ca_file means the bundle again.
+//   ca_extra_file (patch_ffmpeg_tls_extra_ca.py): the server's certificate
+//             as ca_extra_file opens it with the bundle still loaded, on
+//             top of a ca_file too; a missing file leaves the refusal; with
+//             verify=0 nothing is read.
 //
-// Usage: tls_roots_test <port> <server certificate>
+// Usage: tls_roots_test <port> <server certificate> <other certificate>
 #include <stdio.h>
 #include <stdlib.h>
 #include <openssl/pem.h>
@@ -39,7 +43,8 @@ int __wrap_SSL_CTX_set_default_verify_paths(SSL_CTX *ctx)
     return __real_SSL_CTX_set_default_verify_paths(ctx);
 }
 
-static int open_once(int port, int verify, const char *ca_file)
+static int open_with(int port, int verify, const char *ca_file,
+                     const char *ca_extra_file)
 {
     char url[64];
     AVIOContext *io = NULL;
@@ -48,11 +53,18 @@ static int open_once(int port, int verify, const char *ca_file)
     av_dict_set(&opts, "tls_verify", verify ? "1" : "0", 0);
     if (ca_file)
         av_dict_set(&opts, "ca_file", ca_file, 0);
+    if (ca_extra_file)
+        av_dict_set(&opts, "ca_extra_file", ca_extra_file, 0);
     int r = avio_open2(&io, url, AVIO_FLAG_READ, NULL, &opts);
     av_dict_free(&opts);
     if (r >= 0)
         avio_closep(&io);
     return r;
+}
+
+static int open_once(int port, int verify, const char *ca_file)
+{
+    return open_with(port, verify, ca_file, NULL);
 }
 
 static int fails;
@@ -64,8 +76,9 @@ static void check(int ok, const char *what)
 
 int main(int argc, char **argv)
 {
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s <port> <server certificate>\n", argv[0]);
+    if (argc < 4) {
+        fprintf(stderr, "usage: %s <port> <server certificate> <other certificate>\n",
+                argv[0]);
         return 2;
     }
     int port = atoi(argv[1]);
@@ -95,6 +108,27 @@ int main(int argc, char **argv)
     printf("verify=1, ca_file \"\": open %d, %ld roots parsed\n", r, pem_reads - p0);
     check(r < 0 && pem_reads - p0 > 100,
           "verify=1 with an empty ca_file uses the bundle and refuses");
+
+    p0 = pem_reads, d0 = default_paths;
+    r = open_with(port, 1, NULL, argv[2]);
+    printf("verify=1, ca_extra_file: open %d, %ld roots parsed, %ld system stores\n",
+           r, pem_reads - p0, default_paths - d0);
+    check(r >= 0, "verify=1 with ca_extra_file of the server opens");
+    check(pem_reads - p0 > 100 && default_paths - d0 == 1,
+          "ca_extra_file keeps the embedded roots and the system store");
+
+    r = open_with(port, 1, argv[3], NULL);
+    check(r < 0, "verify=1 with ca_file of another certificate refuses");
+    r = open_with(port, 1, argv[3], argv[2]);
+    check(r >= 0, "ca_extra_file trusts the server on top of a ca_file too");
+
+    r = open_with(port, 1, NULL, "/nonexistent/extra.pem");
+    check(r < 0, "a ca_extra_file that cannot be read leaves the refusal");
+
+    p0 = pem_reads, d0 = default_paths;
+    r = open_with(port, 0, NULL, argv[2]);
+    check(r >= 0 && pem_reads == p0 && default_paths == d0,
+          "verify=0 with ca_extra_file reads nothing");
 
     avformat_network_deinit();
     if (fails)
