@@ -200,11 +200,14 @@ int main(int argc, char **argv)
     printf("terminate_destroy took %.3f s\n", took);
     // ao_pcm is untimed: a drain ends once it took everything, and the
     // bound fails a teardown that hangs. Under valgrind silence took 1.5 to
-    // 2.2 s on CI, ao_pcm writing silence with no pause next to the core,
-    // and once 7.9 s (Checks 45047475032, a libmpv the same as the runs
-    // before); 0.4 to 1.2 s locally. The slow bound is that spread, not a
-    // pace: a hang still fails it.
-    double bound = mt_bound(1.0, 20.0);
+    // 2.2 s on CI, ao_pcm writing silence with no pause next to the core;
+    // on the runner image of 16-11-2026 7.9 s and 30.9 s (Checks 45047475032
+    // and 45067175751, with the libmpv and the test of the runs that
+    // passed, main's among them), 0.06 to 1.4 s locally on 1 to 16 cores.
+    // valgrind runs one thread at a time and the writer rarely yields, so the
+    // time is the runner's scheduling. The slow bound stays far from a hang,
+    // which only the mode's timeout (MEMCHECK_TIMEOUT) would end.
+    double bound = mt_bound(1.0, 120.0);
     mt_check(took < bound, "no drain on the way out (%.3f s, under %.0f s)",
              took, bound);
     if (pcm) {
