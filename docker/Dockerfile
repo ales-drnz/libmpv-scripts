@@ -20,6 +20,7 @@
 #             2.31, so the libmpv it links loads on every distro since then.
 #   linux-noble : base + GCC cross (x86_64 + aarch64) + native audio/X11
 #             dev libs; what `verify` builds on.
+#   ohos    : base (the OpenHarmony SDK comes at build time)
 #   windows : base + GNU MinGW-w64 (x86_64) + llvm-mingw (aarch64)
 #   android : base alias — the NDK is fetched at runtime by build_libmpv_android.sh
 #   verify  : linux-noble + the windows cross-compilers + qemu-user +
@@ -239,6 +240,17 @@ FROM base AS tizen
 RUN apt-get update && apt-get install -y --no-install-recommends \
       clang lld llvm \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ohos — OpenHarmony and HarmonyOS (arm64-v8a, x86_64)
+# ══════════════════════════════════════════════════════════════════════════════
+# Nothing on top of base: build_libmpv_ohos.sh fetches the public
+# OpenHarmony SDK at its pin (scripts/ohos/ohos_sdk.sh) into the build dir,
+# so the image stays small and the 2.5 GB of the SDK go to the Actions cache
+# of the job, not into a layer.
+FROM base AS ohos
 
 WORKDIR /src
 
