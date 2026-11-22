@@ -180,7 +180,9 @@ jobs:
           hdc shell "chmod 755 /data/local/tmp/mak/mpv_play_check"
           hdc shell "cd /data/local/tmp/mak && ./mpv_play_check ./libmpv.so ./tone.wav; echo rc=\$?" | tee native.log
           grep -q 'MAK_OHOS_NATIVE PASS' native.log
+      # Also when the client failed: what was heard tells why.
       - name: What the sound card played
+        if: success() || failure()
         run: |
           ls -la out.wav
           python3 -I .github/ohos/check_tone.py out.wav | tee tone.log

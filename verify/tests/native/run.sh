@@ -197,6 +197,8 @@ OPEN_DEFECTS=()
 MEMCHECK_SLOW=(
   "analysis_tail_test overcut the open of the player is cut at 400000 bytes before the pass reads, so there is no re-open"
   "analysis_hint_test short the scan ends after the stream is cached, the test wants it before"
+  "ao_ohaudio_test interrupt the delay is measured from the resume, before the first timestamp valgrind holds back"
+  "ao_ohaudio_test stop the delay is measured from the resume, before the first timestamp valgrind holds back"
 )
 # <test> <arguments>: {mpv} pristine mpv, {ffmpeg} pristine FFmpeg, {src}
 # and {build} the patched tree and its build. The work dir comes last.

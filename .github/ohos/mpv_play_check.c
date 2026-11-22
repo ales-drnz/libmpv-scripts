@@ -71,6 +71,10 @@ int main(int argc, char **argv)
     set_option(mpv, "video", "no");
     set_option(mpv, "ao", "ohaudio");
     set_option(mpv, "audio-fallback-to-null", "no");
+    // Held at the end instead of going idle: on a slow emulator (TCG) the
+    // end can come between two reads, and an idle player has no
+    // playback-time.
+    set_option(mpv, "keep-open", "yes");
     if (initialize(mpv) < 0) {
         printf("MAK_OHOS_NATIVE FAIL mpv_initialize\n");
         return 1;
