@@ -155,7 +155,7 @@ if [[ ! -f "$BLD/config.h" ]]; then
   rm -rf "$SRC" "$BLD" "$FFPREFIX" "$WORK/pristine"
   tar -xzf "$TARBALL" -C "$WORK/src" || die "cannot extract $TARBALL"
   mkdir -p "$WORK/pristine" "$BLD"
-  for f in tls_openssl.c tls.h http.c hls.c dashdec.c mov.c isom.h; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
+  for f in tls_openssl.c tls.h rtsp.c rtsp.h http.c hls.c dashdec.c mov.c isom.h; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" \
     > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "patch_ffmpeg_libsmb2.py failed"; }
   ( cd "$BLD" && "$SRC/configure" --prefix="$FFPREFIX" --cc="$CC" --toolchain="$TOOLCHAIN" \
@@ -171,7 +171,7 @@ fi
 # keeps them newer than their objects, so make rebuilds them).
 { python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" &&
   touch "$SRC/libavformat/libsmb2.c" &&
-  for f in tls_openssl.c tls.h http.c hls.c dashdec.c mov.c isom.h; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
+  for f in tls_openssl.c tls.h rtsp.c rtsp.h http.c hls.c dashdec.c mov.c isom.h; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$SRC" &&
   if patch_on tls_extra_ca; then
     python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_tls_extra_ca.py" "$SRC"

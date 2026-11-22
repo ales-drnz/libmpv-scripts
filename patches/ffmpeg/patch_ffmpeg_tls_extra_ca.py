@@ -26,6 +26,9 @@ as for ``ca_file``.
 Modifies:
   - libavformat/tls.h         (TLSShared.ca_extra_file, the client option)
   - libavformat/tls_openssl.c (load it after the roots, before the verify)
+  - libavformat/rtsp.h, rtsp.c (the other user of FF_TLS_CLIENT_OPTIONS:
+                               its tls_opts get the field, and pass it on to
+                               tls as they pass ca_file)
 
 Independent of patch_ffmpeg_embed_cacert.py: it anchors after
 openssl_init_ca_key_cert, whichever roots that loaded.
@@ -44,11 +47,13 @@ MARKER = 'MAK_TLS_EXTRA_CA_V1'
 
 TLS_H = 'libavformat/tls.h'
 TLS = 'libavformat/tls_openssl.c'
+RTSP_H = 'libavformat/rtsp.h'
+RTSP = 'libavformat/rtsp.c'
 
 
 def apply(p):
-    if p.marked(TLS_H) and p.marked(TLS):
-        print('Already patched: %s, %s' % (TLS_H, TLS))
+    if all(p.marked(f) for f in (TLS_H, TLS, RTSP_H, RTSP)):
+        print('Already patched: %s, %s, %s, %s' % (TLS_H, TLS, RTSP_H, RTSP))
         return
     p.edits(TLS_H, [
         ('TLSShared ca_file field',
@@ -81,6 +86,23 @@ def apply(p):
          '        !SSL_CTX_load_verify_locations(c->ctx, s->ca_extra_file, NULL))\n'
          '        av_log(h, AV_LOG_ERROR, "ca_extra_file %s: %s\\n",\n'
          '               s->ca_extra_file, openssl_get_error(c));\n'),
+    ], marker=MARKER)
+    p.edits(RTSP_H, [
+        ('RTSPState tls_opts',
+         '    struct {\n'
+         '        char *ca_file;\n'
+         '        int verify;\n',
+         '    struct {\n'
+         '        char *ca_file;\n'
+         '        char *ca_extra_file; /* ' + MARKER + ' */\n'
+         '        int verify;\n'),
+    ], marker=MARKER)
+    p.edits(RTSP, [
+        ('copy_tls_opts_dict',
+         '    ERR_RET(av_dict_set(dict, "ca_file", rt->tls_opts.ca_file, 0));\n',
+         '    ERR_RET(av_dict_set(dict, "ca_file", rt->tls_opts.ca_file, 0));\n'
+         '    /* ' + MARKER + ' */\n'
+         '    ERR_RET(av_dict_set(dict, "ca_extra_file", rt->tls_opts.ca_extra_file, 0));\n'),
     ], marker=MARKER)
 
 
