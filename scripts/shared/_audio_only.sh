@@ -1353,6 +1353,7 @@ apply_mpv_patches_common() {
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"
   _mpv_patch chapter_list_reset patch_chapter_list_reset.py "$mpv_dir"
+  _mpv_patch playlist_no_current patch_playlist_no_current.py "$mpv_dir"
   # fd_pread: each stream of an fd://N (an Android content:// URI) reads at
   # its own position, so the prefetch of the same entry does not move the
   # offset the current file reads at.
