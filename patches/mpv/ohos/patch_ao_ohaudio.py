@@ -45,15 +45,19 @@ the client (multimedia_audio_framework, renderer_in_client*.cpp):
 - Interruptions: a forced pause or stop freezes the clock; the resume hint
   starts the stream again from a control thread, never from the callback
   (Start waits for the server). The same thread asks for a reload after a
-  second with no callback while playing: a dead device, a Start that
-  failed. An error callback asks for one too.
+  second with no callback while playing (a dead device), or 3 s with no
+  first callback after a start (a Start that failed: a Bluetooth output
+  may take more than a second to ask). An error callback asks for one too.
 - A shared interruption and the old device gone are the app's to act on:
   logged only.
-- Formats: S16 or S32 interleaved, mono or stereo, 8 to 192 kHz: mpv
-  converts the rest (F32 needs API 17, multichannel needs layouts).
+- Formats: S16 or S32 interleaved, mono or stereo, at the 14 rates of the
+  renderer from 8 to 192 kHz: another rate plays at the next one up, and
+  mpv converts the rest (F32 needs API 17, multichannel needs layouts). A
+  setter the builder refuses fails the init.
 - Only API 12 or older (HarmonyOS 5.0): libmpv binds at load (-z now), so
   a newer symbol would keep it from loading on an older system;
-  scripts/verify/ohos.sh holds the list.
+  scripts/verify/ohos.sh holds the OHAudio list and checks the libc
+  imports against the libc.so of API 12 (scripts/ohos/libc_api12_*.txt).
 
 Files patched
 =============

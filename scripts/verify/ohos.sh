@@ -43,6 +43,16 @@ _ohos_sysroot() {
   echo "$dir/native/sysroot"
 }
 
+# The clang target of a libmpv_ohos-<arch>.so: aarch64-linux-ohos or
+# x86_64-linux-ohos.
+_ohos_arch_of() {
+  case "$(basename "$1")" in
+    *arm64-v8a*) echo "aarch64-linux-ohos" ;;
+    *x86_64*)    echo "x86_64-linux-ohos" ;;
+    *)           return 1 ;;
+  esac
+}
+
 # clang's target of an OHOS arch, the directory of its libraries in the
 # sysroot.
 _ohos_target() {
@@ -82,6 +92,23 @@ _l13_ohos_binds() {
     fail "L13 OHOS: no OHAudio call bound (ao_ohaudio missing)"
   else
     pass "L13 OHOS: OHAudio calls of API $newest at most (HarmonyOS 5.0 has API 12)"
+  fi
+  # libc: what a strong import names must be in the libc.so of API 12,
+  # whose exports scripts/ohos/libc_api12_<arch>.txt lists (the sysroot of
+  # the build is a newer API's: a newer symbol would stop the load there).
+  local target list strong missing
+  target="$(_ohos_arch_of "$artifact")"
+  list="$LIBMPV_SCRIPTS_ROOT/scripts/ohos/libc_api12_${target%%-*}.txt"
+  if [[ ! -f "$list" ]]; then
+    fail "L13 OHOS: no API 12 libc list for $artifact"
+  else
+    strong="$("$nm" -D --undefined-only "$artifact" 2>/dev/null | awk '$1 == "U" {print $2}' | sed 's/@.*//' | grep -v '^OH_' | sort -u)"
+    missing="$(comm -23 <(printf '%s\n' "$strong") <(grep -v '^#' "$list" | sort -u) | head -8 | tr '\n' ' ')"
+    if [[ -n "$missing" ]]; then
+      fail "L13 OHOS: libc symbols missing from API 12 (HarmonyOS 5.0): $missing"
+    else
+      pass "L13 OHOS: every libc import is in the libc.so of API 12"
+    fi
   fi
   local cxx
   cxx="$(grep -E '^(_Z|__cxa_(allocate|throw|begin|end|rethrow|guard|pure)|_Unwind_|__gxx_personality)' <<<"$und" | head -5 | tr '\n' ' ')"

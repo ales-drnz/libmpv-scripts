@@ -47,13 +47,20 @@
  *   (start, reset, set_pause) and from the control thread, which starts the
  *   stream again when the system ends an interruption and asks mpv for a
  *   reload when no callback came for a second while playing (a dead
- *   device, a start that failed).
+ *   device), or for 3 s after a start (a start that failed; a Bluetooth
+ *   output may take more than a second to ask for its first buffer).
  * - The system pauses or stops a stream it interrupts (a call, another
  *   app): the clock is frozen until the resume, the driver's own or the
  *   core's next start. A shared interruption, or the old device gone, asks
  *   the app to pause: only logged, the app's media session decides.
- * - The device takes 8 to 192 kHz, mono or stereo, 16 or 32 bit: mpv
- *   converts the rest. The stream is of the music usage.
+ * - The device takes 14 rates from 8 to 192 kHz, mono or stereo, 16 or 32
+ *   bit: another rate plays at the next one up, and mpv converts the rest.
+ *   A setter the builder refuses fails the init. The stream is of the
+ *   music usage.
+ * - One window is left: a callback that returned VALID but whose buffer
+ *   OHAudio has not queued yet when a reset checks in_callback: a 20 ms
+ *   buffer from before a seek can then play after it. The Pause before the
+ *   Flush, a round trip to the audio server, narrows that window.
  * - Only the OHAudio calls of API 12 or older are made (HarmonyOS 5.0 is
  *   API 12): libmpv is linked with -z now, and a newer symbol would stop the
  *   library from loading on an older system. */
@@ -76,15 +83,16 @@
 #include "ao.h"
 #include "internal.h"
 
-// The frames of one callback, and how far ahead the stream is filled.
-#define CHUNK_MS 20
+// How far ahead the stream is filled.
 #define BUFFER_MS 100
 // How often a callback reads the device's position.
 #define QUERY_NS MP_TIME_MS_TO_NS(200)
 // A timestamp older than this is not the stream's present.
 #define STALE_NS MP_TIME_S_TO_NS(2)
-// No callback this long while playing: the device is gone.
+// No callback this long while playing: the device is gone. The first
+// callback after a start gets longer: a Bluetooth output takes its time.
 #define DEAD_NS MP_TIME_S_TO_NS(1)
+#define FIRST_NS MP_TIME_S_TO_NS(3)
 
 enum oh_state { OH_STOPPED, OH_PLAYING, OH_PAUSED };
 
@@ -116,6 +124,7 @@ struct priv {
     int64_t last_pos;
     int64_t last_query_ns;
     int64_t last_callback_ns;   // while playing; 0 when not watched
+    bool fed;                   // a callback came since the last start
     bool reload_asked;
 };
 
@@ -185,6 +194,7 @@ static OH_AudioData_Callback_Result on_write(OH_AudioRenderer *renderer,
     uint64_t gen = p->generation;
     p->in_callback = true;
     p->last_callback_ns = now;
+    p->fed = true;
     if (p->interrupted) {
         // The stream runs again: the system resumed it.
         p->interrupted = false;
@@ -330,6 +340,7 @@ static MP_THREAD_VOID control_thread(void *arg)
                 p->interrupted = false;
                 p->started_ns = now;
                 p->last_callback_ns = now;
+                p->fed = false;
                 anchor_locked(ao, now, true);
                 MP_INFO(ao, "resumed after the interruption\n");
             } else if (resume) {
@@ -339,10 +350,11 @@ static MP_THREAD_VOID control_thread(void *arg)
             continue;
         }
         int64_t now = mp_time_ns();
+        int64_t limit = p->fed ? DEAD_NS : FIRST_NS;
         if (p->state == OH_PLAYING && !p->interrupted && p->last_callback_ns &&
-            now - p->last_callback_ns >= DEAD_NS && !p->reload_asked)
+            now - p->last_callback_ns >= limit && !p->reload_asked)
         {
-            MP_ERR(ao, "no data asked for a second, reopening\n");
+            MP_ERR(ao, "no data asked for %d s, reopening\n", p->fed ? 1 : 3);
             p->reload_asked = true;
             ao_request_reload(ao);
         }
@@ -385,6 +397,24 @@ static void uninit(struct ao *ao)
     mp_mutex_destroy(&p->dev_lock);
 }
 
+// The rates OHAudio's renderer takes (OHAudioStreamBuilder.cpp, the
+// renderer's supported sampling rates); SetSamplingRate refuses the rest.
+static const int device_rates[] = {
+    8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
+    64000, 88200, 96000, 176400, 192000,
+};
+
+// The first rate the device takes at or above [rate], so mpv resamples up
+// and nothing is lost: 37800 Hz plays at 44100 Hz.
+static int device_rate(int rate)
+{
+    for (size_t i = 0; i < MP_ARRAY_SIZE(device_rates); i++) {
+        if (device_rates[i] >= rate)
+            return device_rates[i];
+    }
+    return device_rates[MP_ARRAY_SIZE(device_rates) - 1];
+}
+
 static int init(struct ao *ao)
 {
     struct priv *p = ao->priv;
@@ -409,8 +439,7 @@ static int init(struct ao *ao)
     if (!ao_chmap_sel_adjust(ao, &sel, &ao->channels))
         goto error;
 
-    if (ao->samplerate < 8000 || ao->samplerate > 192000)
-        ao->samplerate = 48000;
+    ao->samplerate = device_rate(ao->samplerate);
 
     OH_AudioStream_Result res =
         OH_AudioStreamBuilder_Create(&p->builder, AUDIOSTREAM_TYPE_RENDERER);
@@ -419,9 +448,21 @@ static int init(struct ao *ao)
         MP_ERR(ao, "OH_AudioStreamBuilder_Create failed: %d\n", res);
         goto error;
     }
-    OH_AudioStreamBuilder_SetSamplingRate(p->builder, ao->samplerate);
-    OH_AudioStreamBuilder_SetChannelCount(p->builder, ao->channels.num);
-    OH_AudioStreamBuilder_SetSampleFormat(p->builder, format);
+    res = OH_AudioStreamBuilder_SetSamplingRate(p->builder, ao->samplerate);
+    if (res != AUDIOSTREAM_SUCCESS && ao->samplerate != 48000) {
+        MP_WARN(ao, "%d Hz refused (%d), 48000 Hz instead\n", ao->samplerate, res);
+        ao->samplerate = 48000;
+        res = OH_AudioStreamBuilder_SetSamplingRate(p->builder, ao->samplerate);
+    }
+    if (res == AUDIOSTREAM_SUCCESS)
+        res = OH_AudioStreamBuilder_SetChannelCount(p->builder, ao->channels.num);
+    if (res == AUDIOSTREAM_SUCCESS)
+        res = OH_AudioStreamBuilder_SetSampleFormat(p->builder, format);
+    if (res != AUDIOSTREAM_SUCCESS) {
+        MP_ERR(ao, "%d Hz, %d channels, format %d refused: %d\n", ao->samplerate,
+               ao->channels.num, format, res);
+        goto error;
+    }
     OH_AudioStreamBuilder_SetEncodingType(p->builder, AUDIOSTREAM_ENCODING_TYPE_RAW);
     OH_AudioStreamBuilder_SetRendererInfo(p->builder, AUDIOSTREAM_USAGE_MUSIC);
     OH_AudioStreamBuilder_SetLatencyMode(p->builder, AUDIOSTREAM_LATENCY_MODE_NORMAL);
@@ -517,6 +558,7 @@ static void start(struct ao *ao)
     p->last_query_ns = 0;
     // Watched from now: a Start that fails is a dead device too.
     p->last_callback_ns = now;
+    p->fed = false;
     p->reload_asked = false;
     anchor_locked(ao, now, true);
     mp_cond_broadcast(&p->wakeup);

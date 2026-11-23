@@ -14,11 +14,13 @@ name: OHOS emulator
 # 44563443761). Not covered: the sandbox and the audio policy of a HAP,
 # HarmonyOS NEXT's own services, a real device.
 #
-# Runs on the wip/r27-* branches when what it tests changes, and by hand.
+# Runs on the wip/ and release/ branches when what it tests changes, so a
+# release whose OHOS driver or build changed plays it before it ships, and
+# by hand.
 
 on:
   push:
-    branches: ['wip/r27-*']
+    branches: ['wip/**', 'release/**']
     paths:
       - 'patches/mpv/ohos/**'
       - 'scripts/build_libmpv_ohos.sh'

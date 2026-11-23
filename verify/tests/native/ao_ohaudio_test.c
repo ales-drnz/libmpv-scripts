@@ -221,8 +221,18 @@ OH_AudioStream_Result OH_AudioStreamBuilder_Destroy(OH_AudioStreamBuilder *b)
 }
 OH_AudioStream_Result OH_AudioStreamBuilder_SetSamplingRate(OH_AudioStreamBuilder *b, int32_t rate)
 {
-    b->rate = rate;
-    return AUDIOSTREAM_SUCCESS;
+    // The renderer's rates (OHAudioStreamBuilder.cpp): the driver must not
+    // ask for another.
+    static const int32_t rates[] = {8000, 11025, 12000, 16000, 22050, 24000, 32000,
+                                    44100, 48000, 64000, 88200, 96000, 176400, 192000};
+    for (size_t i = 0; i < sizeof(rates) / sizeof(rates[0]); i++) {
+        if (rates[i] == rate) {
+            b->rate = rate;
+            return AUDIOSTREAM_SUCCESS;
+        }
+    }
+    atomic_fetch_add(&bad_calls, 1);
+    return AUDIOSTREAM_ERROR_INVALID_PARAM;
 }
 OH_AudioStream_Result OH_AudioStreamBuilder_SetChannelCount(OH_AudioStreamBuilder *b, int32_t n)
 {
@@ -688,7 +698,11 @@ static int format_mode(void)
         {AF_FORMAT_S16, 1, 44100, AUDIOSTREAM_SAMPLE_S16LE, 1, 44100},
         {AF_FORMAT_U8, 2, 22050, AUDIOSTREAM_SAMPLE_S16LE, 2, 22050},
         {AF_FORMAT_S32, 6, 96000, AUDIOSTREAM_SAMPLE_S32LE, 2, 96000},
-        {AF_FORMAT_FLOAT, 2, 4000, AUDIOSTREAM_SAMPLE_S32LE, 2, 48000},
+        {AF_FORMAT_FLOAT, 2, 4000, AUDIOSTREAM_SAMPLE_S32LE, 2, 8000},
+        // Rates the renderer refuses play at the next one up.
+        {AF_FORMAT_S16, 2, 37800, AUDIOSTREAM_SAMPLE_S16LE, 2, 44100},
+        {AF_FORMAT_FLOAT, 2, 47250, AUDIOSTREAM_SAMPLE_S32LE, 2, 48000},
+        {AF_FORMAT_FLOAT, 2, 352800, AUDIOSTREAM_SAMPLE_S32LE, 2, 192000},
     };
     for (size_t i = 0; i < MP_ARRAY_SIZE(cases); i++) {
         struct ao *ao = open_ao(cases[i].format, cases[i].channels, cases[i].rate);
@@ -748,8 +762,11 @@ int main(int argc, char **argv)
     ao->driver->start(ao);
 
     if (!strcmp(mode, "nostart")) {
-        // The driver asks after 1 s with no callback, then not again.
-        mt_wait_until(2.5, atomic_load(&reloads) >= 1, sleep_ms(1));
+        // Not before 3 s with no first callback, then once.
+        sleep_ms(2500);
+        check(atomic_load(&reloads) == 0, "no reload within 2.5 s of the start (%d)",
+              atomic_load(&reloads));
+        mt_wait_until(2, atomic_load(&reloads) >= 1, sleep_ms(1));
         sleep_ms(1000);
         check(atomic_load(&reloads) == 1, "one reload is asked (%d)", atomic_load(&reloads));
         atomic_store(&start_fails, false);
