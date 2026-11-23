@@ -271,7 +271,7 @@ static int32_t on_interrupt(OH_AudioRenderer *renderer, void *user,
             p->interrupted = true;
             p->resume_pending = false;
         } else {
-            MP_INFO(ao, "the system asks to pause (hint %d)\n", hint);
+            MP_WARN(ao, "the system asks to pause (hint %d)\n", hint);
         }
         break;
     case AUDIOSTREAM_INTERRUPT_HINT_RESUME:
@@ -312,7 +312,7 @@ static void on_device_change(OH_AudioRenderer *renderer, void *user,
     // The stream follows the new route by itself. The old device gone asks
     // the app to pause: its media session decides.
     if (reason == REASON_OLD_DEVICE_UNAVAILABLE)
-        MP_INFO(ao, "the output device is gone\n");
+        MP_WARN(ao, "the output device is gone\n");
     else
         MP_VERBOSE(ao, "output device changed (reason %d)\n", reason);
 }
