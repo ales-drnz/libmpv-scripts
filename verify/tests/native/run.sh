@@ -168,6 +168,7 @@ CASES=(
   "unit pull_pause_tail_test - - hold mid reset"
   "lib pcm_loop_test playback - file late ab next abnext off afdrop"
   "lib chapter_list_test playback - meta index observe kit same"
+  "lib playlist_no_current_test playback - prev next playing"
   "lib af_command_args_test playback - prop seek track extern reload next keep rollback order fail labels bridge"
   "lib read_error_test readerror 2000000:233000:drop cutlist"
   "lib read_error_test readerror 2000000:233000:down cutpark"
