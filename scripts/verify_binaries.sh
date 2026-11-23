@@ -11,7 +11,7 @@
 # tables, the result helpers, check_binary and the layers every platform
 # runs) and one file per platform (linux.sh with the ELF layers that Android,
 # Tizen and webOS share, android.sh, windows.sh, apple.sh, web.sh, tizen.sh,
-# webos.sh).
+# webos.sh, ohos.sh).
 # Verifies, for each libmpv (per platform / per arch):
 #   1.  File format / arch matches platform expectation
 #   2.  Exactly 54 mpv_* and 9 mak_pcm_* exports, zero leaks
@@ -175,7 +175,7 @@ FILTER="${1:-}"
 # The checks live in scripts/verify/: common.sh first (the tables, the
 # result helpers and check_binary), then one file per platform. A new
 # platform adds its file to this list.
-for part in common linux android windows apple web tizen webos; do
+for part in common linux android windows apple web tizen webos ohos; do
   # shellcheck source=/dev/null
   source "$SCRIPT_DIR/verify/$part.sh"
 done

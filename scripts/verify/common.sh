@@ -33,6 +33,8 @@ EXPECTED_FORMATS=(
   "libmpv_tizen-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
   "libmpv_tizen-x86_64.so|ELF 64-bit LSB shared object, x86-64"
   "libmpv_webos-armv7l.so|ELF 32-bit LSB shared object, ARM, EABI5"
+  "libmpv_ohos-arm64-v8a.so|ELF 64-bit LSB shared object, ARM aarch64"
+  "libmpv_ohos-x86_64.so|ELF 64-bit LSB shared object, x86-64"
 )
 
 # Every observable property our mpv patch set registers. Validated by
@@ -207,6 +209,7 @@ platform_from_artifact() {
     *linux*)   echo "linux" ;;
     *tizen*)   echo "tizen" ;;
     *webos*)   echo "webos" ;;
+    *ohos*)    echo "ohos" ;;
     *windows*) echo "windows" ;;
     *android*) echo "android" ;;
     *)         echo "unknown" ;;
@@ -277,6 +280,12 @@ layer11_needed_allowlist() {
       # with them). Anything else is missing on the TV: libgcc and
       # libstdc++ are linked in.
       allowed_re='^(libc|libm|libdl|libpthread|librt|ld-linux|libcapi-media-audio-io|libcapi-media-sound-manager|libcapi-base-common)\.so(\.[0-9]+)*$'
+      ;;
+    ohos)
+      # musl's one libc.so and OHAudio (ao_ohaudio); libhilog_ndk.z.so,
+      # the system log, is allowed. libc++, libc++abi and libunwind are
+      # linked in: no libc++_shared.so in the HAP.
+      allowed_re='^(libc\.so|libohaudio\.so|libhilog_ndk\.z\.so)$'
       ;;
     webos)
       # glibc, ALSA (ao_alsa) and the system's libstdc++, all on the TV:
@@ -401,6 +410,9 @@ layer13_load_test() {
       ;;
     webos)
       _l13_webos_dlopen "$arch" "$artifact"
+      ;;
+    ohos)
+      _l13_ohos_binds "$artifact"
       ;;
     macos)
       # Runs the REAL dyld load when verify is invoked natively on a macOS host
@@ -744,7 +756,7 @@ check_binary() {
       ;;
     so)
       local NM READELF
-      if [[ "$platform" == tizen || "$platform" == webos ]]; then
+      if [[ "$platform" == tizen || "$platform" == webos || "$platform" == ohos ]]; then
         NM="$(_llvm_tool nm)" READELF="$(_llvm_tool readelf)"
       elif echo "$name" | grep -qE 'aarch64|arm64-v8a'; then
         NM=aarch64-linux-gnu-nm READELF=aarch64-linux-gnu-readelf

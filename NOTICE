@@ -23,6 +23,11 @@ the license of mpv and FFmpeg; its text is LICENSE.LGPL-2.1:
   patches/mpv/ios/patch_ios_audio_stubs.py
       writes into audio/out/ao_coreaudio_utils.c the iOS versions of its
       format helpers, which reproduce code of mpv from that file.
+  patches/mpv/ohos/ao_ohaudio/ao_ohaudio.c
+      the OHAudio output, copied into audio/out/ by patch_ao_ohaudio.py:
+      the driver of Bao Han (github.com/ErBWs/mpv, branch
+      feat-ohos-0.41.0), reworked; its header keeps his copyright and the
+      license notice of mpv.
   patches/mpv/android/audiotrack_read_insert.c
       inserted into audio/out/ao_audiotrack.c; adapted from the read loop of
       its audio_thread().

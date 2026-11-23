@@ -236,6 +236,56 @@ jobs:
           path: builds/sources-*.txt
           if-no-files-found: ignore
 
+  # OpenHarmony and HarmonyOS (arm64-v8a, x86_64): the clang and the musl
+  # sysroot of the public OpenHarmony SDK, which build_libmpv_ohos.sh streams
+  # at its pin (scripts/ohos/ohos_sdk.sh); the cache keeps the 2.5 GB it
+  # unpacks between runs.
+  ohos:
+    name: OHOS ${{ matrix.arch }}
+    needs: release-branch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: builds/ohos-sdk
+          key: ohos-sdk-native-${{ hashFiles('scripts/ohos/ohos_sdk.sh') }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/
+          target: ohos
+          tags: mpv-build-ohos
+          load: true
+          cache-from: type=gha,scope=ohos
+          cache-to: type=gha,scope=ohos,mode=max
+      - name: Build
+        run: |
+          docker run --rm \
+            -e STRICT_SOURCES -e GITHUB_SHA -e RECORD_SOURCES=/scripts/builds/sources-ohos-${{ matrix.arch }}.txt \
+            -v "$PWD:/scripts" -w /scripts \
+            mpv-build-ohos bash scripts/build_libmpv_ohos.sh --arch=${{ matrix.arch }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ohos-${{ matrix.arch }}
+          path: |
+            builds/release/libmpv_ohos-*.so
+            builds/release/build_ohos-*.json
+            builds/release/licenses_ohos-*/
+          if-no-files-found: error
+      # A build stopped by an unpinned source leaves the hash to pin here.
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unpinned-sources-ohos-${{ matrix.arch }}
+          path: builds/sources-*.txt
+          if-no-files-found: ignore
+
   # The webOS TVs (armv7l, softfp): LG's webOS NDK, which the webos stage
   # installs from LG's release at its checksum. Its licence allows it on our
   # machines only: the image is built without the Actions cache.
@@ -571,7 +621,7 @@ jobs:
   # artifact while a fix fails its test.
   release:
     name: Collect release
-    needs: [linux, android, windows, tizen, webos, apple, native, web]
+    needs: [linux, android, windows, tizen, webos, ohos, apple, native, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -619,6 +669,11 @@ jobs:
           load: true
           cache-from: type=gha,scope=verify
           cache-to: type=gha,scope=verify,mode=max
+      # The OHOS symbol check (L12) reads the stubs of the SDK's sysroot.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: builds/ohos-sdk
+          key: ohos-sdk-native-${{ hashFiles('scripts/ohos/ohos_sdk.sh') }}
       # The runner's NDK sysroot backs the Android symbol check. Apple
       # binaries get the static checks only, and the aarch64 DLL no load test.
       - name: Verify

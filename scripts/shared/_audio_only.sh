@@ -1104,6 +1104,14 @@ verify_mpv_config() {
       assert_define "$cfg" "HAVE_PULSE"       "0"
       assert_define "$cfg" "HAVE_PIPEWIRE"    "0"
       ;;
+    ohos)
+      # patch_ao_ohaudio.py and -Dohaudio=enabled: OHAudio is the output of
+      # an app there, the Linux ones would only fail at runtime.
+      assert_define "$cfg" "HAVE_OHAUDIO"  "1"
+      assert_define "$cfg" "HAVE_ALSA"     "0"
+      assert_define "$cfg" "HAVE_PULSE"    "0"
+      assert_define "$cfg" "HAVE_PIPEWIRE" "0"
+      ;;
     webos)
       # ALSA, the one sound API of the NDK's sysroot: no PulseAudio nor
       # PipeWire there.
