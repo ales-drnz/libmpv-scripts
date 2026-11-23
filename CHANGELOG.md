@@ -12,7 +12,7 @@
 ### OHOS
 **Added**
 - OpenHarmony and HarmonyOS: `libmpv_ohos-arm64-v8a.so` for the devices and `libmpv_ohos-x86_64.so` for the emulators, built with the public OpenHarmony SDK against its musl, with libc++ linked in. They need only `libc.so` and `libohaudio.so` of the system.
-- `ao_ohaudio`, the audio output over OHAudio, from the driver of ErBWs reviewed: a generation and a wait for the callback in flight before a flush, the clock from the renderer's timestamp, a thread that resumes and watches the renderer.
+- `ao_ohaudio`, the audio output over OHAudio, reviewed from the driver of ErBWs: a generation and a wait for the callback in flight before a flush, the clock from the renderer's timestamp, a thread that resumes and watches the renderer.
 - The CI plays them on the Oniro emulator, x86_64 with KVM and arm64-v8a under emulation, and checks the tone the emulated sound card records.
 
 ### Build
