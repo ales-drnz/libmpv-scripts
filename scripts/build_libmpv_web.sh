@@ -32,7 +32,7 @@
 #
 # What differs from the native builds:
 # - no OpenSSL, no libsmb2, no sockets: the browser does TLS and the
-#   transport (DISABLED_PATCHES gets libsmb2 and embed_cacert). http, https
+#   transport (DISABLED_PATCHES gets libsmb2, embed_cacert and tls_extra_ca). http, https
 #   and makblob (blob: URLs) are the webio protocols, which read through
 #   fetch (patches/ffmpeg/patch_ffmpeg_webio.py, scripts/web/mak_webio.js);
 # - the audio output is webaudio (patches/mpv/web/patch_ao_webaudio.py): mpv
@@ -87,7 +87,7 @@ EMSDK_VERSION="${EMSDK_VERSION:-7.0.0}"
 
 # The browser has no sockets, no TLS store and no SMB: the protocol patches
 # that need them stay out (the per-user DISABLED_PATCHES is kept).
-export DISABLED_PATCHES="${DISABLED_PATCHES:-} libsmb2 embed_cacert"
+export DISABLED_PATCHES="${DISABLED_PATCHES:-} libsmb2 embed_cacert tls_extra_ca"
 
 _nproc="$(nproc 2>/dev/null || echo 4)"
 JOBS="${JOBS:-$(( _nproc < 8 ? _nproc : 8 ))}"

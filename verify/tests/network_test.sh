@@ -12,12 +12,13 @@
 # demuxers and the aac decoder, with patch_ffmpeg_libsmb2.py,
 # patch_ffmpeg_embed_cacert.py, patch_ffmpeg_advanced_editlist.py,
 # patch_ffmpeg_http_read_errors.py, patch_ffmpeg_segment_skips.py and
-# patch_ffmpeg_hls_keepalive.py applied.
+# patch_ffmpeg_hls_keepalive.py and patch_ffmpeg_tls_extra_ca.py applied.
 # Then it runs, each mode in its own process:
 #   - smb_url_test: the URL handling of libsmb2.c, password and percent
 #     decoding (F85, F86);
 #   - tls_roots_test: the embedded roots load only with verification on,
-#     against openssl s_server (F90);
+#     against openssl s_server (F90), and ca_extra_file trusts the server
+#     on top of them, where ca_file replaces them;
 #   - smb_client_test: opens, reads and stops against impacket's server
 #     (smb_server.py, one per mode, stopped with SIGSTOP), and a TCP connect
 #     slowed by slow_connect.py (F83, F84, F85);
@@ -154,7 +155,7 @@ if [[ ! -f "$BLD/config.h" ]]; then
   rm -rf "$SRC" "$BLD" "$FFPREFIX" "$WORK/pristine"
   tar -xzf "$TARBALL" -C "$WORK/src" || die "cannot extract $TARBALL"
   mkdir -p "$WORK/pristine" "$BLD"
-  for f in tls_openssl.c http.c hls.c dashdec.c mov.c isom.h; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
+  for f in tls_openssl.c tls.h rtsp.c rtsp.h http.c hls.c dashdec.c mov.c isom.h; do cp "$SRC/libavformat/$f" "$WORK/pristine/"; done
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" \
     > "$WORK/logs/patch.log" 2>&1 || { cat "$WORK/logs/patch.log"; die "patch_ffmpeg_libsmb2.py failed"; }
   ( cd "$BLD" && "$SRC/configure" --prefix="$FFPREFIX" --cc="$CC" --toolchain="$TOOLCHAIN" \
@@ -170,8 +171,11 @@ fi
 # keeps them newer than their objects, so make rebuilds them).
 { python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_libsmb2.py" "$SRC" "$ROOT/patches/ffmpeg/libsmb2.c" &&
   touch "$SRC/libavformat/libsmb2.c" &&
-  for f in tls_openssl.c http.c hls.c dashdec.c mov.c isom.h; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
+  for f in tls_openssl.c tls.h rtsp.c rtsp.h http.c hls.c dashdec.c mov.c isom.h; do cp "$WORK/pristine/$f" "$SRC/libavformat/$f"; done &&
   python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_embed_cacert.py" "$SRC" &&
+  if patch_on tls_extra_ca; then
+    python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_tls_extra_ca.py" "$SRC"
+  fi &&
   if patch_on advanced_editlist; then
     python3 -B "$ROOT/patches/ffmpeg/patch_ffmpeg_advanced_editlist.py" "$SRC"
   fi &&
@@ -272,12 +276,17 @@ run_tls() {
     -subj /CN=network-test -addext subjectAltName=IP:127.0.0.1 \
     -keyout "$t/key.pem" -out "$t/cert.pem" > "$t/req.log" 2>&1 || {
     echo "FAIL tls_roots_test: no test certificate"; FAILED+=("tls_roots_test"); return; }
+  # A certificate the server does not have, for a ca_file that trusts
+  # something else.
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+    -subj /CN=other -keyout "$t/other_key.pem" -out "$t/other.pem" >> "$t/req.log" 2>&1 || {
+    echo "FAIL tls_roots_test: no second certificate"; FAILED+=("tls_roots_test"); return; }
   port="$(free_port)"
   openssl s_server -accept "127.0.0.1:$port" -cert "$t/cert.pem" -key "$t/key.pem" -quiet \
     > "$t/server.log" 2>&1 &
   srv=$!; echo "$srv" >> "$PIDS"
   wait_port "$port" || echo "openssl s_server did not start on port $port" >> "$t/server.log"
-  timeout 120 "$BIN/tls_roots_test" "$port" "$t/cert.pem" > "$RUNS/tls_roots_test-verify.log" 2>&1; r=$?
+  timeout 120 "$BIN/tls_roots_test" "$port" "$t/cert.pem" "$t/other.pem" > "$RUNS/tls_roots_test-verify.log" 2>&1; r=$?
   kill "$srv" 2> /dev/null; wait "$srv" 2> /dev/null
   report "tls_roots_test verify" "$r" "$RUNS/tls_roots_test-verify.log"
 }

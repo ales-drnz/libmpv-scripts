@@ -74,5 +74,6 @@ func patchesCatalog() []PatchItem {
 		{ID: "advanced_editlist", Title: "Fragmented-MP4 edit lists", Desc: "DASH segments keep their edit list (no cut at each segment)", Category: "FFmpeg", DefaultOn: true},
 		{ID: "dash_keepalive", Title: "DASH HTTP keep-alive", Desc: "Reuse connections in the DASH demuxer (Plex/Jellyfin)", Category: "FFmpeg", DefaultOn: true},
 		{ID: "embed_cacert", Title: "Embedded CA certificates", Desc: "Compile the Mozilla CA root store into libmpv so HTTPS verification works with no on-device cert file (sandboxed macOS, iOS, Android)", Category: "FFmpeg", DefaultOn: true},
+		{ID: "tls_extra_ca", Title: "Extra trusted certificates", Desc: "TLS option ca_extra_file: certificates trusted on top of the root store, for a home server with a self-signed certificate or a private CA (stream-lavf-o)", Category: "FFmpeg", DefaultOn: true},
 	}
 }

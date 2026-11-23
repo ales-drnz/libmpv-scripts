@@ -554,6 +554,15 @@ layer_feature_presence() {
   else
     info "embedded CA bundle: embed_cacert patch disabled — not asserted"
   fi
+
+  # The TLS option ca_extra_file: its name is in the option table.
+  n=$(grep -cxF "ca_extra_file" <<<"$str" || true)
+  if patch_on tls_extra_ca; then
+    if (( n > 0 )); then pass "feature present: TLS ca_extra_file"
+    else fail "feature MISSING: TLS ca_extra_file (tls_extra_ca patch enabled)"; fi
+  else
+    info "TLS ca_extra_file: tls_extra_ca patch disabled — not asserted"
+  fi
 }
 
 # Layer 7c: the license. The default build is LGPL-3.0-or-later; LIBMPV_GPL=1
