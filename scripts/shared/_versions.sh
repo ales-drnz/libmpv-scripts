@@ -17,8 +17,8 @@
 export MPV_VERSION="${MPV_VERSION:-0.42.0}"
 # The mpv_audio_kit release these binaries ship as (GitHub release
 # libmpv-<release>). Baked into mpv's own version string, so a running app
-# can tell which build it loaded: mpv-version reads "mpv v0.42.0+r26".
-export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r26}"
+# can tell which build it loaded: mpv-version reads "mpv v0.42.0+r27".
+export LIBMPV_RELEASE="${LIBMPV_RELEASE:-r27}"
 export FFMPEG_VERSION="${FFMPEG_VERSION:-9.0.2}"
 
 # ── Subtitle / font / text shaping (libass + pulls) ──────────────────────────

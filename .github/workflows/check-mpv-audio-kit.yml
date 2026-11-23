@@ -674,7 +674,7 @@ jobs:
   android-emu:
     needs: plan
     if: needs.plan.outputs.android == 'true'
-    name: Android emulator API ${{ matrix.api }}${{ matrix.target == 'android-tv' && ' TV' || '' }}
+    name: Android emulator API ${{ matrix.api }}${{ matrix.target == 'android-tv' && ' TV' || matrix.target == 'android-wear' && ' Wear' || '' }}
     runs-on: ubuntu-24.04
     # Six files and the two ways of the keys, each of at most three 8 minute
     # tries (the third only after a lost adb link), the F278 file and the
@@ -692,6 +692,9 @@ jobs:
           # A TV profile: with the default phone screen the SystemUI of the
           # TV image crashes in a loop and takes the tests down with it.
           - {api: 36, target: android-tv, profile: tv_1080p}
+          # Wear OS runs the Android build: a round watch screen, with the
+          # emulated audio device as the output (no Bluetooth headset).
+          - {api: 34, target: android-wear, profile: wearos_small_round}
     defaults:
       run:
         shell: bash
@@ -748,7 +751,7 @@ jobs:
           # which consumes frames at real time even with no host sound card.
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
+          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || matrix.target == 'android-wear' && '-wear' || '' }}
           working-directory: kit/test_app
       # The Android TV image without the emulator runner: right after the
       # boot its adbd goes away for a moment, and the runner's own adb calls
@@ -806,7 +809,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: android-emu-${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || '' }}
+          name: android-emu-${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || matrix.target == 'android-wear' && '-wear' || '' }}
           path: kit/test_app/emu-logs
 
   # '[native]' runs only this job: the native job of checks.yml, the same

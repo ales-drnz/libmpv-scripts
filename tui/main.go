@@ -415,7 +415,8 @@ type selColumn struct {
 //	band 0: macOS · iOS · tvOS
 //	band 1: Windows · Linux · Android
 //	band 2: Web · Tizen · webOS
-//	band 3: Tools
+//	band 3: OHOS
+//	band 4: Tools
 func (m model) selBands() [][]selColumn {
 	col := func(g string) selColumn {
 		var idx []int
@@ -430,13 +431,14 @@ func (m model) selBands() [][]selColumn {
 		{col("macOS"), col("iOS"), col("tvOS")},
 		{col("Windows"), col("Linux"), col("Android")},
 		{col("Web"), col("Tizen"), col("webOS")},
+		{col("OHOS")},
 		{col("Tools")},
 	}
 }
 
 // compileBands is the number of OS bands of selBands; the Tools band
 // follows them.
-const compileBands = 3
+const compileBands = 4
 
 func clampInt(v, lo, hi int) int {
 	if v < lo {
