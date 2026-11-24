@@ -539,13 +539,17 @@ jobs:
           ref: 66d6d1da7b9a6d047f582e19b285c8cdb7f094ae
           path: builds/kit
           sparse-checkout: test/fixtures
-      # Two null sinks: the default output, and mak_tests for Firefox.
+      # Two null sinks: the default output, and mak_tests for Firefox. The
+      # same start is AUDIO_RESET: run_checks.sh restarts the sound server
+      # with it, once, when Firefox's audio device never started.
       - name: Checks
         run: |
-          pulseaudio -D --exit-idle-time=-1
-          pactl load-module module-null-sink sink_name=ci_default
-          pactl set-default-sink ci_default
-          pactl load-module module-null-sink sink_name=mak_tests
+          export AUDIO_RESET='pulseaudio -k 2>/dev/null; sleep 1; pulseaudio -D --exit-idle-time=-1 && sleep 1 &&
+            pactl unload-module module-suspend-on-idle 2>/dev/null;
+            pactl load-module module-null-sink sink_name=ci_default > /dev/null &&
+            pactl set-default-sink ci_default &&
+            pactl load-module module-null-sink sink_name=mak_tests > /dev/null'
+          bash -c "$AUDIO_RESET"
           export PULSE_SINK=mak_tests
           node --version
           firefox --version
@@ -555,7 +559,7 @@ jobs:
           BROWSERS=firefox SKIP="webio-logic browser-group ring node-spike node-lib node-net" \
             verify/web/run_checks.sh builds/web-module builds/web-spike builds/web-fixtures \
             builds/web-checks
-      - if: failure()
+      - if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-firefox-check-logs
