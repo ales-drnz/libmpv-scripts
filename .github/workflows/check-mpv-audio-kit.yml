@@ -733,11 +733,26 @@ jobs:
           channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+      # A download that fails (the plugin portal or a Maven mirror) is tried
+      # again, three times at most, a minute apart, as in the kit's
+      # devices.yml; any other build error fails at once.
       - name: Build the test app once
         working-directory: kit/test_app
+        env:
+          GRADLE_OPTS: -Dorg.gradle.internal.repository.max.retries=6 -Dorg.gradle.internal.repository.initial.backoff=2000
         run: |
           flutter pub get
-          flutter build apk --debug
+          for try in 1 2 3; do
+            set +e
+            flutter build apk --debug 2>&1 | tee build.log
+            r=${PIPESTATUS[0]}
+            set -e
+            [ $r = 0 ] && exit 0
+            grep -qE 'Could not resolve|Could not GET|Could not HEAD|was not found in any of the following sources|Received status code 5[0-9][0-9]|Connection reset|Read timed out' build.log || exit $r
+            [ $try = 3 ] && exit $r
+            echo "::warning::a download of the Gradle build failed (try $try): again in a minute"
+            sleep 60
+          done
       - name: Integration tests on the emulator
         if: matrix.target != 'android-tv'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
@@ -751,7 +766,7 @@ jobs:
           # which consumes frames at real time even with no host sound card.
           emulator-options: -no-window -gpu swiftshader_indirect -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash ../../scripts/.github/diag/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || matrix.target == 'android-wear' && '-wear' || '' }}
+          script: bash ../scripts/ci/android_emulator.sh ${{ matrix.api }}${{ matrix.target == 'android-tv' && '-tv' || matrix.target == 'android-wear' && '-wear' || '' }}
           working-directory: kit/test_app
       # The Android TV image without the emulator runner: right after the
       # boot its adbd goes away for a moment, and the runner's own adb calls
@@ -785,27 +800,36 @@ jobs:
           [ -f "$ANDROID_AVD_HOME/tv.ini" ] || printf 'path=%s\npath.rel=avd/tv.avd\ntarget=android-%s\n' \
             "$ANDROID_AVD_HOME/tv.avd" "$API" > "$ANDROID_AVD_HOME/tv.ini"
           printf 'hw.cpu.ncore=2\n' >> "$ANDROID_AVD_HOME/tv.avd/config.ini"
-          "$ANDROID_HOME/emulator/emulator" -avd tv -no-window -gpu swiftshader_indirect \
-            -no-boot-anim -no-snapshot -camera-back none > emu-boot.log 2>&1 &
-          adb wait-for-device
-          ok=0
-          for i in $(seq 1 300); do
-            if [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then
-              ok=$((ok + 1))
-              [ $ok -ge 2 ] && break
-            else
-              ok=0
-            fi
-            sleep 3
-          done
-          [ $ok -ge 2 ] || { tail -40 emu-boot.log; echo "::error::the TV emulator did not boot"; exit 1; }
+          mkdir -p emu-logs
+          if [ -f ../scripts/ci/android_boot.sh ]; then
+            # The kit's boot: two bounded attempts, the second with its data
+            # wiped, an emulator that never boots a line of the summary.
+            bash ../scripts/ci/android_boot.sh tv || {
+              echo "boot infra" > "emu-logs/summary-$API-tv.txt"
+              exit 1
+            }
+          else
+            # A kit from before android_boot.sh: one attempt, with an end.
+            "$ANDROID_HOME/emulator/emulator" -avd tv -no-window -gpu swiftshader_indirect \
+              -no-boot-anim -no-snapshot -camera-back none > emu-logs/boot-1.log 2>&1 &
+            timeout 600 adb wait-for-device ||
+              { tail -60 emu-logs/boot-1.log; echo "::error::the TV emulator did not come up in 10 minutes"; exit 1; }
+            ok=0
+            for i in $(seq 1 300); do
+              if [ "$(timeout 10 adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then
+                ok=$((ok + 1))
+                [ $ok -ge 2 ] && break
+              else
+                ok=0
+              fi
+              sleep 3
+            done
+            [ $ok -ge 2 ] || { tail -40 emu-logs/boot-1.log; echo "::error::the TV emulator did not boot"; exit 1; }
+          fi
           adb shell settings put global window_animation_scale 0 || true
           adb shell settings put global transition_animation_scale 0 || true
           adb shell settings put global animator_duration_scale 0 || true
-          # The emulator's own log, for an emulator that goes away.
-          mkdir -p emu-logs
-          trap 'cp emu-boot.log emu-logs/' EXIT
-          bash ../../scripts/.github/diag/android_emulator.sh "$API-tv"
+          bash ../scripts/ci/android_emulator.sh "$API-tv"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

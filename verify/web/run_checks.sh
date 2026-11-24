@@ -46,6 +46,25 @@ tones=long_60s.flac,tone_48k_20s.flac,tone_44k_20s.flac,sine_stereo_48k_5s.flac
 
 summary=()
 failed=0
+# check_audio <name> <command...>: check, then, when the browser's audio
+# device never started (device-not-started from audio_harness.mjs) and
+# AUDIO_RESET names how to restart the sound server, that once and the
+# check once more. A check that ran and failed is never run again; the
+# summary line says when the second run made it.
+check_audio() {
+  local name="$1"
+  check "$@"
+  [[ -n "${AUDIO_RESET:-}" ]] || return 0
+  grep -q 'device-not-started' "$work/$name.txt" 2>/dev/null || return 0
+  [[ "${summary[-1]}" == FAIL* ]] || return 0
+  echo "── $name: the audio device never started, the sound server again"
+  mv "$work/$name.txt" "$work/$name.first.txt"
+  unset 'summary[-1]'
+  failed=$((failed - 1))
+  bash -c "$AUDIO_RESET" || true
+  check "$@"
+  summary[-1]="${summary[-1]} (retried: device-not-started)"
+}
 # check <name> <command...>: runs it into <work>/<name>.txt and notes the
 # result with the harness's last RESULT line.
 check() {
@@ -95,9 +114,9 @@ for b in $browsers; do
     "mode=spike&loops=10&busy=1&longs=$longs&files=$files"
   check "$b-lib" "$HERE/run_browser.sh" "$b" "$work" \
     "mode=lib&files=sine_stereo_48k_5s.flac,mp3_44100_stereo.mp3"
-  check "$b-audio" env TIMEOUT=150 "$HERE/run_browser.sh" "$b" "$work" \
+  check_audio "$b-audio" env TIMEOUT=150 "$HERE/run_browser.sh" "$b" "$work" \
     "mode=audio&files=$tones&busy=1"
-  check "$b-gesture" env AUTOPLAY=0 TIMEOUT=150 "$HERE/run_browser.sh" "$b" "$work" \
+  check_audio "$b-gesture" env AUTOPLAY=0 TIMEOUT=150 "$HERE/run_browser.sh" "$b" "$work" \
     "mode=audio&files=long_60s.flac&gesture=1"
   check "$b-net" "$HERE/run_net.sh" "$b" "$module" "$fixtures"
 done

@@ -56,7 +56,21 @@ export async function runAudioHarness(factory, files, log, opts = {}) {
   if (!check(!!wa, 'glue', `makWebAudio ${wa ? 'present' : 'missing'}`)) return finish();
   const ti = performance.now();
   trace.step('init');
-  await wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false });
+  // The audio device of the browser gets 20 s to start: a context whose
+  // worklet module never loads (seen in headless Firefox on a sound server
+  // that stalled) is device-not-started, which run_checks.sh tells apart
+  // from a check that ran and failed.
+  const INIT_MS = 20000;
+  const started = await Promise.race([
+    wa.init({ channels: 2, resumeOnGesture: opts.resumeOnGesture !== false }).then(() => true),
+    new Promise((r) => setTimeout(() => r(false), INIT_MS)),
+  ]);
+  if (!started) {
+    const c = wa.context;
+    check(false, 'init', `device-not-started: no context in ${INIT_MS / 1000} s, ` +
+      `state ${c ? c.state : 'none'}, time ${c ? c.currentTime : '-'}`);
+    return finish();
+  }
   measure('webaudio_init_ms', performance.now() - ti);
   const ctx = wa.context;
   const rate = ctx.sampleRate;
