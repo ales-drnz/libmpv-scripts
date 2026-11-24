@@ -141,6 +141,7 @@ func allTargets() []Target {
 		sWeb     = "scripts/build_libmpv_web.sh"
 		sTizen   = "scripts/build_libmpv_tizen.sh"
 		sWebos   = "scripts/build_libmpv_webos.sh"
+		sOhos    = "scripts/build_libmpv_ohos.sh"
 	)
 	const apple = "needs macOS + Xcode"
 	return []Target{
@@ -196,6 +197,13 @@ func allTargets() []Target {
 		//    only). armv7l is the TVs. ──
 		{Key: "webos-armv7l", Label: "armv7l", Group: "webOS", InMenu: true, kind: kDocker, script: sWebos, image: "webos", dockerPlatform: "linux/amd64"},
 
+		// ── OHOS (Docker, linux/amd64: the public OpenHarmony SDK is an
+		//    x86_64 Linux toolchain). arm64-v8a is the devices, x86_64 the
+		//    emulators. ──
+		{Key: "ohos-arm64-v8a", Label: "arm64-v8a", Group: "OHOS", InMenu: true, kind: kDocker, script: sOhos, image: "ohos", dockerPlatform: "linux/amd64", args: []string{"--arch=arm64-v8a"}},
+		{Key: "ohos-x86_64", Label: "x86_64", Group: "OHOS", InMenu: true, kind: kDocker, script: sOhos, image: "ohos", dockerPlatform: "linux/amd64", args: []string{"--arch=x86_64"}},
+		{Key: "ohos", Label: "all", Group: "OHOS", InMenu: true, kind: kAggregate, members: []string{"ohos-arm64-v8a", "ohos-x86_64"}},
+
 		// ── Publish / validate ──
 		{Key: "manifest", Label: "Manifest", Group: "Tools", InMenu: true, kind: kNative, script: "scripts/write_manifest.sh",
 			Desc: "write builds/release/manifest.json (SHA-256 of every binary) for update_libmpv.sh"},
@@ -211,13 +219,14 @@ func allTargets() []Target {
 		{Key: "docker-image-windows", Label: "Build the Windows build image", Group: "Docker", InMenu: false, kind: kImage, image: "windows"},
 		{Key: "docker-image-tizen", Label: "Build the Tizen build image", Group: "Docker", InMenu: false, kind: kImage, image: "tizen"},
 		{Key: "docker-image-webos", Label: "Build the webOS build image", Group: "Docker", InMenu: false, kind: kImage, image: "webos", dockerPlatform: "linux/amd64"},
+		{Key: "docker-image-ohos", Label: "Build the OHOS build image", Group: "Docker", InMenu: false, kind: kImage, image: "ohos", dockerPlatform: "linux/amd64"},
 		{Key: "docker-image-android", Label: "Build the Android build image", Group: "Docker", InMenu: false, kind: kImage, image: "android", dockerPlatform: "linux/amd64"},
 		{Key: "docker-image-verify", Label: "Build the Verify image", Group: "Docker", InMenu: false, kind: kImage, image: "verify"},
 		{Key: "docker-start", Label: "Start the Docker daemon", Group: "Docker", InMenu: false, kind: kSelf, selfArg: "_dockerstart"},
 
 		// ── Aggregates (CLI convenience) ──
 		{Key: "desktop-all", Label: "All desktop targets", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"linux", "windows"}},
-		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "tvos", "android", "desktop-all", "tizen", "webos-armv7l", "manifest"}},
+		{Key: "all", Label: "Everything + manifest", Group: "Aggregate", InMenu: false, kind: kAggregate, members: []string{"macos", "ios", "tvos", "android", "desktop-all", "tizen", "webos-armv7l", "ohos", "manifest"}},
 	}
 }
 

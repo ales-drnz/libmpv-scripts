@@ -1,3 +1,25 @@
+## [0.4.3] - 24-11-2026
+### All platforms
+**Added**
+- FFmpeg's TLS option `ca_extra_file`: a PEM file trusted on top of the roots in use, where `ca_file` replaces them. mpv reaches it through `stream-lavf-o`. Patch `tls_extra_ca`, off on the web, whose TLS is the browser's.
+
+**Fixed**
+- `playlist-prev-playlist` and `playlist-next-playlist` with no current entry, after `stop keep-playlist`, fail. mpv 0.42.0 read the source playlist of the missing entry and the process ended. Patch `playlist_no_current`.
+
+**Changed**
+- The libraries say `mpv v0.42.0+r27`.
+
+### OHOS
+**Added**
+- OpenHarmony and HarmonyOS: `libmpv_ohos-arm64-v8a.so` for the devices and `libmpv_ohos-x86_64.so` for the emulators, built with the public OpenHarmony SDK against its musl, with libc++ linked in. They need only `libc.so` and `libohaudio.so` of the system, and only the calls of API 12 (HarmonyOS 5.0): the build checks the OHAudio calls and the libc imports against API 12.
+- `ao_ohaudio`, the audio output over OHAudio, reviewed from the driver of ErBWs: a generation and a wait for the callback in flight before a flush, the clock from the renderer's timestamp, a thread that resumes and watches the renderer, 3 s for the first callback after a start. A rate the renderer refuses, such as 37800 Hz, plays at the next one up.
+- The CI plays them on the Oniro emulator, OpenHarmony 7.0, x86_64 with KVM and arm64-v8a under emulation, and checks the tone the emulated sound card records. It runs on each release branch whose OHOS driver or build changes.
+
+### Build
+- The TUI builds OHOS: its column, the targets `ohos-arm64-v8a`, `ohos-x86_64` and `ohos`, and the `ohos` image.
+- The check of the kit runs its Android integration tests on the Wear OS emulator of API 34 too.
+- `ao_close_test silence` waits up to 120 s under valgrind, whose teardown of the output takes seconds on the CI runners.
+
 ## [0.4.2] - 16-11-2026
 
 ### All platforms

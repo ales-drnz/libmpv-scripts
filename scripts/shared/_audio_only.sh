@@ -1104,6 +1104,14 @@ verify_mpv_config() {
       assert_define "$cfg" "HAVE_PULSE"       "0"
       assert_define "$cfg" "HAVE_PIPEWIRE"    "0"
       ;;
+    ohos)
+      # patch_ao_ohaudio.py and -Dohaudio=enabled: OHAudio is the output of
+      # an app there, the Linux ones would only fail at runtime.
+      assert_define "$cfg" "HAVE_OHAUDIO"  "1"
+      assert_define "$cfg" "HAVE_ALSA"     "0"
+      assert_define "$cfg" "HAVE_PULSE"    "0"
+      assert_define "$cfg" "HAVE_PIPEWIRE" "0"
+      ;;
     webos)
       # ALSA, the one sound API of the NDK's sysroot: no PulseAudio nor
       # PipeWire there.
@@ -1210,6 +1218,17 @@ apply_ffmpeg_patches() {
     record_patch embed_cacert
   else
     warn "Skipping disabled patch: embed_cacert"
+  fi
+
+  # TLS option ca_extra_file: certificates trusted on top of the roots in
+  # use (embedded or not), where ca_file replaces them. Reached through
+  # stream-lavf-o.
+  if patch_on tls_extra_ca; then
+    log "Patching FFmpeg's OpenSSL backend with ca_extra_file..."
+    python3 "$LIBMPV_SCRIPTS_ROOT/patches/ffmpeg/patch_ffmpeg_tls_extra_ca.py" "$ffmpeg_dir"
+    record_patch tls_extra_ca
+  else
+    warn "Skipping disabled patch: tls_extra_ca"
   fi
 }
 
@@ -1334,6 +1353,7 @@ apply_mpv_patches_common() {
   _mpv_patch hotplug_core_thread patch_hotplug_core_thread.py "$mpv_dir"
   _mpv_patch playlist_prev_dos_path patch_playlist_prev_dos_path.py "$mpv_dir"
   _mpv_patch chapter_list_reset patch_chapter_list_reset.py "$mpv_dir"
+  _mpv_patch playlist_no_current patch_playlist_no_current.py "$mpv_dir"
   # fd_pread: each stream of an fd://N (an Android content:// URI) reads at
   # its own position, so the prefetch of the same entry does not move the
   # offset the current file reads at.

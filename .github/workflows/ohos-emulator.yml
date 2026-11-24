@@ -1,0 +1,206 @@
+name: OHOS emulator
+
+# libmpv_ohos on the Oniro emulator (OpenHarmony 7.0, Apache-2.0, no Huawei
+# account: github.com/eclipse-oniro4openharmony/device_board_oniro), started
+# headless with its sound card written to a WAV file. A small client sent
+# with hdc (no HAP, so no signing) dlopens the library, plays a fixture
+# through ao_ohaudio past 2.5 s, seeks and plays on; the job passes when
+# the client says so (MAK_OHOS_NATIVE) and check_tone.py finds, in what
+# the card played, the 440 Hz before the seek, the 660 Hz after it and no
+# 440 Hz after that.
+#
+# x86_64 runs under KVM, arm64-v8a under TCG (no hosted runner has KVM for
+# an arm64 guest), as oniro-app-builder's emulator-run.yml does (its run
+# 44563443761). Not covered: the sandbox and the audio policy of a HAP,
+# HarmonyOS NEXT's own services, a real device.
+#
+# Runs on the wip/ and release/ branches when what it tests changes, so a
+# release whose OHOS driver or build changed plays it before it ships, and
+# by hand.
+
+on:
+  push:
+    branches: ['wip/**', 'release/**']
+    paths:
+      - 'patches/mpv/ohos/**'
+      - 'scripts/build_libmpv_ohos.sh'
+      - 'scripts/ohos/**'
+      - '.github/ohos/**'
+      - '.github/workflows/ohos-emulator.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ohos-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  STRICT_SOURCES: '1'
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+  # The Oniro emulator, release v7.0.3 of device_board_oniro; the matrix
+  # pins the sha256 of each image zip.
+  ONIRO_RELEASE: https://github.com/eclipse-oniro4openharmony/device_board_oniro/releases/download/v7.0.3
+
+jobs:
+  # The library, the client (the SDK's clang) and the fixture.
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: builds/ohos-sdk
+          key: ohos-sdk-native-${{ hashFiles('scripts/ohos/ohos_sdk.sh') }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: docker/
+          target: ohos
+          tags: mpv-build-ohos
+          load: true
+          cache-from: type=gha,scope=ohos
+          cache-to: type=gha,scope=ohos,mode=max
+      - name: Build libmpv
+        run: |
+          docker run --rm -e STRICT_SOURCES -e GITHUB_SHA \
+            -v "$PWD:/scripts" -w /scripts \
+            mpv-build-ohos bash scripts/build_libmpv_ohos.sh --arch=${{ matrix.arch }}
+      - name: Build the client and the fixture
+        run: |
+          case "${{ matrix.arch }}" in
+            arm64-v8a) target=aarch64-linux-ohos ;;
+            x86_64)    target=x86_64-linux-ohos ;;
+          esac
+          sdk=builds/ohos-sdk/native
+          mkdir -p out
+          "$sdk/llvm/bin/clang" --target="$target" --sysroot="$sdk/sysroot" -O2 -fuse-ld=lld \
+            .github/ohos/mpv_play_check.c -o out/mpv_play_check
+          cp builds/release/libmpv_ohos-${{ matrix.arch }}.so out/libmpv.so
+          python3 -I .github/ohos/make_tone.py out/tone.wav
+          file out/*
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ohos-play-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+
+  emulator:
+    name: Emulator ${{ matrix.arch }} (${{ matrix.accel }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            accel: kvm
+            zip: oniro_emulator.zip
+            sha256: 06a37a703546d3899a6906728258bf93d025be54437d0d8f8d8080a745bd4a46
+            qemu: qemu-system-x86
+            boot_minutes: 10
+          - arch: arm64-v8a
+            accel: tcg
+            zip: oniro_emulator_arm64.zip
+            sha256: 4a9a0d53fba7e20fc29add57bd5097c9ecee961f96d60af6145b2bb51e562c82
+            qemu: qemu-system-arm
+            boot_minutes: 40
+    env:
+      HDC_TARGET: 127.0.0.1:55555
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ohos-play-${{ matrix.arch }}
+          path: play
+      # hdc from the same pinned SDK as the build.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: builds/ohos-hdc
+          key: ohos-sdk-toolchains-${{ hashFiles('scripts/ohos/ohos_sdk.sh') }}
+      - name: hdc
+        run: |
+          bash scripts/ohos/ohos_sdk.sh builds/ohos-hdc toolchains
+          echo "HDC_DIR=$PWD/builds/ohos-hdc/toolchains" >> "$GITHUB_ENV"
+      - name: KVM for the runner's user
+        if: matrix.accel == 'kvm'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -la /dev/kvm
+      - name: QEMU and the emulator
+        run: |
+          sudo apt-get update
+          # ipxe-qemu: the virtio NIC's option ROM; libatomic1: hdc's.
+          sudo apt-get install -y --no-install-recommends ${{ matrix.qemu }} ipxe-qemu libatomic1
+          # hdc enumerates USB through libusb: one fake node lets its server
+          # start on a runner without a USB bus.
+          if [ ! -d /dev/bus/usb ]; then
+            sudo mkdir -p /dev/bus/usb/001
+            sudo mknod /dev/bus/usb/001/001 c 189 0 || true
+            sudo chmod 666 /dev/bus/usb/001/001 || true
+          fi
+          mkdir -p emu
+          curl -fsSL --retry 3 -o emu/images.zip "$ONIRO_RELEASE/${{ matrix.zip }}"
+          echo "${{ matrix.sha256 }}  emu/images.zip" | sha256sum -c -
+          unzip -q emu/images.zip -d emu
+          rm emu/images.zip
+          ls emu/images
+      - name: Start the emulator and wait for its boot
+        run: |
+          hdc() { LD_LIBRARY_PATH="$HDC_DIR" "$HDC_DIR/hdc" "$@"; }
+          cd emu/images
+          nohup ./run.sh --headless --accel ${{ matrix.accel }} -c "$HDC_TARGET" \
+            --audio "wav,path=$GITHUB_WORKSPACE/out.wav" > "$GITHUB_WORKSPACE/qemu.log" 2>&1 &
+          deadline=$(( $(date +%s) + ${{ matrix.boot_minutes }} * 60 ))
+          until [ "$(hdc -t "$HDC_TARGET" shell param get bootevent.boot.completed 2>/dev/null | tr -d '\r\n ')" = true ]; do
+            if [ "$(date +%s)" -gt "$deadline" ]; then
+              echo "no boot in ${{ matrix.boot_minutes }} minutes" >&2
+              tail -30 "$GITHUB_WORKSPACE/qemu.log"
+              exit 1
+            fi
+            hdc tconn "$HDC_TARGET" >/dev/null 2>&1 || true
+            sleep 10
+          done
+          hdc -t "$HDC_TARGET" shell "uname -a; param get const.ohos.apiversion; param get const.product.software.version"
+      - name: Play through ao_ohaudio
+        run: |
+          hdc() { LD_LIBRARY_PATH="$HDC_DIR" "$HDC_DIR/hdc" -t "$HDC_TARGET" "$@"; }
+          hdc shell "mkdir -p /data/local/tmp/mak"
+          for f in libmpv.so mpv_play_check tone.wav; do
+            hdc file send "play/$f" "/data/local/tmp/mak/$f"
+          done
+          hdc shell "chmod 755 /data/local/tmp/mak/mpv_play_check"
+          hdc shell "cd /data/local/tmp/mak && ./mpv_play_check ./libmpv.so ./tone.wav; echo rc=\$?" | tee native.log
+          grep -q 'MAK_OHOS_NATIVE PASS' native.log
+      # Also when the client failed: what was heard tells why.
+      - name: What the sound card played
+        if: success() || failure()
+        run: |
+          ls -la out.wav
+          python3 -I .github/ohos/check_tone.py out.wav | tee tone.log
+      - name: hilog of the audio service
+        if: always()
+        run: |
+          LD_LIBRARY_PATH="$HDC_DIR" "$HDC_DIR/hdc" -t "$HDC_TARGET" shell "hilog -x" > hilog.txt 2>&1 || true
+          grep -iE 'ohaudio|AudioRenderer|renderer_in_client|mpv' hilog.txt | tail -40 || true
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ohos-emulator-${{ matrix.arch }}
+          path: |
+            out.wav
+            native.log
+            tone.log
+            qemu.log
+            hilog.txt
+          if-no-files-found: ignore

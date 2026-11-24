@@ -51,6 +51,12 @@ layer12_und_resolvable() {
         return 0
       }
       ;;
+    ohos/arm64-v8a|ohos/x86_64)
+      sysroot="$(_ohos_sysroot)" || {
+        fail "L12: the OpenHarmony SDK's sysroot could not be fetched"
+        return 0
+      }
+      ;;
     windows/*)
       na "UND resolvability is nm/ELF-based; a PE's imports are bound by the Windows loader at runtime — covered by the L13 LoadLibrary load test instead."
       return 0
@@ -92,10 +98,15 @@ layer12_und_resolvable() {
       # app's armv7 libmpv binds the 32-bit one of usr/lib only.
       search_dirs=("$sysroot/usr/lib")
       ;;
+    ohos)
+      # The API's stubs, one directory per target; musl's libc.so has the
+      # loader's symbols too.
+      search_dirs=("$sysroot/usr/lib/$(_ohos_target "$arch")")
+      ;;
   esac
   # The host's nm reads only its own arch: llvm-nm reads the Tizen ones.
   local nm=nm
-  [[ "$platform" == tizen || "$platform" == webos ]] && nm="$(_llvm_tool nm)"
+  [[ "$platform" == tizen || "$platform" == webos || "$platform" == ohos ]] && nm="$(_llvm_tool nm)"
 
   # Build exports union. Each NEEDED entry is resolved to its first match
   # under search_dirs. Missing system libs → warning (means our allowlist
@@ -286,7 +297,7 @@ layer16_elf_invariants() {
   local platform="$1" arch="$2" artifact="$3" readelf="${4:-readelf}"
   phase l16
   case "$platform" in
-    linux|android|tizen|webos) ;;
+    linux|android|tizen|webos|ohos) ;;
     windows) layer16_pe_hardening "$artifact"; return 0 ;;
     *) na "ELF loader invariants; $platform binaries are not ELF."; return 0 ;;
   esac
@@ -335,6 +346,16 @@ layer16_elf_invariants() {
         ;;
       *) info "L16 16 KB alignment: not required on $arch (32-bit)" ;;
     esac
+  elif [[ "$platform" == ohos ]]; then
+    # musl has no symbol versions: no floor to read. The OHAudio calls are
+    # bounded by L13 (API 12).
+    local versions
+    versions="$(LC_ALL=C "$readelf" -W -V "$artifact" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | head -1)"
+    if [[ -n "$versions" ]]; then
+      fail "L16 OHOS: glibc symbol versions ($versions): not a musl build"
+    else
+      pass "L16 OHOS: no glibc symbol versions (musl)"
+    fi
   else
     local newest
     newest="$(LC_ALL=C "$readelf" -W -V "$artifact" 2>/dev/null \

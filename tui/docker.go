@@ -51,6 +51,7 @@ func dockerImages() []dockerImage {
 		{"android", "Android", "base toolchain; the NDK is fetched per build"},
 		{"tizen", "Tizen", "clang + lld, Tizen 6.0 sysroot unpacked per build"},
 		{"webos", "webOS", "LG's webOS NDK (GCC 13.3, glibc 2.39), x86_64 only"},
+		{"ohos", "OHOS", "the OpenHarmony SDK's clang 15 and musl sysroot, x86_64 only"},
 		{"verify", "Verify", "all cross-compilers + qemu + Wine for the load tests"},
 	}
 }

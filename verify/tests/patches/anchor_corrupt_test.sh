@@ -99,7 +99,8 @@ SHARED = [
     'patch_chain_eof.py', 'patch_gapless_tail.py', 'patch_keep_open_park.py',
     'patch_lavfi_eof_passthrough.py',
     'patch_hotplug_core_thread.py', 'patch_playlist_prev_dos_path.py',
-    'patch_chapter_list_reset.py', 'patch_fd_pread.py', 'patch_af_command_args.py',
+    'patch_chapter_list_reset.py', 'patch_playlist_no_current.py',
+    'patch_fd_pread.py', 'patch_af_command_args.py',
     'patch_read_error.py',
 ]
 audio_only = (ROOT / 'scripts/shared/_audio_only.sh').read_text()
@@ -127,6 +128,7 @@ untested = [(s, False) for s, _ in shared]
 BUILDS = {
     'linux': (MPV, shared + [('mpv/linux/patch_optional_audio_libs.py', True)]),
     'android': (MPV, untested + [('mpv/android/patch_audiotrack.py', True)]),
+    'ohos': (MPV, untested + [('mpv/ohos/patch_ao_ohaudio.py', True)]),
     'web': (MPV, untested + [('mpv/web/patch_ao_webaudio.py', True),
                          ('mpv/web/patch_web_subprocess.py', True)]),
     'windows': (MPV, [('mpv/windows/patch_windows_deps.py', True),
@@ -141,7 +143,8 @@ BUILDS = {
         'patch_ffmpeg_winsock_poll.py', 'patch_ffmpeg_hls_keepalive.py', 'patch_ffmpeg_libsmb2.py',
         'patch_ffmpeg_advanced_editlist.py',
         'patch_ffmpeg_dash_keepalive.py', 'patch_ffmpeg_http_read_errors.py',
-        'patch_ffmpeg_segment_skips.py', 'patch_ffmpeg_embed_cacert.py')]),
+        'patch_ffmpeg_segment_skips.py', 'patch_ffmpeg_embed_cacert.py',
+        'patch_ffmpeg_tls_extra_ca.py')]),
     # The web build: no libsmb2 and no embed_cacert, then webio.
     'web-ffmpeg': (FFMPEG, [(f'ffmpeg/{s}', False) for s in (
         'patch_ffmpeg_codec_longnames.py', 'patch_ffmpeg_filter_bounds.py',
