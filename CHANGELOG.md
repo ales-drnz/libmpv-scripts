@@ -1,4 +1,4 @@
-## [0.4.3]
+## [0.4.3] - 24-11-2026
 ### All platforms
 **Added**
 - FFmpeg's TLS option `ca_extra_file`: a PEM file trusted on top of the roots in use, where `ca_file` replaces them. mpv reaches it through `stream-lavf-o`. Patch `tls_extra_ca`, off on the web, whose TLS is the browser's.
